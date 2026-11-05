@@ -1,24 +1,29 @@
 """Wake actionable predicate — the single source of truth for "is there work in
 flight the Leader should react to".
 
-唤醒体系 v2（docs/wake-loop-v2-design.md §7.1/§7.2）的判据基石。事件 watcher 轮询它、
-turn-end guard 停机时查它，二者共用同一判据，对"有无活在飞"永不打架。判据集中在
-Python（可单测），bash watcher 只当哑轮询器（零 SQL）。
+The criterion cornerstone of wake system v2 (docs/wake-loop-v2-design.md §7.1/§7.2). The event watcher polls it, and
+the turn-end guard queries it at shutdown; both share the same criterion and never disagree on "whether any work is in
+flight". The criterion is centralized in
+Python (unit-testable); the bash watcher acts only as a dumb poller (zero SQL).
 
-设计原则（对齐 session_probe.py）：纯只读、防御式——每个子信号独立 try 包裹，任何失败
-一律降级为 0/空，绝不抛出、绝不 500。宁可少报（下一 /loop tick 兜底）不可让 watcher/guard
-因端点异常而失联。
+Design principles (aligned with session_probe.py): purely read-only and defensive — each sub-signal is wrapped in its
+own try, and any failure
+uniformly degrades to 0/empty, never raises, and never 500s. Better to under-report (the next /loop tick covers it) than
+to let the watcher/guard
+lose contact because of an endpoint anomaly.
 
-数据键映射（照数据实际归属，不臆造）：
-- agents 按 team_id（Leader 会话团队，子 agent 挂其下）
-- workflow_runs 按 session_id（WorkflowRun.session_id = 启动的 Leader 会话；run 自带
-  workflow-<id> 团队 ≠ Leader 团队，故绝不能按 team_id 过滤 runs）
-- task_memos / briefings 按 project_id（从 team 解析）
+Data key mapping (following the data's actual ownership, nothing invented):
+- agents by team_id (the Leader session's team; sub-agents hang beneath it)
+- workflow_runs by session_id (WorkflowRun.session_id = the Leader session that started it; a run carries its own
+  workflow-<id> team ≠ the Leader team, so runs must never be filtered by team_id)
+- task_memos / briefings by project_id (resolved from the team)
 
-时间口径：全系统统一 UTC（见 aiteam/clock.py）。watermark 返回
-``utc_now().isoformat()``，即带 ``+00:00`` 偏移的自描述串；watcher 原样回传形成
-单调水位，since 侧解析回 aware-UTC 后与库值直接比较——两端不再各自约定，串自己
-带着口径走。
+Time caliber: UTC is unified across the whole system (see aiteam/clock.py). The watermark returns
+``utc_now().isoformat()``, a self-describing string carrying the ``+00:00`` offset; the watcher passes it back as-is,
+forming a
+monotonic watermark; the since side parses it back into aware-UTC and compares it directly against the stored values —
+the two ends no longer rely on separate conventions; the string itself
+carries the caliber with it.
 """
 
 from __future__ import annotations
@@ -32,26 +37,31 @@ from aiteam.types import AgentStatus
 
 logger = logging.getLogger(__name__)
 
-# workflow_runs 的终态集合（design §7.2）：这些是 actionable 的（尤其后三者需补救）。
+# The terminal-state set of workflow_runs (design §7.2): these are actionable (the last three in particular need
+# remediation).
 TERMINAL_RUN_STATUSES = frozenset({"completed", "interrupted", "killed", "failed"})
-# 活跃态：仍在飞，属良性（benign），不触发唤醒，只作 guard 的"有无活在飞"计量。
+# Active states: still in flight and benign; they do not trigger a wake-up and serve only as the guard's "is any work in
+# flight" measure.
 LIVE_RUN_STATUSES = frozenset({"planned", "running"})
 
-# reasons 列表上限，防响应膨胀
+# Cap on the reasons list, to prevent response bloat
 _MAX_REASONS = 12
 
 
 def parse_since(raw: str | None) -> datetime | None:
-    """把 since 查询参数解析为 aware-UTC datetime；无法解析返回 None（=不设下界）。
+    """Parse the since query parameter into an aware-UTC datetime; return None when it cannot be parsed (= no lower
+    bound).
 
-    容错接受：带 'Z'、带时区偏移、或不带偏移的 ISO8601。不带偏移者按 UTC 读，
-    与 watermark 的发出口径一致。
+    Fault-tolerantly accepts ISO8601 with 'Z', with a timezone offset, or without an offset. Those without an offset are
+    read as UTC,
+    consistent with the watermark's emission caliber.
     """
     return parse_utc(raw)
 
 
 def _after(ts: datetime | None, since: datetime | None) -> bool:
-    """ts 是否严格晚于 since；since 为 None 视为无下界（一律计入）。ts 缺失则不计入。"""
+    """Whether ts is strictly later than since; since=None is treated as no lower bound (everything counts). A
+    missing ts does not count."""
     if ts is None:
         return False
     if since is None:
@@ -63,7 +73,8 @@ def _after(ts: datetime | None, since: datetime | None) -> bool:
 
 
 async def _resolve_project_id(repo: Any, team_id: str, project_id: str) -> str:
-    """project_id 缺省时从 team 解析。失败返回空串（memo/briefing 信号将降级为 0）。"""
+    """When project_id is omitted, resolve it from the team. On failure, return an empty string (the memo/briefing
+    signals will degrade to 0)."""
     if project_id:
         return project_id
     if not team_id:
@@ -78,11 +89,12 @@ async def _resolve_project_id(repo: Any, team_id: str, project_id: str) -> str:
 async def _agent_signals(
     repo: Any, team_id: str, session_id: str, since: datetime | None
 ) -> tuple[int, int, list[str]]:
-    """返回 (busy_agents, finished_agents_since, reasons)。
+    """Return (busy_agents, finished_agents_since, reasons).
 
-    finished_agents_since 是近似：AgentModel 无"状态变更时间戳"，故以
-    status ∈ {waiting, offline} 且 last_active_at > since 近似"刚从 busy 收工"。
-    这是次要信号——子 agent 完成通常会写 task_memo，由 new_memos_since 强兜底。
+    finished_agents_since is an approximation: AgentModel has no "status change timestamp", so it uses
+    status ∈ {waiting, offline} with last_active_at > since to approximate "just finished work from busy".
+    This is a secondary signal — a sub-agent finishing usually writes a task_memo, which new_memos_since strongly
+    covers.
     """
     reasons: list[str] = []
     try:
@@ -101,7 +113,7 @@ async def _agent_signals(
                 if _after(getattr(a, "last_active_at", None), since):
                     finished += 1
                     if len(reasons) < _MAX_REASONS:
-                        reasons.append(f"agent '{getattr(a, 'name', '?')}' 收工（待接力）")
+                        reasons.append(f"agent '{getattr(a, 'name', '?')}' finished work (awaiting relay)")
         return busy, finished, reasons
     except Exception:  # noqa: BLE001 — probe failure must not break the endpoint
         logger.warning("wake_actionable: agent signal failed", exc_info=True)
@@ -111,14 +123,14 @@ async def _agent_signals(
 async def _run_signals(
     repo: Any, session_id: str, project_id: str, since: datetime | None
 ) -> tuple[int, int, list[str]]:
-    """返回 (live_runs, terminal_runs_since, reasons)，按 session_id 归属过滤。"""
+    """Return (live_runs, terminal_runs_since, reasons), filtered by session_id ownership."""
     reasons: list[str] = []
     try:
         runs = await repo.list_workflow_runs(project_id=project_id, limit=50)
         live = 0
         terminal = 0
         for r in runs:
-            # 只认这个 Leader 会话启动的 run（session_id 为空则不按会话收窄）
+            # Only count runs started by this Leader session (when session_id is empty, do not narrow by session)
             if session_id and getattr(r, "session_id", None) not in (session_id, None):
                 continue
             status = getattr(r, "status", "")
@@ -137,7 +149,7 @@ async def _run_signals(
 
 
 async def _memo_count(repo: Any, project_id: str, since: datetime | None) -> int:
-    """since 之后新增的有效 task_memo 数（subagent 报进展/总结）。"""
+    """The number of valid task_memos added after since (sub-agents reporting progress/summaries)."""
     if not project_id:
         return 0
     try:
@@ -148,7 +160,8 @@ async def _memo_count(repo: Any, project_id: str, since: datetime | None) -> int
 
 
 async def _pending_briefings(repo: Any, project_id: str) -> int:
-    """待决简报数——面向用户的信号，仅展示，不触发 Leader 自身唤醒（design §7.2）。"""
+    """The number of pending-decision briefings — a user-facing signal, display only; it does not trigger the
+    Leader's own wake-up (design §7.2)."""
     try:
         briefings = await repo.list_briefings(status="pending", project_id=project_id)
         return len(briefings)
@@ -164,10 +177,11 @@ async def compute_actionable(
     project_id: str = "",
     since_raw: str | None = None,
 ) -> dict:
-    """计算唤醒判据。绝不抛出：任何内部失败降级为保守值。
+    """Compute the wake-up criterion. Never raises: any internal failure degrades to a conservative value.
 
     actionable = finished_agents_since>0 OR terminal_runs_since>0 OR new_memos_since>0
-    （briefings 不计入触发；busy_agents/live_runs 供 guard 判"有无活在飞"）。
+    (briefings do not count toward triggering; busy_agents/live_runs let the guard judge "whether any work is in
+    flight").
     """
     since = parse_since(since_raw)
     resolved_project = await _resolve_project_id(repo, team_id, project_id)
@@ -183,7 +197,7 @@ async def compute_actionable(
 
     reasons = agent_reasons + run_reasons
     if new_memos > 0:
-        reasons.append(f"{new_memos} 条新 task_memo（子 agent 报进展）")
+        reasons.append(f"{new_memos} new task_memos (sub-agents reporting progress)")
 
     actionable = (finished_agents > 0) or (terminal_runs > 0) or (new_memos > 0)
 

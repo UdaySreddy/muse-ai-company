@@ -1,12 +1,14 @@
-"""统一检索 — 知识层 P1b（docs/knowledge-layer-design.md）。
+"""Unified search — knowledge layer P1b (docs/knowledge-layer-design.md).
 
-三臂 RRF（k=60，GBrain 同款常数、中性权重平等竞争）：
-- BM25 臂：memo/report/task 全文（复用 retriever 的中文 bigram+英文词分词）
-- 图谱臂：查询含 OS 原生 ID 时走 knowledge_links 扇出，可达文档入列
-- 精确臂：ID 前缀命中（兼容 run 缩写如 wf_cbad7348）/ 标题子串直通
+Three-arm RRF (k=60, the same constant as GBrain; neutral weights competing equally):
+- BM25 arm: memo/report/task full text (reusing the retriever's Chinese bigram + English word tokenization)
+- Graph arm: when the query contains an OS-native ID, fan out through knowledge_links and include the reachable
+  documents
+- Exact arm: ID prefix hits (compatible with run abbreviations such as wf_cbad7348) / title substring pass-through
 
-语料量级（memo 数百/report 个位/task 数十）支持每查询实时全量拉取，
-无索引缓存；过千再谈增量索引。纯 Python 零新依赖。
+The corpus size (hundreds of memos / single-digit reports / dozens of tasks) supports a real-time full pull per query,
+with no index cache; incremental indexing can be considered once it passes a thousand. Pure Python, zero new
+dependencies.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from aiteam.api.link_extract import extract_refs
 from aiteam.memory.retriever import _bm25_scores, _tokenize_bm25
 from aiteam.storage.repository import StorageRepository
 
-RRF_K = 60  # GBrain 同款；各臂中性权重
+RRF_K = 60  # Same as GBrain; neutral weight for each arm
 MAX_SNIPPET = 160
 
 
@@ -28,7 +30,7 @@ class SearchDoc:
     title: str
     text: str
     project_id: str = ""
-    ref_ids: set[str] = field(default_factory=set)  # 文中出现的 OS ID（图谱臂用）
+    ref_ids: set[str] = field(default_factory=set)  # OS IDs appearing in the text (used by the graph arm)
 
     @property
     def key(self) -> str:
@@ -38,7 +40,7 @@ class SearchDoc:
 async def gather_docs(
     repo: StorageRepository, project_id: str | None = None
 ) -> list[SearchDoc]:
-    """汇聚三源语料。project_id 给定时只取该项目。"""
+    """Aggregate the three-source corpus. When project_id is given, only that project is included."""
     docs: list[SearchDoc] = []
     projects = await repo.list_projects()
     if project_id:
@@ -58,7 +60,8 @@ async def gather_docs(
                     ref_ids={task.id},
                 )
             )
-            # 记忆 v2：直查 task_memos 表（默认过滤失效条目），id 用真 memo id。
+            # Memory v2: query the task_memos table directly (invalidated entries filtered out by default); ids are real
+            # memo ids.
             for memo in await repo.list_task_memos(task.id):
                 content = memo.content
                 if not content:
@@ -85,7 +88,7 @@ async def gather_docs(
                 SearchDoc(
                     kind="report",
                     id=report.id,
-                    title=f"[报告] {report.topic}",
+                    title=f"[Report] {report.topic}",
                     text=f"{report.topic}\n{report.content or ''}",
                     project_id=proj.id,
                     ref_ids={r.to_id for r in extract_refs(report.content or "")}
@@ -96,7 +99,7 @@ async def gather_docs(
 
 
 def _rrf_fuse(arms: list[list[str]], k: int = RRF_K) -> dict[str, float]:
-    """Reciprocal Rank Fusion：score += 1/(k+rank)，rank 从 1 起。"""
+    """Reciprocal Rank Fusion: score += 1/(k+rank), with rank starting at 1."""
     scores: dict[str, float] = {}
     for ranked in arms:
         for rank, key in enumerate(ranked, start=1):
@@ -105,7 +108,7 @@ def _rrf_fuse(arms: list[list[str]], k: int = RRF_K) -> dict[str, float]:
 
 
 def _snippet(text: str, query_tokens: list[str]) -> str:
-    """截取首个命中 token 附近的片段；无命中取开头。"""
+    """Excerpt the snippet near the first hit token; when there is no hit, take the beginning."""
     low = text.lower()
     pos = -1
     for t in query_tokens:
@@ -126,7 +129,7 @@ async def unified_search(
     limit: int = 10,
     project_id: str | None = None,
 ) -> list[dict]:
-    """三臂 RRF 统一检索。返回 [{kind,id,title,snippet,score,project_id}]。"""
+    """Three-arm RRF unified search. Returns [{kind,id,title,snippet,score,project_id}]."""
     query = (query or "").strip()
     if not query:
         return []
@@ -137,7 +140,7 @@ async def unified_search(
 
     arms: list[list[str]] = []
 
-    # ── BM25 臂（中文 bigram + 英文词，复用 retriever 纯 Python 实现）──
+    # ── BM25 arm (Chinese bigrams + English words, reusing the retriever's pure-Python implementation)──
     q_tokens = _tokenize_bm25(query)
     if q_tokens:
         corpus = [_tokenize_bm25(f"{d.title}\n{d.text}") for d in docs]
@@ -150,7 +153,7 @@ async def unified_search(
         if ranked:
             arms.append(ranked[:50])
 
-    # ── 图谱臂：查询含 OS ID → 直接引用 + knowledge_links 扇出可达 ──
+    # ── Graph arm: the query contains an OS ID → direct references + knowledge_links fan-out reachability ──
     query_refs = {r.to_id for r in extract_refs(query)}
     if query_refs:
         graph_hits: list[str] = []
@@ -169,7 +172,7 @@ async def unified_search(
         if graph_hits:
             arms.append(graph_hits[:50])
 
-    # ── 精确臂：ID 前缀（兼容 run 缩写）/ 标题子串直通 ──
+    # ── Exact arm: ID prefix (compatible with run abbreviations) / title substring pass-through ──
     q_low = query.lower()
     exact_hits = [
         d.key

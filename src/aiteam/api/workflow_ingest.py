@@ -1,19 +1,23 @@
 """AI Team OS — Workflow observability ingest (I3a).
 
-CC ultracode/Workflow 观测层的纯摄取模块（API 层单副本，非 hook 双副本，规避红线5
-同步坑与 install.py 注册漂移）。三个触发点（PostToolUse 回执、reaper 轮询、
-SessionStart 对账）共用这里的纯函数：
+The pure ingestion module of the CC ultracode/Workflow observation layer (a single copy in the API layer, not the hook
+dual-copy, avoiding red line 5's
+synchronization pitfalls and install.py registration drift). Three trigger points (PostToolUse receipt, reaper polling,
+SessionStart reconciliation) share the pure functions here:
 
-- ``parse_workflow_receipt(text)``：正则抽 PostToolUse(Workflow) 回执四键。
-- ``ingest_run_from_file(repo, event_bus, wf_json_path)``：读 ``wf_<id>.json`` 富快照
-  → upsert run + 批量 upsert agents → 盖 team_id/os_agent_id → 回写 team.completed_at
-  → emit ``workflow.completed``。幂等、全 try/except。
-- ``reconcile(repo, event_bus, project_dir=None, session_id=None)``：proj-slug glob
-  ``~/.claude/projects/<slug>/*/workflows/wf_*.json`` 逐文件 ingest。
+- ``parse_workflow_receipt(text)``: extracts the four keys from a PostToolUse(Workflow) receipt with regexes.
+- ``ingest_run_from_file(repo, event_bus, wf_json_path)``: reads the ``wf_<id>.json`` rich snapshot
+  → upsert run + batch upsert agents → stamps team_id/os_agent_id → writes back team.completed_at
+  → emits ``workflow.completed``. Idempotent, fully try/except-wrapped.
+- ``reconcile(repo, event_bus, project_dir=None, session_id=None)``: proj-slug glob
+  ``~/.claude/projects/<slug>/*/workflows/wf_*.json`` and ingests file by file.
 
-关键口径：hook 只驱动「时机 + 关联锚点 + 生命周期事件」；文件是「全量遥测真相源」
-（token/时长/逐-agent 返回值只在 ``wf_<id>.json.workflowProgress[]``）。两张投影表是
-「不可变文件的可重建缓存」，按自然键 UPSERT 单调推进、绝不删行（红线3 append-only）。
+Key semantics: hooks only drive "timing + correlation anchors + lifecycle events"; the file is the "full telemetry
+source of truth"
+(tokens/durations/per-agent return values exist only in ``wf_<id>.json.workflowProgress[]``). The two projection tables
+are
+"rebuildable caches of immutable files", advanced monotonically by UPSERT on natural keys, never deleting rows (red line
+3 append-only).
 """
 
 from __future__ import annotations
@@ -35,24 +39,35 @@ from aiteam.types import WorkflowAgent, WorkflowRun
 
 logger = logging.getLogger(__name__)
 
-# —— Phase2 live 追踪常量（实测标定；改动须重跑 agent 行间隔分布再定，见设计 §10.3） ——
-WF_STALL_SECONDS = 900  # interrupted 静止阈值：实测健康 agent 最长静默 173.8s
-#                         (p99=77.6s, n=3378 间隔)；取 900s ≈ 5.2× 最大观测值——宁可迟判不误判
-WF_INTERRUPTED_RECHECK_HOURS = 24  # interrupted 后继续复查窗口（终态自愈通道）；过窗老化
-#                                    出 reaper 视野，稳态回归零 stat
-WF_LIVE_TAIL_MAX_RUNS = 10  # 单 tick live tail run 数上限（_reap_cycle 30s 硬超时保护）
-WF_AGENT_TAIL_BYTES = 65536  # agent jsonl 尾窗（单条 assistant 行远小于 64KB）
+# — Phase2 live-tracking constants (calibrated from measurements; any change must re-derive from the agent-row interval
+# distribution, see design §10.3) —
+WF_STALL_SECONDS = 900  # interrupted stillness threshold: the longest measured silence of a healthy agent is 173.8s
+# (p99=77.6s, n=3378 intervals); 900s ≈ 5.2× the maximum observed value — rather judge late than wrong
+# the window for continued re-checks after interrupted (terminal-state self-healing
+# channel); past the window it ages out of the reaper's view and steady state returns to
+# zero stats
+WF_INTERRUPTED_RECHECK_HOURS = 24
+WF_LIVE_TAIL_MAX_RUNS = 10  # per-tick cap on live tail runs (_reap_cycle 30s hard-timeout protection)
+WF_AGENT_TAIL_BYTES = 65536  # agent jsonl tail window (a single assistant row is far smaller than 64KB)
 
-# 终态集合（与 repository._WF_STATUS_RANK 同秩语义对齐，红线8 不改 rank 本体）
+# Terminal-state set (aligned with repository._WF_STATUS_RANK's same-rank semantics; red line 8 does not change the rank
+# body)
 _WF_TERMINAL_STATUSES = frozenset({"completed", "killed", "failed"})
 
-# WP10 事件去重：per-wf_id 的进程内锁，串行化同一 run 的「upsert→判定 became_*」临界区。
-# 三条驱动（reaper 对账 / SessionStart 对账 / hook 回执 ingest）在同进程同事件循环上
-# 可在 await 点自由交错——纯事务内判定在跨连接的文件 WAL 下靠快照冲突中止兜底，但在
-# 单连接拓扑（如内存库）下三协程可同时读到旧 status 各自判 became_completed=True →
-# 重复 emit。加此锁使临界区严格串行，与连接拓扑无关地保证 exactly-once。跨 API 进程另
-# 由 reaper 治理租约 + WAL 快照中止覆盖。dict 按 wf_id memo 化，随进程生命周期有界增长
-# （每 run 一个轻量 Lock），进程重启即清——不设后台清理守护（对齐「无定时器」纪律）。
+# WP10 event deduplication: a per-wf_id in-process lock serializing the "upsert → judge became_*" critical section of
+# the same run.
+# The three drivers (reaper reconciliation / SessionStart reconciliation / hook receipt ingest) run on the same process
+# and the same event loop,
+# so they can interleave freely at await points — pure in-transaction judging relies on snapshot-conflict aborts under a
+# cross-connection file WAL as a fallback, but under
+# a single-connection topology (e.g. an in-memory DB) the three coroutines can simultaneously read the old status and
+# each judge became_completed=True →
+# duplicate emits. This lock makes the critical section strictly serial, guaranteeing exactly-once regardless of
+# connection topology. Cross-API-process cases are additionally
+# covered by the reaper governance lease + WAL snapshot aborts. The dict is memoized by wf_id and grows boundedly with
+# the process lifecycle
+# (one lightweight Lock per run) and is cleared on process restart — no background cleanup daemon (following the "no
+# timers" discipline).
 _WF_INGEST_LOCKS: dict[str, asyncio.Lock] = {}
 
 
@@ -64,11 +79,12 @@ def _wf_ingest_lock(wf_id: str) -> asyncio.Lock:
         _WF_INGEST_LOCKS[wf_id] = lock
     return lock
 
-# wf_<id> 运行 id（与 hook_translator._WF_RUN_ID_RE 同口径）。
+# wf_<id> run id (same semantics as hook_translator._WF_RUN_ID_RE).
 # Bounded to a single optional dash-suffix, not unbounded `*` — see hook_translator.py's
 # _WF_RUN_ID_RE comment for the worktree-suffix over-match this fixes (task f8207497).
 _WF_RUN_ID_RE = re.compile(r"wf_[0-9a-z]+(?:-[0-9a-z]+)?", re.IGNORECASE)
-# 回执逐行字段（每字段独占一行，用 .+ 抓到行尾再 strip，兼容含空格的 Summary）。
+# Receipt per-line fields (each field occupies its own line; .+ captures to end of line then strips, accommodating
+# Summaries containing spaces).
 _TASK_ID_RE = re.compile(r"Task ID:\s*(\S+)")
 _SUMMARY_RE = re.compile(r"Summary:\s*(.+)")
 _TRANSCRIPT_RE = re.compile(r"Transcript dir:\s*(.+)")
@@ -76,12 +92,12 @@ _SCRIPT_RE = re.compile(r"Script file:\s*(.+)")
 
 
 # ============================================================
-# 纯工具
+# Pure utilities
 # ============================================================
 
 
 def _to_int(v: Any) -> int:
-    """把 str/int/float/None（快照里数值多为字符串）稳健转 int，失败得 0。"""
+    """Robustly convert str/int/float/None (snapshot numbers are mostly strings) to int; 0 on failure."""
     try:
         if v is None or v == "":
             return 0
@@ -91,7 +107,7 @@ def _to_int(v: Any) -> int:
 
 
 def _ms_to_dt(ms: int | None) -> datetime | None:
-    """epoch 毫秒 → 本地 datetime；0/None/越界返回 None。"""
+    """epoch milliseconds → local datetime; None for 0/None/out-of-range."""
     if not ms:
         return None
     try:
@@ -101,12 +117,12 @@ def _ms_to_dt(ms: int | None) -> datetime | None:
 
 
 def _trim(s: str, n: int) -> str:
-    """截断到 n 字符（防膨胀）。"""
+    """Truncate to n characters (anti-bloat)."""
     return s[:n] if s else ""
 
 
 def _norm_phases(raw: Any) -> list[dict[str, Any]]:
-    """把文件 phases（[{title,detail}]）或计划 phases（[str]）归一为 [{index,title}]。"""
+    """Normalize file phases ([{title,detail}]) or plan phases ([str]) to [{index,title}]."""
     out: list[dict[str, Any]] = []
     if isinstance(raw, list):
         for i, ph in enumerate(raw, start=1):
@@ -123,7 +139,7 @@ def _norm_phases(raw: Any) -> list[dict[str, Any]]:
 
 
 def _trim_result(result: Any, max_chars: int = 8000) -> dict[str, Any] | None:
-    """终端 StructuredOutput 结果截断存（防超大 result 膨胀 DB）。"""
+    """Store terminal StructuredOutput results truncated (prevents oversized results from bloating the DB)."""
     if result is None:
         return None
     if not isinstance(result, dict):
@@ -138,55 +154,60 @@ def _trim_result(result: Any, max_chars: int = 8000) -> dict[str, Any] | None:
 
 
 def _project_slug(path: str) -> str:
-    """把项目 root_path 反解为 CC projects 目录 slug（每个非字母数字字符 → '-'）。
+    """Reverse-resolve a project's root_path into the CC projects directory slug (every non-alphanumeric character →
+    '-').
 
-    例：``/Users/cronus/Desktop/AI team OS`` → ``-Users-cronus-Desktop-AI-team-OS``。
-    CC 不折叠连续分隔符，故此处也逐字符替换、不折叠。
+    Example: ``/Users/cronus/Desktop/AI team OS`` → ``-Users-cronus-Desktop-AI-team-OS``.
+    CC does not collapse consecutive separators, so this also replaces character by character without collapsing.
     """
     return re.sub(r"[^a-zA-Z0-9]", "-", path or "")
 
 
 def _claude_projects_dir() -> Path:
-    """``~/.claude/projects`` 根目录（测试可 monkeypatch 此函数指向临时目录）。"""
+    """Root of ``~/.claude/projects`` (tests can monkeypatch this function to point at a temp directory)."""
     return Path.home() / ".claude" / "projects"
 
 
 def _claude_tmp_dir() -> Path:
-    """CC 后台 Task 落地目录 ``/tmp/claude-<uid>``（macOS 上 /tmp → /private/tmp）。
+    """CC background Task landing directory ``/tmp/claude-<uid>`` (on macOS /tmp → /private/tmp).
 
-    仅供 ``enrich_from_task_output`` 兜底读 ``tasks/<taskId>.output``；重启即清，
-    绝非真相源。测试可 monkeypatch。
+    Only for ``enrich_from_task_output``'s fallback read of ``tasks/<taskId>.output``; cleared on restart,
+    never a source of truth. Tests can monkeypatch.
     """
     return Path(f"/tmp/claude-{os.getuid()}")
 
 
 def _iso_to_utc(s: str) -> datetime | None:
-    """agent jsonl 顶层 timestamp（UTC ISO，如 2026-06-24T06:54:31.209Z）→ aware UTC。
+    """agent jsonl top-level timestamp (UTC ISO, e.g. 2026-06-24T06:54:31.209Z) → aware UTC.
 
-    与库内其余时间戳同一口径（见 aiteam/clock.py）。
+    Same semantics as the other timestamps in the DB (see aiteam/clock.py).
     """
     return parse_utc(str(s)) if s else None
 
 
 def _first_line_timestamp(path: Path) -> datetime | None:
-    """agent jsonl 首行顶层 timestamp → started_at 近似（journal 行内无时间戳）。"""
+    """First-line top-level timestamp of an agent jsonl → started_at approximation (journal rows carry no
+    timestamps)."""
     try:
         with path.open("rb") as f:
             line = f.readline()
         obj = json.loads(line)
         if isinstance(obj, dict):
             return _iso_to_utc(str(obj.get("timestamp") or ""))
-    except Exception:  # noqa: BLE001 — best-effort，失败即无 started_at
+    except Exception:  # noqa: BLE001 — best-effort; on failure there is simply no started_at
         return None
     return None
 
 
 def _first_user_prompt(path: Path, max_chars: int = 160) -> str:
-    """读 agent transcript 头部，提取首条 user 消息文本作 running 期语义标签。
+    """Read the head of an agent transcript and extract the first user message's text as the running-period semantic
+    label.
 
-    嵌套 run 的 wf_<id>.json 迟写（终态才落盘），label 在 running 期恒空
-    （3edd0dc1）——prompt 首行是活跃期唯一可得的语义信息。头部 64KB 内找不到
-    或文件未就绪返回空串，下个 tick 重试。
+    A nested run's wf_<id>.json is written late (only at terminal state), so the label stays empty throughout the
+    running period
+    (3edd0dc1) — the prompt's first line is the only semantic information available during the active period. If not
+    found within the first 64KB
+    or the file is not ready, return an empty string and retry on the next tick.
     """
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -218,14 +239,15 @@ def _first_user_prompt(path: Path, max_chars: int = 160) -> str:
 
 
 def _last_assistant_ctx_tokens(path: Path) -> int | None:
-    """agent jsonl 尾窗 64KB 反向找最后一条含 message.usage 的 assistant 行 → lastCtx。
+    """Search the last 64KB tail window of an agent jsonl backwards for the last assistant row containing message.usage
+    → lastCtx.
 
-    D1 裁决口径：input + cache_creation_input + cache_read_input + output 四字段和
-    （与 wf_<id>.json 终态 per-agent tokens 直接对账：error agent 精确相等，done
-    agent 仅偏高 3~12%）。否决跨轮累加（cache_read 重复计入膨胀 ~445 倍）。
+    D1 ruling semantics: the sum of the four fields input + cache_creation_input + cache_read_input + output
+    (reconciles directly against the wf_<id>.json terminal-state per-agent tokens: error agents match exactly, done
+    agents only 3~12% high). Cross-round accumulation was rejected (cache_read double-counting inflates ~445×).
 
     Returns:
-        lastCtx int；尾窗内无 assistant usage / 读失败 → None（调用方保留旧值）。
+        lastCtx int; no assistant usage in the tail window / read failure → None (the caller keeps the old value).
     """
     try:
         with path.open("rb") as f:
@@ -241,7 +263,7 @@ def _last_assistant_ctx_tokens(path: Path) -> int | None:
             continue
         try:
             obj = json.loads(raw)
-        except Exception:  # noqa: BLE001 — 尾窗首段可能是半行，跳过
+        except Exception:  # noqa: BLE001 — the tail window's first segment may be a half-line; skip it
             continue
         if not isinstance(obj, dict) or obj.get("type") != "assistant":
             continue
@@ -263,9 +285,9 @@ def _norm_path(p: str) -> str:
 
 
 def _name_from_script(script_path: str, wf_id: str) -> str:
-    """从脚本文件名反解 workflow 名：去 .js、去尾部 -wf_<id>。
+    """Reverse-resolve the workflow name from the script file name: drop .js and the trailing -wf_<id>.
 
-    例：``cnipa-xml-format-research-wf_8e92fe01-67c.js`` → ``cnipa-xml-format-research``。
+    Example: ``cnipa-xml-format-research-wf_8e92fe01-67c.js`` → ``cnipa-xml-format-research``.
     """
     if not script_path:
         return ""
@@ -279,16 +301,16 @@ def _name_from_script(script_path: str, wf_id: str) -> str:
 
 
 def parse_workflow_receipt(text: str) -> dict[str, Any]:
-    """从 PostToolUse(Workflow) 启动回执明文抽四键（+ transcript_dir、name）。
+    """Extract the four keys (+ transcript_dir, name) from a PostToolUse(Workflow) launch receipt's plaintext.
 
-    回执样本（约 1331 字符明文，< 32KB 不被 send_event._trim_payload 截）：
+    Receipt sample (about 1331 characters of plaintext; < 32KB so it is not trimmed by send_event._trim_payload):
         Workflow launched in background. Task ID: westwrtgj
-        Summary: 多路并行调研...
+        Summary: Multi-way parallel research...
         Transcript dir: /Users/.../subagents/workflows/wf_8e92fe01-67c
         Script file: /Users/.../workflows/scripts/<name>-wf_8e92fe01-67c.js
 
     Returns:
-        {wf_id, cc_task_id, script_path, name, summary, transcript_dir}；抽不到留空串。
+        {wf_id, cc_task_id, script_path, name, summary, transcript_dir}; empty strings where extraction fails.
     """
     text = text or ""
     task_m = _TASK_ID_RE.search(text)
@@ -299,7 +321,7 @@ def parse_workflow_receipt(text: str) -> dict[str, Any]:
     transcript_dir = transcript_m.group(1).strip() if transcript_m else ""
     script_path = script_m.group(1).strip() if script_m else ""
 
-    # wf_id：优先从 transcript_dir，其次整段文本。
+    # wf_id: prefer extracting from transcript_dir, then from the whole text.
     wf_id = ""
     for src in (transcript_dir, script_path, text):
         m = _WF_RUN_ID_RE.search(src.replace("\\", "/"))
@@ -318,10 +340,10 @@ def parse_workflow_receipt(text: str) -> dict[str, Any]:
 
 
 def run_json_path_from_transcript_dir(transcript_dir: str, wf_id: str) -> Path | None:
-    """由回执的 Transcript dir 反推运行 JSON 路径。
+    """Derive the run JSON path from the receipt's Transcript dir.
 
-    transcript_dir = ``<session>/subagents/workflows/wf_<id>``，运行 JSON 是其兄弟
-    ``<session>/workflows/wf_<id>.json``（不在 subagents 下）。
+    transcript_dir = ``<session>/subagents/workflows/wf_<id>``; the run JSON is its sibling
+    ``<session>/workflows/wf_<id>.json`` (not under subagents).
     """
     if not transcript_dir or not wf_id:
         return None
@@ -334,7 +356,7 @@ def run_json_path_from_transcript_dir(transcript_dir: str, wf_id: str) -> Path |
 
 
 # ============================================================
-# 文件摄取（全量遥测真相源）
+# File ingestion (full telemetry source of truth)
 # ============================================================
 
 
@@ -345,14 +367,15 @@ async def _upsert_agents_from_progress(
     progress: Any,
     run_team_id: str | None = None,
 ) -> int:
-    """workflowProgress[] 的 type=workflow_agent 条 → 批量 upsert workflow_agents。
+    """workflowProgress[] type=workflow_agent entries → batch upsert workflow_agents.
 
-    共享纯函数：``ingest_run_from_file``（wf_<id>.json 真相源）与
-    ``enrich_from_task_output``（/tmp .output 兜底，7 键子集缺 runId）两处复用。
-    顺带盖 os_agent_id 关联既有成员（agents.cc_tool_use_id == cc_agent_id）；
-    run_team_id 给出时做「收尸迁移」：权威清单命中的 OS 成员若仍滞留
-    workflow-session-* 兜底队（kill 中途永不 promote / 晚到错过回执迁移），
-    迁入 run 队（2026-07-08 漏迁实录 wf-a8bda693e5）。
+    Shared pure function: used by both ``ingest_run_from_file`` (wf_<id>.json source of truth) and
+    ``enrich_from_task_output`` (/tmp .output fallback, a 7-key subset missing runId).
+    Also stamps os_agent_id to associate existing members (agents.cc_tool_use_id == cc_agent_id);
+    when run_team_id is given, performs "corpse-collection migration": OS members hit by the authoritative roster that
+    still linger in a
+    workflow-session-* fallback team (killed mid-way, never promoted / arrived late and missed the receipt migration)
+    are migrated into the run team (missed-migration record 2026-07-08, wf-a8bda693e5).
     """
     agent_entries = [
         x
@@ -380,7 +403,7 @@ async def _upsert_agents_from_progress(
                     cur = await repo.get_team(existing.team_id)
                     if cur is not None and cur.name.startswith("workflow-session-"):
                         await repo.update_agent(existing.id, team_id=run_team_id)
-                except Exception:  # noqa: BLE001 — 收尸失败不阻塞遥测 upsert
+                except Exception:  # noqa: BLE001 — a corpse-collection failure does not block the telemetry upsert
                     pass
         wa = WorkflowAgent(
             run_id=wf_id,
@@ -418,14 +441,15 @@ async def ingest_run_from_file(
     event_bus: EventBus,
     wf_json_path: str | Path,
 ) -> dict[str, Any]:
-    """读 ``wf_<id>.json`` 富快照 → upsert run + agents → 回写 team → emit completed。
+    """Read the ``wf_<id>.json`` rich snapshot → upsert run + agents → write back team → emit completed.
 
-    幂等：可反复重跑（upsert by 自然键，emit 只在「新完成」时触发，避免事件翻倍）。
-    全 try/except，绝不抛（供 hook/reaper best-effort 调用）。
+    Idempotent: can be re-run repeatedly (upsert by natural key; emit fires only on "newly completed", avoiding event
+    doubling).
+    Fully try/except-wrapped, never raises (for best-effort hook/reaper calls).
     """
     path = Path(wf_json_path)
-    # Phase2 fingerprint：read_text *之前* stat（TOCTOU 保守向：读后文件再变则存的
-    # 是旧 fp → 下 tick 必不命中 → 重新 ingest，方向安全）。
+    # Phase2 fingerprint: stat *before* read_text (TOCTOU-conservative: if the file changes after the read, the stored
+    # fp is the old one → the next tick definitely misses → re-ingests; the direction is safe).
     fp = ""
     try:
         st = path.stat()
@@ -434,7 +458,7 @@ async def ingest_run_from_file(
         fp = ""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:  # noqa: BLE001 — 文件读失败不再学裸 except: pass，落日志
+    except Exception as exc:  # noqa: BLE001 — a file-read failure no longer imitates a bare except: pass; it logs
         logger.warning("workflow ingest: read/parse failed %s: %s", path, exc)
         return {"ok": False, "reason": "read_error", "path": str(path)}
 
@@ -445,16 +469,18 @@ async def ingest_run_from_file(
     if not wf_id:
         return {"ok": False, "reason": "no_runId", "path": str(path)}
 
-    # session_id 从路径反解：<session>/workflows/wf_<id>.json。
+    # session_id reverse-resolved from the path: <session>/workflows/wf_<id>.json.
     session_id: str | None = None
     try:
         session_id = path.parent.parent.name or None
     except Exception:
         session_id = None
 
-    # team / project 关联：优先既有 workflow-<wf_id> 团队；没有就认养本会话的
-    # workflow-session-<sid> 兜底队（wf_id 迟到时 agents 全挂在那里——只按 wf 名
-    # 找会造成「一 run 两队」碎片化）；OS 离线期两者皆无时留空。
+    # team / project association: prefer the existing workflow-<wf_id> team; if none, adopt this session's
+    # workflow-session-<sid> fallback team (when the wf_id arrives late, all agents hang there — looking up by wf name
+    # alone
+    # would cause "one run, two teams" fragmentation); when neither exists during the OS's offline period, leave it
+    # empty.
     team = None
     try:
         team = await repo.get_team_by_name(f"workflow-{wf_id}")
@@ -470,9 +496,12 @@ async def ingest_run_from_file(
     team_id = team.id if team else None
     project_id = (getattr(team, "project_id", None) or "") if team else ""
 
-    # 归属＝文件真相源（用户 2026-07-07 定案，废止"收纳进 OS"策略）：run 落盘
-    # 所在 slug ↔ 已注册项目 root 的 slug 精确匹配；匹配到即覆盖 team 继承值
-    #（team 可能被历史收纳策略吸错项目），匹配不到保持原值/留空不猜。
+    # Ownership = the file source of truth (user decision 2026-07-07, abolishing the "absorb into the OS" strategy): the
+    # slug of the run's landing
+    # location ↔ the slug of a registered project's root must match exactly; on a match it overrides the team-inherited
+    # value
+    # (the team may have been absorbed into the wrong project by the historical strategy); on no match, keep the
+    # original value / leave empty and never guess.
     try:
         _run_slug = path.parent.parent.parent.name
         for _p in await repo.list_projects():
@@ -508,16 +537,20 @@ async def ingest_run_from_file(
         script_path=str(data.get("scriptPath") or ""),
         started_at=started_at,
         completed_at=completed_at,
-        source_fingerprint=fp or None,  # None=不改（stat 失败时保留旧 fp）
+        source_fingerprint=fp or None,  # None = no change (keep the old fp when stat fails)
     )
 
-    # 事件去重护栏：只在「本次首次完成」emit workflow.completed；
-    # killed/failed 首次入终态则 emit workflow.run_ingested（Phase2，此前静默）。
-    # 「首次转移」的判定收进 upsert 事务内(读旧 status→写新 status 原子返回 became_*)，
-    # 替代事务外先 get→was_completed 的 check-then-act；再套 per-wf 进程内锁把「upsert→
-    # 拿 became_*」临界区串行化——只有一条驱动能拿到 running→completed 的跃迁，其余序后
-    # upsert 必见 completed → became_completed=False。emit 在锁外按各自捕获的 became_*
-    # 决策，故只有一条真正发射(审计 WP10：三条无串行驱动交错)。
+    # Event dedup guardrail: emit workflow.completed only on "this ingestion's first completion";
+    # when killed/failed first enter a terminal state, emit workflow.run_ingested (Phase2; previously silent).
+    # The "first transition" judgment is folded into the upsert transaction (read old status → write new status,
+    # atomically returning became_*),
+    # replacing the outside-transaction get → was_completed check-then-act; then a per-wf in-process lock serializes the
+    # "upsert →
+    # obtain became_*" critical section — only one driver can obtain the running→completed transition; the others,
+    # sequenced after it,
+    # necessarily see completed on upsert → became_completed=False. Emits happen outside the lock, each decided by its
+    # own captured became_*
+    # value, so exactly one truly emits (audit WP10: three unserialized drivers interleaving).
     try:
         async with _wf_ingest_lock(wf_id):
             upsert_res = await repo.upsert_workflow_run(run)
@@ -525,14 +558,14 @@ async def ingest_run_from_file(
         logger.warning("workflow ingest: run upsert failed wf=%s: %s", wf_id, exc)
         return {"ok": False, "reason": "run_upsert_failed", "wf_id": wf_id}
 
-    # 批量 upsert 逐-agent 遥测（type=workflow_agent），并盖 os_agent_id 关联既有成员
-    # + 收尸迁移滞留兜底队的成员进 run 队。
+    # Batch upsert per-agent telemetry (type=workflow_agent), stamping os_agent_id to associate existing members
+    # + and corpse-collect-migrate members lingering in the fallback team into the run team.
     n = await _upsert_agents_from_progress(
         repo, wf_id, project_id, data.get("workflowProgress"), run_team_id=team_id
     )
 
-    # 顺带回填历史缺口：team.completed_at 恒 None → 用 startTime+durationMs 写回；
-    # 对既有 nullable 字段的写入，非删除，合规（红线3）。
+    # Also backfills a historical gap: team.completed_at is always None → write it back using startTime+durationMs;
+    # writing to an existing nullable field, not a deletion — compliant (red line 3).
     if team is not None:
         try:
             updates: dict[str, Any] = {}
@@ -540,25 +573,31 @@ async def ingest_run_from_file(
                 updates["completed_at"] = completed_at
             if run.summary and not (getattr(team, "summary", "") or ""):
                 updates["summary"] = run.summary[:500]
-            # workflow 队归属跟随 run 的文件真相源（纠正历史收纳吸错的项目）
+            # The workflow team's ownership follows the run's file source of truth (correcting projects wrongly absorbed
+            # historically)
             if project_id and (getattr(team, "project_id", None) or "") != project_id:
                 updates["project_id"] = project_id
-            # 队状态跟随 run（2026-07-08 实录）：旁路会话的 SessionEnd 曾把仍在
-            # running 的 run 的队误杀成 completed——run 在跑则复活 active（自愈
-            # 存量误杀），run 终态则收敛 completed。与 SessionEnd 的 workflow 队
-            # 豁免必须同批（否则 ingest 复活↔SessionEnd 再杀 ping-pong）。
-            _t_status = str(getattr(team, "status", ""))  # 枚举 str 可能带类名前缀
+            # Team status follows the run (record 2026-07-08): a bypass session's SessionEnd once killed the team of a
+            # still-
+            # running run into completed — while the run runs, revive to active (self-healing
+            # historical mis-kills); at run terminal state, converge to completed. This must ship in the same batch as
+            # SessionEnd's workflow-team
+            # exemption (otherwise ingest revives ↔ SessionEnd kills again, ping-ponging).
+            _t_status = str(getattr(team, "status", ""))  # an enum's str may carry a class-name prefix
             if status in _WF_TERMINAL_STATUSES and _t_status.endswith("active"):
                 updates["status"] = "completed"
             elif status == "running" and _t_status.endswith("completed"):
                 updates["status"] = "active"
             if updates:
                 await repo.update_team(team.id, **updates)
-            # 成员收工对称补全（2026-07-10 实锤 wf_811593ec 两成员 busy 滞留）：
-            # SubagentStop 偶发丢失时终态 run 的成员没人转 offline，只能等
-            # reaper 15min 心跳超时。run 终态即队内无活人，直接收工。
-            # 排除 leader：历史 Leader 行可能寄生在 workflow 队（03fe7cae），
-            # 它的 busy 属于活会话，不归本 run 收（轮35 手工清理误扫实锤）。
+            # Symmetric member wrap-up completion (confirmed 2026-07-10, wf_811593ec: two members stuck busy):
+            # when SubagentStop is occasionally lost, nobody moves a terminal run's members to offline and they can only
+            # wait for
+            # the reaper's 15min heartbeat timeout. A terminal run means no one alive in the team — wrap them up
+            # directly.
+            # Excluding the leader: a historical Leader row may parasitize a workflow team (03fe7cae),
+            # and its busy state belongs to a live session, not to this run's collection (a manual cleanup in round 35
+            # mistakenly swept it, confirmed in practice).
             if status in _WF_TERMINAL_STATUSES:
                 for member in await repo.list_agents(team.id):
                     if str(getattr(member, "role", "")) == "leader":
@@ -593,8 +632,9 @@ async def ingest_run_from_file(
         except Exception as exc:  # noqa: BLE001
             logger.warning("workflow ingest: emit completed failed wf=%s: %s", wf_id, exc)
 
-    # Phase2：killed/failed 首次入终态 emit workflow.run_ingested（MVP 此前静默；
-    # workflow.completed 语义原样不动，两者互斥——completed 走上面分支）。
+    # Phase2: killed/failed first entering a terminal state emit workflow.run_ingested (the MVP was silent before;
+    # workflow.completed's semantics stay untouched and the two are mutually exclusive — completed takes the branch
+    # above).
     if status in ("killed", "failed") and upsert_res.became_terminal:
         try:
             await event_bus.emit(
@@ -628,7 +668,7 @@ async def ingest_run_from_file(
 
 
 # ============================================================
-# 对账（reaper 保底 + SessionStart/手动加速，共用同一 ingest 函数）
+# Reconciliation (reaper fallback + SessionStart/manual acceleration, sharing the same ingest function)
 # ============================================================
 
 
@@ -638,14 +678,15 @@ async def reconcile(
     project_dir: str | None = None,
     session_id: str | None = None,
 ) -> dict[str, Any]:
-    """扫 proj-slug 下所有 ``workflows/wf_*.json`` 逐文件 ingest（每文件独立 try/except）。
+    """Scan all ``workflows/wf_*.json`` under a proj-slug and ingest file by file (each file in its own try/except).
 
     Args:
-        project_dir: 限定到该目录所属项目的 slug；None 则扫全部已注册项目。
-        session_id: 限定到某会话 ``<slug>/<session_id>/workflows/``（hook 流量加速用）。
+        project_dir: limit to the slug of the project owning this directory; None scans all registered projects.
+        session_id: limit to one session's ``<slug>/<session_id>/workflows/`` (used to accelerate hook traffic).
 
     Returns:
-        {ingested（本次新完成计数）, updated（已完成再对账计数）, errors, scanned}。
+        {ingested (count newly completed this time), updated (count of already-completed re-reconciled), errors,
+        scanned}.
     """
     ingested = 0
     updated = 0
@@ -670,25 +711,30 @@ async def reconcile(
         if matched and matched.root_path:
             slug_set.add(_project_slug(matched.root_path))
         else:
-            # 未匹配到已注册项目时，直接对 cwd 反解 slug（覆盖尚未注册的项目）。
+            # When no registered project matches, reverse-resolve the slug directly from the cwd (covering
+            # not-yet-registered projects).
             slug_set.add(_project_slug(project_dir))
     else:
         for p in projects:
             if p.root_path:
                 slug_set.add(_project_slug(p.root_path))
 
-    # 稳态廉价短路（每文件恰好 stat 一次，Phase2 fingerprint 先行、mtime 兜底）：
-    # ① run 行 source_fingerprint 非空 → fp(mtime_ns:size) 相等即 skip、不等直接
-    #    ingest（不再落 mtime 比较：同秒追加 mtime 相等但 size 变了会被 mtime 规则
-    #    误跳过——(mtime_ns,size) 二元组严格强于纯 mtime，只增强不倒退）；
-    # ② fp 为空（Phase2 前入库的老行）→ 沿用原 mtime ≤ updated_at 规则（MVP 逐字节
-    #    回归）。刻意不用「终态即跳过」：resumeFromRunId 会原地重写同名 wf_<id>.json
-    #    （killed→completed），fp/mtime 变新自然触发重新 ingest。
+    # Steady-state cheap short-circuit (exactly one stat per file; Phase2 fingerprint first, mtime as fallback):
+    # 1) The run row's source_fingerprint is non-empty → fp(mtime_ns:size) equal means skip; unequal means ingest
+    # directly
+    # (no longer falling to an mtime comparison: a same-second append has equal mtime but changed size and would be
+    # wrongly
+    # skipped by the mtime rule — the (mtime_ns, size) tuple is strictly stronger than pure mtime, only strengthening,
+    # never regressing);
+    # 2) fp empty (old rows ingested before Phase2) → keep the original mtime ≤ updated_at rule (an MVP byte-for-byte
+    # regression test). Deliberately not using "terminal state means skip": resumeFromRunId rewrites the same-named
+    # wf_<id>.json in place
+    #    (killed→completed), and a newer fp/mtime naturally triggers re-ingestion.
     last_ingest: dict[str, tuple[datetime | None, str]] = {}
     try:
         for known in await repo.list_workflow_runs(limit=1000):
             last_ingest[known.wf_id] = (known.updated_at, known.source_fingerprint or "")
-    except Exception:  # noqa: BLE001 — 预载失败则退化为全量 ingest（仍幂等）
+    except Exception:  # noqa: BLE001 — a preload failure degrades to a full ingest (still idempotent)
         last_ingest = {}
 
     inner = (
@@ -718,17 +764,17 @@ async def reconcile(
                     st = None
                 if st is not None:
                     if prev_fp:
-                        # fingerprint 先行：相等=文件未变 skip；不等直接 ingest
+                        # fingerprint first: equal = file unchanged, skip; unequal = ingest directly
                         if f"{st.st_mtime_ns}:{st.st_size}" == prev_fp:
                             continue
                     elif (
                         prev_time is not None
                         and from_timestamp(st.st_mtime) <= prev_time
                     ):
-                        continue  # 老行 mtime 兜底：文件自上次入库后未变更
+                        continue  # old-row mtime fallback: the file has not changed since the last ingestion
             try:
                 res = await ingest_run_from_file(repo, event_bus, jf)
-            except Exception as exc:  # noqa: BLE001 — 单文件失败隔离，不阻断其余
+            except Exception as exc:  # noqa: BLE001 — a single file's failure is isolated and does not block the rest
                 errors += 1
                 logger.warning("reconcile: ingest raised %s: %s", jf, exc)
                 continue
@@ -744,13 +790,13 @@ async def reconcile(
 
 
 # ============================================================
-# Phase2 live 追踪（挂 reaper tick / 手动 reconcile；best-effort，单 run 失败隔离）
+# Phase2 live tracking (attached to reaper ticks / manual reconcile; best-effort, single-run failure isolation)
 # ============================================================
 
 
 async def _candidate_slugs(repo: StorageRepository, run: WorkflowRun) -> list[str]:
-    """run 的 CC projects slug 候选：有 project_id 取其 root_path 反解；缺失/未命中
-    则遍历全部已注册项目 slug（对齐 reconcile 的 slug_set 逻辑）。"""
+    """A run's CC projects slug candidates: with a project_id, reverse-resolve its root_path; when missing/not hit,
+    iterate all registered projects' slugs (aligned with reconcile's slug_set logic)."""
     slugs: list[str] = []
     if run.project_id:
         try:
@@ -770,10 +816,13 @@ async def _candidate_slugs(repo: StorageRepository, run: WorkflowRun) -> list[st
                 s = _project_slug(p.root_path)
                 if s not in slugs:
                     slugs.append(s)
-    # 跨项目修复B（窄回退，存量行专用）：老行无 transcript_dir 时，已注册项目的
-    # slug 可能都不含其会话（未注册项目的 run）——按 session_id 全局反查一次目录。
-    # 观察集（running ∪ 24h 窗内 interrupted）有界，成本可控；新行走 A 直接寻址
-    # 不进此路径，稳态零 stat 语义不倒退。
+    # Cross-project fix B (narrow fallback, for legacy rows only): when an old row has no transcript_dir, registered
+    # projects'
+    # slugs may none of them contain its session (a run of an unregistered project) — do one global reverse lookup of
+    # the directory by session_id.
+    # The observation set (running ∪ interrupted within the 24h window) is bounded and the cost controllable; new rows
+    # take A's direct addressing
+    # and never enter this path, so the steady-state zero-stat semantics do not regress.
     if run.session_id and not run.transcript_dir:
         try:
             for d in _claude_projects_dir().glob(f"*/{run.session_id}"):
@@ -789,9 +838,9 @@ async def _candidate_slugs(repo: StorageRepository, run: WorkflowRun) -> list[st
 def _find_wf_dir(
     base: Path, slugs: list[str], session_id: str | None, wf_id: str
 ) -> Path | None:
-    """定位 live 转录目录 ``<slug>/<session>/subagents/workflows/<wf_id>/``。
+    """Locate the live transcript directory ``<slug>/<session>/subagents/workflows/<wf_id>/``.
 
-    session_id 已知直接拼路径；缺失/未命中时 glob ``*/subagents/workflows/<wf_id>``。
+    With session_id known, build the path directly; when missing/not hit, glob ``*/subagents/workflows/<wf_id>``.
     """
     for slug in slugs:
         proj_dir = base / slug
@@ -805,13 +854,13 @@ def _find_wf_dir(
             for cand in proj_dir.glob(f"*/subagents/workflows/{wf_id}"):
                 if cand.is_dir():
                     return cand
-        except Exception:  # noqa: BLE001 — 目录竞态等，继续下一 slug
+        except Exception:  # noqa: BLE001 — directory races etc.; continue to the next slug
             continue
     return None
 
 
 async def live_wf_dir(repo: StorageRepository, run: WorkflowRun) -> Path | None:
-    """live 转录目录定位（设计 §10.2 步骤④-1 的独立入口，测试/复用友好）。"""
+    """Live transcript directory location (the standalone entry of design §10.2 step 4-1; test/reuse friendly)."""
     slugs = await _candidate_slugs(repo, run)
     return _find_wf_dir(_claude_projects_dir(), slugs, run.session_id, run.wf_id)
 
@@ -823,10 +872,10 @@ def _find_terminal_json(
     wf_id: str,
     wf_dir: Path | None,
 ) -> Path | None:
-    """终态快照 ``<session>/workflows/<wf_id>.json`` —— *存在* 才返回路径。
+    """Terminal-state snapshot ``<session>/workflows/<wf_id>.json`` — returns the path only if it *exists*.
 
-    wf_dir 已知时直接取其兄弟目录（<session>/subagents/workflows/<wf_id> 上三层）；
-    否则按 slug+session 拼路径 / glob 兜底。
+    When wf_dir is known, take its sibling directory directly (<session>/subagents/workflows/<wf_id> up three levels);
+    otherwise build the path from slug+session / glob as a fallback.
     """
     if wf_dir is not None:
         try:
@@ -856,24 +905,31 @@ async def tail_live_run(
     event_bus: EventBus,
     run: WorkflowRun,
 ) -> dict[str, Any]:
-    """对单个 running / interrupted(24h 窗内) run 做一轮 live 采集（§10.2 步骤④）。
+    """Perform one round of live collection for a single running / interrupted (within the 24h window) run (§10.2 step
+    4).
 
-    1) 终态 json 已落盘 → 直接 ingest_run_from_file 后返回（D3 终态覆盖 live）；
-    2) journal.jsonl 字节 offset 增量 tail：只消费到最后一个 ``\\n``（并发写半行
-       防护）；``st_size < offset`` ⇒ 文件被重写 ⇒ 复位 0；
-    3) existing map 打底逐 agent 富化：mtime 未前进跳过重算；lastCtx token（D1）、
-       首行 timestamp → started_at；journal 已 started 但无 agent jsonl → cached
-       记 0；只覆写 state/tokens/started_at/last_activity_at，label/phase 保留；
-    4) run 级水位 upsert（journal_offset / live_tokens / last_activity_at；status
-       携空串不参与 rank）；**无变化不 upsert** → updated_at 冻结，interrupted
-       过 24h 复查窗自然老化，稳态回归零 stat；
-    5) interrupted 四条件判定（§10.5，只打标不删行；误判由终态 rank 2→3 自愈）；
-    6) 聚合 emit workflow.agent_updated（每 run 每 tick 一条）/ workflow.run_ingested。
+    1) The terminal-state json has landed → ingest_run_from_file directly and return (D3: terminal state overrides
+    live);
+    2) journal.jsonl byte-offset incremental tail: consume only up to the last ``\\n`` (guarding against half-lines from
+    concurrent
+       writes); ``st_size < offset`` ⇒ the file was rewritten ⇒ reset to 0;
+    3) Enrich per agent on top of the existing map: skip recomputation when mtime has not advanced; lastCtx tokens (D1),
+       first-row timestamp → started_at; journal says started but no agent jsonl → cached
+       record 0; overwrite only state/tokens/started_at/last_activity_at, keeping label/phase;
+    4) Run-level watermark upsert (journal_offset / live_tokens / last_activity_at; status
+       carrying an empty string does not participate in rank); **no change means no upsert** → updated_at freezes, and
+       interrupted runs
+       age out of the 24h re-check window naturally, returning steady state to zero stats;
+    5) interrupted four-condition judgment (§10.5; marks only, never deletes rows; misjudgments self-heal via the
+    terminal-state rank 2→3);
+    6) Aggregated emits of workflow.agent_updated (one per run per tick) / workflow.run_ingested.
     """
     wf_id = run.wf_id
     base = _claude_projects_dir()
-    # 跨项目修复A：回执持久化的 transcript_dir 优先直接寻址——不依赖项目注册、
-    # 零 glob；目录被清理等失效场景回退 slug 候选（含 B 存量行会话反查）。
+    # Cross-project fix A: the receipt-persisted transcript_dir takes priority for direct addressing — no dependence on
+    # project registration,
+    # zero globs; invalidation scenarios such as a cleaned-up directory fall back to the slug candidates (including B's
+    # legacy-row session reverse lookup).
     wf_dir: Path | None = None
     slugs: list[str] = []
     if run.transcript_dir:
@@ -886,8 +942,9 @@ async def tail_live_run(
         slugs = await _candidate_slugs(repo, run)
         wf_dir = _find_wf_dir(base, slugs, run.session_id, wf_id)
 
-    # 1. 终态优先：wf_<id>.json 已存在 → 文件值覆盖一切 live 近似
-    #    （transcript_dir 已知时直接推兄弟路径，转录目录即使已被清理也能命中）
+    # 1. Terminal state first: wf_<id>.json exists → file values override all live approximations
+    # (when transcript_dir is known, derive the sibling path directly; it still hits even if the transcript directory
+    # has been cleaned up)
     json_path: Path | None = None
     if run.transcript_dir:
         _direct = run_json_path_from_transcript_dir(run.transcript_dir, wf_id)
@@ -907,9 +964,9 @@ async def tail_live_run(
     file_mtimes: list[datetime] = []
     journal_states: dict[str, str] = {}
     prev_offset = run.journal_offset or 0
-    new_offset: int | None = None  # None = 本 tick 无 journal 信息，不动水位
+    new_offset: int | None = None  # None = this tick has no journal information; do not touch the watermark
 
-    # 2. journal 增量 tail
+    # 2. journal incremental tail
     if wf_dir is not None:
         jpath = wf_dir / "journal.jsonl"
         try:
@@ -920,7 +977,7 @@ async def tail_live_run(
             file_mtimes.append(from_timestamp(jst.st_mtime))
             offset = prev_offset
             if jst.st_size < offset:
-                offset = 0  # 文件被重写 → 复位重新 tail
+                offset = 0  # the file was rewritten → reset and tail again
             new_offset = offset
             if jst.st_size > offset:
                 chunk = b""
@@ -932,14 +989,15 @@ async def tail_live_run(
                     chunk = b""
                 nl = chunk.rfind(b"\n")
                 if nl >= 0:
-                    # 只消费到最后一个 \n；无换行尾段不解析、offset 不越过它
+                    # consume only up to the last \n; a trailing segment without a newline is not parsed and the offset
+                    # does not pass it
                     for raw in chunk[: nl + 1].split(b"\n"):
                         raw = raw.strip()
                         if not raw:
                             continue
                         try:
                             obj = json.loads(raw)
-                        except Exception:  # noqa: BLE001 — 单行损坏跳过不中断
+                        except Exception:  # noqa: BLE001 — a single corrupted line is skipped without interrupting
                             continue
                         if not isinstance(obj, dict):
                             continue
@@ -952,7 +1010,8 @@ async def tail_live_run(
                             journal_states[ccid] = "done"
                     new_offset = offset + nl + 1
 
-    # agent-<ccid>.jsonl 清单（files_known=False 时零信息，绝不套 cached 记 0 规则）
+    # agent-<ccid>.jsonl inventory (when files_known=False there is zero information; never apply the cached-record-0
+    # rule)
     agent_files: dict[str, Path] = {}
     files_known = False
     if wf_dir is not None:
@@ -965,7 +1024,7 @@ async def tail_live_run(
         except Exception:  # noqa: BLE001
             agent_files = {}
 
-    # 3. existing 打底逐 agent 富化（防清零：只覆写本 tick 新算字段）
+    # 3. Enrich per agent on top of existing (anti-zeroing: overwrite only fields newly computed this tick)
     try:
         existing = {
             a.cc_agent_id: a
@@ -988,7 +1047,7 @@ async def tail_live_run(
 
         if fpath is not None:
             if not state_new:
-                state_new = "running"  # 有转录文件即至少已启动
+                state_new = "running"  # having a transcript file means at least started
             try:
                 fst = fpath.stat()
             except OSError:
@@ -998,31 +1057,37 @@ async def tail_live_run(
                 file_mtimes.append(fmt)
                 prev_act = base_row.last_activity_at if base_row else None
                 if prev_act is None or fmt > prev_act:
-                    # 逐 agent 廉价水位：mtime 未前进则跳过 token 重算
+                    # cheap per-agent watermark: skip token recomputation when mtime has not advanced
                     ctx = _last_assistant_ctx_tokens(fpath)
                     if ctx is not None:
                         tokens_new = ctx
                     if started_new is None:
                         started_new = _first_line_timestamp(fpath)
                     act_new = fmt
-            # running 期语义标签（3edd0dc1）：label 要等终态 wf json 才有，
-            # 活跃期用 prompt 首行顶上；已有 label/preview 则零成本跳过。
+            # Running-period semantic label (3edd0dc1): the label only exists in the terminal-state wf json,
+            # so during the active period the prompt's first line stands in; an existing label/preview is skipped at
+            # zero cost.
             if not prompt_new and not (base_row.label if base_row else ""):
                 prompt_new = _first_user_prompt(fpath)
         elif files_known and not tokens_new:
-            # journal 已 started 但磁盘无 agent jsonl → 跨运行缓存命中，live 记 0
-            # （D1 近似）；残余误差由终态文件覆盖（D3，合并规则 int 0 会写入）。
-            # 护栏（V2 评审 major）：tokens>0 的行必来自 .output 兜底 enrich
-            #（真·缓存命中恒为 0）——不清零，避免 live tick 抹掉已富化的真实遥测。
+            # journal says started but no agent jsonl on disk → cross-run cache hit; live records 0
+            # (D1 approximation); residual error is overridden by the terminal-state file (D3; per the merge rule, int 0
+            # is written).
+            # Guardrail (V2 review, major): a row with tokens>0 must come from the .output fallback enrich
+            # (a true cache hit is always 0) — do not zero it, so a live tick does not erase already-enriched real
+            # telemetry.
             tokens_new = 0
 
         live_total += tokens_new
 
-        # —— running 期队成员收尸（2026-07-10 用户实锤三种失散）：SubagentStart
-        # 事件偶发丢失 → 成员行缺失；wf_id 在 Start 时不可见 → 行滞留
-        # workflow-session-* 兜底队且 promote 要等下个事件，长跑 agent 期间团队页
-        # "少人/只见一个"。tail 手握本 run 权威 ccid 集与 team_id，每 tick 幂等补正；
-        # 终态回执/对账仍是最终真相（本处只补行/归队，绝不动非兜底队的行）。
+        # —— Running-period team-member corpse collection (2026-07-10, user-confirmed three loss modes): SubagentStart
+        # events occasionally lost → member rows missing; wf_id invisible at Start → rows lingering in the
+        # workflow-session-* fallback team, with promote waiting for the next event, so during a long-running agent the
+        # team page shows
+        # "missing members / only one visible". The tail holds this run's authoritative ccid set and team_id and
+        # corrects idempotently every tick;
+        # the terminal receipt/reconciliation remains the final truth (here we only add rows / reassign teams, never
+        # touching rows of non-fallback teams).
         if run.team_id and ccid:
             try:
                 os_row = await repo.find_agent_by_cc_id(ccid)
@@ -1030,7 +1095,7 @@ async def tail_live_run(
                     created = await repo.create_agent(
                         team_id=run.team_id,
                         name=f"wf-{ccid[:10]}",
-                        # = hook_translator.WORKFLOW_AGENT_TYPE（字面量防循环 import）
+                        # = hook_translator.WORKFLOW_AGENT_TYPE (a literal, to avoid a circular import)
                         role="workflow-subagent",
                         source="hook",
                         session_id=run.session_id or "",
@@ -1054,10 +1119,12 @@ async def tail_live_run(
                             cur_team.name or ""
                         ).startswith("workflow-session-"):
                             await repo.update_agent(os_row.id, team_id=run.team_id)
-                    # 活性触摸（2026-07-10 Wenge 实锤"WF 0 成员"）：workflow agent
-                    # 长跑期间无人更新心跳，15min 被 reaper 误转 offline——journal
-                    # 未见终态即为活着，触摸回 busy + last_active_at 前移（agent 真死
-                    # 后 mtime 停滞，reaper 仍会正常收走，不会僵尸永生）。
+                    # Liveness touch (2026-07-10, Wenge confirmed "WF 0 members"): during a workflow agent's
+                    # long run nobody updates its heartbeat, and after 15min the reaper wrongly moves it offline — the
+                    # journal
+                    # not showing a terminal state means it is alive, so touch it back to busy + move last_active_at
+                    # forward (after the agent truly dies,
+                    # its mtime stalls and the reaper still collects it normally; no zombie immortality).
                     if state_new == "running" and str(
                         getattr(os_row, "status", "")
                     ) not in ("busy",):
@@ -1066,7 +1133,7 @@ async def tail_live_run(
                             status="busy",
                             last_active_at=act_new or now,
                         )
-            except Exception as exc:  # noqa: BLE001 — 收尸失败不影响投影主链路
+            except Exception as exc:  # noqa: BLE001 — a corpse-collection failure does not affect the main projection chain
                 logger.debug("live tail: member reap failed cc=%s: %s", ccid, exc)
 
         agent_changed = (
@@ -1113,7 +1180,7 @@ async def tail_live_run(
         except Exception as exc:  # noqa: BLE001
             logger.warning("live tail: agent upsert failed wf=%s cc=%s: %s", wf_id, ccid, exc)
 
-    # 4/5. run 级水位 + interrupted 四条件判定（§10.5，缺一不可）
+    # 4/5. run-level watermark + interrupted four-condition judgment (§10.5, all four required)
     file_activity = max(file_mtimes) if file_mtimes else None
     offset_changed = new_offset is not None and new_offset != prev_offset
     tokens_changed = files_known and live_total != (run.live_tokens or 0)
@@ -1122,8 +1189,9 @@ async def tail_live_run(
     )
     run_changed = offset_changed or tokens_changed or activity_advanced
 
-    # 判定活动基准：max(journal+agent jsonl mtime)；文件全缺 fallback 已存水位/
-    # started_at/created_at（刚启动文件未落地时 created_at 很新 → 条件4 不满足）。
+    # Activity-judgment baseline: max(journal + agent jsonl mtime); when all files are missing, fall back to the stored
+    # watermark /
+    # started_at/created_at (right after launch, before files land, created_at is very fresh → condition 4 is not met).
     judge_activity = (
         file_activity or run.last_activity_at or run.started_at or run.created_at
     )
@@ -1131,10 +1199,12 @@ async def tail_live_run(
         int((now - judge_activity).total_seconds()) if judge_activity else 0
     )
     mark_interrupted = (
-        run.status == "running"  # 条件1：唯一入口秩
-        and json_path is None  # 条件2：终态 json 不存在（存在时已在上方 return）
-        and judge_activity is not None  # 条件3：活动基准可得
-        and stall_seconds > WF_STALL_SECONDS  # 条件4：静止超阈值
+        run.status == "running"  # condition 1: the sole entry rank
+        # condition 2: the terminal-state json does not exist (when it exists we already
+        # returned above)
+        and json_path is None
+        and judge_activity is not None  # condition 3: the activity baseline is obtainable
+        and stall_seconds > WF_STALL_SECONDS  # condition 4: stillness exceeds the threshold
     )
 
     if run_changed or mark_interrupted:
@@ -1143,11 +1213,11 @@ async def tail_live_run(
                 WorkflowRun(
                     wf_id=wf_id,
                     project_id=run.project_id or "",
-                    status="interrupted" if mark_interrupted else "",  # 空串不参与 rank
-                    source="",  # 空串合并后保留原值
-                    journal_offset=new_offset,  # None=不动；显式 0=复位（水位语义）
+                    status="interrupted" if mark_interrupted else "",  # an empty string does not participate in rank
+                    source="",  # an empty string keeps the original value after merging
+                    journal_offset=new_offset,  # None = no change; explicit 0 = reset (watermark semantics)
                     live_tokens=live_total if files_known else None,
-                    last_activity_at=file_activity,  # 仓库侧单调取 max
+                    last_activity_at=file_activity,  # the repository side monotonically takes max
                 )
             )
         except Exception as exc:  # noqa: BLE001
@@ -1155,7 +1225,7 @@ async def tail_live_run(
             mark_interrupted = False
             run_changed = False
 
-    # 6. 聚合事件（每 run 每 tick 至多各一条，绝不逐 agent 逐条发）
+    # 6. Aggregated events (at most one of each per run per tick; never emitted per agent)
     if changed_agents:
         try:
             await event_bus.emit(
@@ -1211,16 +1281,17 @@ async def enrich_from_task_output(
     repo: StorageRepository,
     run: WorkflowRun,
 ) -> dict[str, Any]:
-    """``/tmp/claude-<uid>/<slug>/*/tasks/<cc_task_id>.output`` 兜底富化（§10.6）。
+    """``/tmp/claude-<uid>/<slug>/*/tasks/<cc_task_id>.output`` fallback enrichment (§10.6).
 
-    真 .output 是缺 runId 的 7 键子集 —— **绝不喂 ingest_run_from_file**（runId
-    gate 必返 no_runId）；复用 ``_upsert_agents_from_progress`` 只富化 agents
-    （label/phase/tokens——正是 journal 给不出的泳道数据）与 run 级 live_tokens/
-    summary，status / total_tokens / agent_count 一概不动（终态列只归 wf-json）。
+    A real .output is a 7-key subset missing runId — **never feed it to ingest_run_from_file** (the runId
+    gate would certainly return no_runId); reuse ``_upsert_agents_from_progress`` to enrich only the agents
+    (label/phase/tokens — exactly the swimlane data the journal cannot provide) and the run-level live_tokens /
+    summary; status / total_tokens / agent_count are never touched (terminal-state columns belong solely to the
+    wf-json).
 
-    分流（实测坑）：软链 = 普通 Task 的 transcript jsonl 必须跳过（lexists+lstat+
-    S_ISLNK，悬空软链 open 会抛）；0 字节 = 任务在跑跳过；非 JSON = 纯文本日志跳过。
-    /private/tmp 重启即清（仅单开机周期 best-effort），全 try/except。
+    Shunting (measured pitfall): a symlink = an ordinary Task's transcript jsonl and must be skipped (lexists+lstat+
+    S_ISLNK; opening a dangling symlink raises); 0 bytes = task still running, skip; non-JSON = plain-text log, skip.
+    /private/tmp is cleared on restart (best-effort within a single boot cycle only), fully try/except-wrapped.
     """
     wf_id = run.wf_id
     task_id = (run.cc_task_id or "").strip()
@@ -1243,11 +1314,11 @@ async def enrich_from_task_output(
                     continue
                 lst = os.lstat(sp)
                 if stat_module.S_ISLNK(lst.st_mode):
-                    continue  # 软链 = 普通 Task transcript，误解析会污染数据
+                    continue  # a symlink = an ordinary Task transcript; mis-parsing it would pollute the data
                 if lst.st_size == 0:
-                    continue  # 任务在跑，快照未落
+                    continue  # the task is running; the snapshot has not landed
                 parsed = json.loads(Path(sp).read_text(encoding="utf-8"))
-            except Exception:  # noqa: BLE001 — 纯文本子任务日志/半写 JSON，跳过
+            except Exception:  # noqa: BLE001 — a plain-text sub-task log / half-written JSON; skip
                 continue
             if isinstance(parsed, dict) and parsed.get("workflowProgress"):
                 data = parsed
@@ -1269,10 +1340,10 @@ async def enrich_from_task_output(
                 WorkflowRun(
                     wf_id=wf_id,
                     project_id=run.project_id or "",
-                    status="",  # 不动 status
+                    status="",  # do not touch status
                     source="",
                     live_tokens=total if total > 0 else None,
-                    summary=summary,  # 合并规则：非空才覆盖
+                    summary=summary,  # merge rule: overwrite only when non-empty
                 )
             )
         except Exception as exc:  # noqa: BLE001

@@ -1,10 +1,11 @@
-"""CC 背景任务观测 — 读 ``~/.claude/jobs/<short>/state.json``，零注册依赖。
+"""CC background job observation — reads ``~/.claude/jobs/<short>/state.json``, with zero registration dependency.
 
-CC 的 `--bg` 后台会话（daemon backend）不经任何 hook 注册进 OS：它们有自己的
-sessionId、自己的 cwd，可以在用户关掉前台窗口之后继续跑。对 OS 来说这是一整
-类看不见的在飞工作——项目摘要说"没人在干活"，而实际上有 daemon 在跑。
+CC's `--bg` background sessions (daemon backend) never register into the OS through any hook: they have their own
+sessionId and their own cwd, and can keep running after the user closes the foreground window. For the OS, this is an
+entire
+class of invisible in-flight work — the project summary says "nobody is working", while a daemon is actually running.
 
-落盘形状（本机实测）::
+On-disk shape (measured on this machine)::
 
     {"state":"done","tempo":"idle","template":"bg","backend":"daemon",
      "sessionId":"44fbf725-…","resumeSessionId":"…","daemonShort":"44fbf725",
@@ -12,12 +13,15 @@ sessionId、自己的 cwd，可以在用户关掉前台窗口之后继续跑。�
      "updatedAt":"…","firstTerminalAt":"2026-07-15T11:41:17.040Z",
      "respawnFlags":["--permission-mode","auto","--model","fable"],"intent":""}
 
-★"还在飞"的判据用 ``firstTerminalAt`` 是否缺席，**不猜 state 字符串**：本机
-四条记录的 state 是 done / stopped，而 CC 二进制里根本没有一处 job 状态枚举
-把这两个值一起列出——照着已知取值写白名单，遇到没见过的终态就会把死掉的任务
-当成在飞的。缺席即在飞、出现即终态，这个判据不依赖取值集合。
+★ The "still in flight" criterion is whether ``firstTerminalAt`` is absent; it **does not guess state strings**: on this
+machine,
+the four records' states are done / stopped, yet nowhere in the CC binary is there a job-state enumeration
+listing these two values together — writing a whitelist from known values would, upon meeting an unseen terminal state,
+treat a dead job
+as if it were in flight. Absent means in flight and present means terminal; this criterion does not depend on the set of
+values.
 
-只读、不写、不缓存；任何异常退化为空列表。
+Read-only, writes nothing, caches nothing; any exception degrades to an empty list.
 """
 
 from __future__ import annotations
@@ -60,7 +64,7 @@ class BackgroundJob:
 
 
 def _model_from_flags(flags: object) -> str:
-    """respawnFlags 是 ['--model', 'fable', …] 这样的扁平数组。"""
+    """respawnFlags is a flat array like ['--model', 'fable', …]."""
     if not isinstance(flags, list):
         return ""
     for i, flag in enumerate(flags):
@@ -70,7 +74,7 @@ def _model_from_flags(flags: object) -> str:
 
 
 def read_jobs() -> list[BackgroundJob]:
-    """读全部后台任务记录，坏文件跳过。按更新时间倒序。"""
+    """Read all background job records, skipping corrupt files. In descending update-time order."""
     jobs: list[BackgroundJob] = []
     try:
         entries = sorted(_jobs_dir().glob("*/state.json"))
@@ -103,7 +107,7 @@ def read_jobs() -> list[BackgroundJob]:
 
 
 def in_flight_jobs(root_path: str = "") -> list[BackgroundJob]:
-    """还在跑的后台任务；给了项目根就只算这个项目下的。"""
+    """Background jobs still running; when a project root is given, only those under that project are counted."""
     jobs = [j for j in read_jobs() if j.in_flight]
     if not root_path:
         return jobs

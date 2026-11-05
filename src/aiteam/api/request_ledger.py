@@ -1,22 +1,32 @@
-"""HTTP 请求级账本 — 给"零调用"判断补上第二个口径。
+"""HTTP request-level ledger — giving the "zero calls" determination a second caliber.
 
-此前判断"某工具没人用"只有 CC 侧的 MCP 工具调用观测这**一个**采集面。但 MCP
-工具内部一律转成 HTTP 打到本地 API，Dashboard、hook、脚本、别的会话也都走同一
-批端点——于是"零调用"实际只等于"这一个面没看见"，既排除不了采集断链，也排除
-不了口径隔离。补上请求级账本后，零调用才有第二个口径可交叉验证。
+Previously, judging "nobody uses a certain tool" had only **one** collection surface: the CC-side observation of MCP
+tool calls. But MCP
+tools internally all convert into HTTP calls to the local API, and the Dashboard, hooks, scripts, and other sessions all
+go through the same
+batch of endpoints — so "zero calls" actually only meant "this one surface did not see it", which could rule out neither
+a broken collection chain nor
+caliber isolation. With the request-level ledger in place, zero calls finally gains a second caliber for
+cross-validation.
 
-三条设计约束（都不是偷懒，是本仓既有红线）：
+Three design constraints (none of them is laziness; all are this repo's existing red lines):
 
-* **不新建表**。I10 机检 ORM 声明的表集合与实库一致，而生产实例不能为了建表重启；
-  events 本就是 append-only 账本，聚合行天然属于它。
-* **不造新噪声**。逐请求落库会把账本淹掉（本机 events 已 5 万+），故在内存里按
-  「方法 × 路径模板 × 来源」计数，**按小时**聚合成一条 rollup 事件。选小时是因为
-  零调用判断的时间分辨率本就是天/周级，小时已经远超需要；再细只涨行数不涨信息。
-* **不引定时器**。本仓刻意没有后台守护/cron，故用**惰性翻滚**：下一个请求进来时
-  发现跨桶了，才把上一桶落库。代价是最后一桶要等下次有请求才落地——对"谁在被调
-  用"这个问题无影响（没有请求本身就是答案）。
+* **No new tables.** The I10 machine check requires the set of tables declared by the ORM to match the real database,
+  and the production instance cannot be restarted just to create a table;
+  events is already an append-only ledger, and aggregate rows naturally belong to it.
+* **No new noise.** Persisting every request would drown the ledger (events on this machine already exceeds 50k rows),
+  so counting is done in memory by
+  "method × path template × source", aggregated **hourly** into a single rollup event. Hours were chosen because
+  the time resolution of the zero-calls determination is inherently at the day/week level; hours already far exceed the
+  need, and anything finer only grows row counts, not information.
+* **No timers.** This repo deliberately has no background daemon/cron, so it uses **lazy rollover**: when the next
+  request arrives and
+  discovers the bucket has rolled over, the previous bucket is persisted. The cost is that the last bucket only lands
+  when the next request comes — for the question "who is being
+  called", this has no impact (the absence of requests is itself the answer).
 
-路径一律用**模板**（/api/tasks/{task_id}）而非实际路径，否则 id 会把基数打爆。
+Paths uniformly use **templates** (/api/tasks/{task_id}) rather than actual paths; otherwise ids would blow up the
+cardinality.
 """
 
 from __future__ import annotations

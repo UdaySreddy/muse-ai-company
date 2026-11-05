@@ -1,18 +1,20 @@
-"""会话探测 — 文件真相源直读，零注册依赖。
+"""Session probing — read directly from the file source of truth, with zero registration dependency.
 
-用户裁定（2026-07-07）：Leader 就是"在此项目目录下启动的 CC session"，
-其模型/活跃状态应由后端自动检测，而不是让 leader 经 hook 链注册进 DB 再展示。
-数据一直都在文件系统里：
+User ruling (2026-07-07): the Leader is "the CC session started under this project directory",
+and its model/active status should be auto-detected by the backend, rather than the leader registering into the DB via
+the hook chain before being displayed.
+The data has been in the filesystem all along:
 
-    ~/.claude/projects/<slug>/<session-uuid>.jsonl   ← 主会话 transcript
+    ~/.claude/projects/<slug>/<session-uuid>.jsonl   ← main session transcript
 
-- 文件 mtime = 最后活跃时间（CC 每条消息落盘即更新）
-- 尾部最后一条 assistant 行的 message.model = 当前真实模型
-  （/model 随时切换也能跟上；排除 compact 合成行 "<synthetic>"）
-- 子 agent / workflow journal 在 <slug>/<session-uuid>/ 子目录内，
-  顶层 glob("*.jsonl") 天然只命中主会话，无需再区分。
+- File mtime = last active time (CC updates it as each message is written to disk)
+- the message.model of the last assistant line at the tail = the current real model
+  (/model switches at any time are tracked; compact synthetic lines "<synthetic>" are excluded)
+- Sub-agent / workflow journals live inside the <slug>/<session-uuid>/ subdirectory,
+  so a top-level glob("*.jsonl") naturally hits only main sessions, with no further distinction needed.
 
-hook 注册链继续负责活动流水与事件，但展示层的 Leader 身份不再依赖它。
+The hook registration chain continues to handle the activity stream and events, but the display layer's Leader identity
+no longer depends on it.
 """
 
 from __future__ import annotations
@@ -24,10 +26,10 @@ from pathlib import Path
 from aiteam.api import agent_context
 from aiteam.clock import from_timestamp, utc_now
 
-# CC 在 compact 等场景写入的合成 assistant 行标记，不是真实模型
+# Marker for the synthetic assistant lines CC writes in compact and similar scenarios; not a real model
 SYNTHETIC_MODEL = "<synthetic>"
 
-# 与观测层口径一致：15 分钟内有落盘即视为"进行中"
+# Consistent with the observation layer's caliber: any write to disk within 15 minutes counts as "in progress"
 LIVE_WINDOW = timedelta(minutes=15)
 
 _TAIL_BYTES = 200_000
@@ -38,7 +40,8 @@ def _claude_projects_dir() -> Path:
 
 
 def project_slug(root_path: str) -> str:
-    """与 CC 的目录命名逐字符一致（含中文等非 ASCII 均替换为 '-'）。"""
+    """Character-for-character identical to CC's directory naming (non-ASCII characters, including Chinese, are all
+    replaced with '-')."""
     import re
 
     return re.sub(r"[^a-zA-Z0-9]", "-", root_path)
@@ -66,10 +69,10 @@ def session_last_active(root_path: str, session_id: str) -> datetime | None:
 
 
 def read_session_model(transcript_path: str) -> str:
-    """尾读主会话 transcript，取最后一条真实 assistant 消息的 model。
+    """Tail-read a main session transcript and take the model of the last real assistant message.
 
-    尾部 200KB 内向后覆盖扫描；跳过 compact 合成行（model="<synthetic>"）。
-    失败/缺失一律返回空串，绝不抛出。
+    Scan backwards covering the last 200KB; skip compact synthetic lines (model="<synthetic>").
+    On failure or absence, always return an empty string; never raise.
     """
     try:
         if not transcript_path:
@@ -86,7 +89,7 @@ def read_session_model(transcript_path: str) -> str:
         for line in data.splitlines():
             try:
                 d = json.loads(line)
-            except Exception:  # noqa: BLE001 — seek 截断的首行等
+            except Exception:  # noqa: BLE001 — the first line truncated by seek, etc.
                 continue
             if d.get("type") == "assistant":
                 m = (d.get("message") or {}).get("model")
@@ -97,8 +100,9 @@ def read_session_model(transcript_path: str) -> str:
         return ""
 
 
-# 预置 CEO 英文名单（用户裁定 2026-07-10：同项目多会话并行时，每个 session
-# 显示为 CEO-<英文名> 而非单一 "Leader"；名字从名单选取且不重复）。
+# Preset CEO English name list (user ruling 2026-07-10: when multiple sessions of the same project run in parallel, each
+# session
+# is displayed as CEO-<English name> rather than a single "Leader"; names are drawn from the list without repetition).
 CEO_NAMES = [
     "Atlas", "Nova", "Orion", "Vega", "Lyra", "Miles", "Iris", "Felix",
     "Luna", "Hugo", "Cleo", "Jasper", "Wren", "Silas", "Freya", "Kai",
@@ -107,10 +111,13 @@ CEO_NAMES = [
 
 
 def _assign_ceo_names(session_ids: list[str]) -> dict[str, str]:
-    """确定性分配不重复的 CEO 名：md5(session_id) 映射名单 + 开放寻址防撞。
+    """Deterministically assign non-repeating CEO names: md5(session_id) mapped onto the list + open addressing to avoid
+    collisions.
 
-    按 session_id 字典序处理，同一批会话的分配结果稳定（刷新不换名），
-    无需持久化状态。名单耗尽（并行 >24 会话）退化为 session 前缀。
+    Processed in session_id lexicographic order, so the assignment result for a batch of sessions is stable (refreshing
+    does not change names),
+    with no persistent state needed. When the list is exhausted (>24 parallel sessions), it degrades to the session
+    prefix.
     """
     import hashlib
 
@@ -133,16 +140,22 @@ def _assign_ceo_names(session_ids: list[str]) -> dict[str, str]:
 
 
 def detect_live_sessions(root_path: str) -> list[dict]:
-    """探测项目目录下全部活跃 CC 主会话（15min 窗内），按 mtime 降序。
+    """Probe all active CC main sessions under a project directory (within a 15min window), in descending mtime order.
 
-    多会话并行时每 session 一条；全部静默时返回最新一条（live=False），
-    保持"项目页永远能看到最近一次会话"的语义。每条带确定性 CEO 英文名。
-    纯文件系统读取，不查 DB、不依赖 hook 注册。找不到返回空列表。
+    With multiple parallel sessions there is one entry per session; when all are silent, return the latest one
+    (live=False),
+    preserving the "the project page can always see the most recent session" semantics. Each entry carries a
+    deterministic CEO English name.
+    Pure filesystem reads; no DB queries and no dependence on hook registration. Returns an empty list when nothing is
+    found.
 
-    另附 CC 会话注册表（``~/.claude/sessions/<pid>.json``）读到的 ``cc_*`` 字段：
-    真实 pid、CC 自己的 idle/busy 状态、进程是否还在、会话名与 kind。**``live``
-    仍然只由 mtime 决定**——注册表这一路是并行观察（C13），字段先摆出来供人
-    对照，判据不动。会话没登记（老会话/测试/workflow 注入）时这些字段留空。
+    It also attaches the ``cc_*`` fields read from the CC session registry (``~/.claude/sessions/<pid>.json``):
+    the real pid, CC's own idle/busy status, whether the process is still alive, and the session name and kind.
+    **``live``
+    is still decided by mtime alone** — the registry path is a parallel observation (C13); its fields are surfaced first
+    for people to
+    cross-check, while the criterion itself stays unchanged. When a session is not registered (old session / test /
+    workflow injection), these fields are left empty.
     """
     from aiteam.api import session_registry
 
@@ -151,7 +164,7 @@ def detect_live_sessions(root_path: str) -> list[dict]:
             return []
         try:
             registry = {r.session_id: r for r in session_registry.read_sessions() if r.session_id}
-        except Exception:  # noqa: BLE001 — 注册表读失败不影响主探测
+        except Exception:  # noqa: BLE001 — a registry read failure does not affect the main probe
             registry = {}
         pdir = _claude_projects_dir() / project_slug(root_path)
         if not pdir.is_dir():
@@ -174,9 +187,10 @@ def detect_live_sessions(root_path: str) -> list[dict]:
         result = []
         for f, mt in chosen:
             last_active = from_timestamp(mt)
-            # 主会话上下文水位（fleet 层 P2 观测，见 docs/fleet-layer-design.md §6.2）：
-            # 复用 agent-reuse 批次 1B 抽出的 read_ctx_tokens，同一口径作用于主会话
-            # transcript（此前只覆盖子 agent）。读失败一律留空，不影响会话探测本身。
+            # Main session context watermark (fleet layer P2 observation, see docs/fleet-layer-design.md §6.2):
+            # Reuses the read_ctx_tokens extracted in agent-reuse batch 1B, applying the same caliber to main session
+            # transcripts (previously it only covered sub-agents). Read failures are always left empty and do not affect
+            # session probing itself.
             ctx_tokens = agent_context.read_ctx_tokens(f)
             ctx_window: int | None = None
             ctx_pct: float | None = None
@@ -201,11 +215,11 @@ def detect_live_sessions(root_path: str) -> list[dict]:
                 ),
             })
         return result
-    except Exception:  # noqa: BLE001 — 探测失败不影响调用方
+    except Exception:  # noqa: BLE001 — a probe failure does not affect the caller
         return []
 
 
 def detect_live_session(root_path: str) -> dict | None:
-    """单会话兼容入口：复数版首条（最新会话）。"""
+    """Single-session compatibility entry point: the first entry of the plural version (the latest session)."""
     sessions = detect_live_sessions(root_path)
     return sessions[0] if sessions else None

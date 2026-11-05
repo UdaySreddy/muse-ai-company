@@ -55,15 +55,17 @@ class StateReaper:
         self._task: asyncio.Task | None = None
         self._running = False
         self._wake_manager = WakeAgentManager(repo, event_bus)
-        # D3 阶段C：治理 leader 租约持有者标识——同进程的 reaper/watchdog 共用
-        # f"api-{pid}"，同进程两个治理循环互为续约、绝不互抢。
+        # D3 stage C: governance leader lease holder identifier — the reaper/watchdog in the same process share
+        # f"api-{pid}"; the two governance loops in the same process renew for each other and never fight over the
+        # lease.
         self._lease_holder = f"api-{os.getpid()}"
-        # 默认模型健康巡检节流与去重（2026-07-10 用户裁定 fable 额度回退）
+        # Default-model health patrol throttling and deduplication (user ruling 2026-07-10: fable quota fallback)
         self._last_model_health_check: datetime | None = None
         self._model_health_notified = False
-        # 存活判据双轨观察（C13）：session_id -> 上次记录分歧的时刻。
-        # 只在两路判断不一致时落一条事件，且每会话 10 分钟一条——观察本身不能
-        # 变成新的事件洪水（正是 Q2 要消灭的东西）。
+        # Liveness criterion dual-track observation (C13): session_id -> the time a disagreement was last recorded.
+        # Only record one event when the two paths' judgments disagree, at most one per session every 10 minutes — the
+        # observation itself must not
+        # become a new event flood (exactly what Q2 set out to eliminate).
         self._liveness_divergence_seen: dict[str, datetime] = {}
 
     @property
@@ -93,12 +95,13 @@ class StateReaper:
                 pass
             self._task = None
             logger.info("StateReaper stopped")
-        # 让出治理租约，新实例无需等满 TTL（180s）即可接管治理动作。
-        # best-effort：失败只记日志，租约自身的 TTL 仍是兜底。
+        # Release the governance lease so a new instance can take over governance actions without waiting out the full
+        # TTL (180s).
+        # best-effort: failures are only logged; the lease's own TTL remains the fallback.
         try:
             if await self._repo.release_governance_lease(self._lease_holder):
                 logger.info("Governance lease released by %s", self._lease_holder)
-        except Exception:  # noqa: BLE001 — 关闭路径绝不因此抛出
+        except Exception:  # noqa: BLE001 — the shutdown path must never raise because of this
             logger.debug("Governance lease release failed (TTL will expire it)")
         await self._wake_manager.shutdown()
 
@@ -122,9 +125,11 @@ class StateReaper:
 
     async def _reap_cycle(self) -> None:
         """Reap cycle — processes the default DB only."""
-        # D3 阶段C：治理 leader 租约（审计 M50）——多 API 实例并存时仅租约持有者
-        # 运行治理动作（回收/推进/调度/唤醒/对账），杜绝重复唤醒与双份治理。
-        # 租约层故障时 fail-open：单实例场景无损，双实例退化为修复前行为。
+        # D3 stage C: governance leader lease (audit M50) — when multiple API instances coexist, only the lease holder
+        # runs governance actions (reaping / advancing / scheduling / waking / reconciling), eliminating duplicate
+        # wake-ups and double governance.
+        # When the lease layer fails it fails open: single-instance scenarios lose nothing, and dual instances degrade
+        # to the pre-fix behavior.
         try:
             is_leader = await self._repo.try_acquire_governance_lease(
                 self._lease_holder, ttl_seconds=REAPER_CHECK_INTERVAL * 3
@@ -174,7 +179,7 @@ class StateReaper:
         # Sweep up the husks the step above (and SessionEnd) leave behind.
         await self._purge_spent_session_containers(repo)
 
-        # 默认模型健康巡检（每小时一次）
+        # Default-model health patrol (once per hour)
         await self._check_default_model_health(now, repo)
 
         if reaped_count > 0:
@@ -185,7 +190,7 @@ class StateReaper:
         await self._check_agent_liveness(repo)
         await self._backfill_agent_watermarks(repo)
         await self._check_scheduled_tasks(now, repo)
-        # I3a: 保底轮询 Workflow 完成检测（与会话解耦的耐久工作马）。
+        # I3a: fallback polling for Workflow completion detection (a durable workhorse decoupled from sessions).
         await self._check_workflow_ingest(repo)
 
         # Hourly cleanup of old wake sessions
@@ -215,9 +220,12 @@ class StateReaper:
             reference_time = agent.last_active_at
 
         elapsed = (now - reference_time).total_seconds()
-        # workflow 子 agent 常有远超 5 分钟的合法静默（实测健康 agent 工具间隔
-        # p99=78s/max=174s，深读型任务更久），5 分钟心跳必误杀——放宽到与观测层
-        # interrupted 阈值同源的 900s；保留兜底自愈（SubagentStop 丢失时仍能收尸）。
+        # Workflow sub-agents often have legitimate silences far exceeding 5 minutes (measured healthy-agent tool
+        # intervals:
+        # p99=78s / max=174s, and deep-reading tasks run even longer), so a 5-minute heartbeat would inevitably
+        # false-kill — relaxed to the observation layer's
+        # interrupted threshold from the same source, 900s; the fallback self-healing is retained (it can still collect
+        # the corpse when SubagentStop is lost).
         timeout = HOOK_SOURCE_TIMEOUT
         if getattr(agent, "role", "") == "workflow-subagent":
             timeout = max(HOOK_SOURCE_TIMEOUT, 900)
@@ -296,22 +304,33 @@ class StateReaper:
         )
         return True
 
-    # ── _check_team_liveness 已整分支退役（2026-07-27 批 7）───────────────────
-    # 它的存在理由写在原 docstring 里："用户执行 TeamDelete 后 OS 需要快速跟随关队"。
-    # 该前提已两头消失：① CC v2.1.219 起 TeamDelete 工具不存在；② `team_create`
-    # MCP 工具与 POST /api/teams 同批退役，队只由 hook 链创建。
-    # 实测背书（本机库 254 支队）：kind 分布 = workflow 168 / session 80 / 无 kind 6，
-    # 前两类本就在豁免名单内，也就是说这条分支唯一还能命中的只有 6 支历史遗留队——
-    # 收益为零，风险却是"CC 没建目录就立刻关队"这一类误关（2026-07-08 关队事故同源）。
-    # 关队能力并未消失：_check_stale_teams 保留了同一套判据（CC config 消失 → 关队 +
-    # 级联收会），只是多等 30 分钟并同样带会议宽限保护——方向坚持"只放行不误杀"。
+    # ── _check_team_liveness has been retired as an entire branch (2026-07-27 batch 7)───────────────────
+    # Its reason for existing was written in its original docstring: "after the user executes TeamDelete, the OS needs
+    # to follow quickly and close the team".
+    # That premise has vanished at both ends: ① since CC v2.1.219 the TeamDelete tool does not exist; ② the
+    # `team_create`
+    # MCP tool and POST /api/teams were retired in the same batch; teams are now created only by the hook chain.
+    # Backed by measurement (254 teams in the local database): kind distribution = workflow 168 / session 80 / no kind
+    # 6,
+    # and the first two kinds were already on the exemption list, so the only teams this branch could still hit were 6
+    # historical leftover teams —
+    # zero benefit, while the risk was false closures of the "close the team immediately before CC has even created the
+    # directory" kind (same origin as the 2026-07-08 team-closure incident).
+    # The team-closing capability has not disappeared: _check_stale_teams retains the same set of criteria (CC config
+    # gone → close the team +
+    # cascade-close its meetings); it merely waits 30 minutes longer and carries the same meeting grace protection — the
+    # direction insists on "only let things pass, never false-kill".
 
-    # ── 默认模型健康巡检（2026-07-10 用户裁定：fable 额度回退自动化）─────────
-    # 官方 fallbackModel 明确不管额度耗尽（仅 529 过载），额度场景 CC 直接阻塞。
-    # OS 侧近似检测：默认模型为 fable/mythos 家族，且全部 transcript 已 N 天未
-    # 出现该家族 → 大概率不在订阅额度内 → 自动回退层级别名 "opus"（随代际
-    # 最新，不写死版本号）+ briefing 留痕。AITEAM_MODEL_AUTOFALLBACK=off 时
-    # 只提醒不改配置。回退成功后默认模型不再是 fable → 天然不重复触发。
+    # ── Default-model health patrol (user ruling 2026-07-10: fable quota fallback automation)─────────
+    # The official fallbackModel explicitly does not cover quota exhaustion (only 529 overload); in quota scenarios CC
+    # blocks directly.
+    # OS-side approximate detection: the default model belongs to the fable/mythos family, and that family has not
+    # appeared in any transcript for N days
+    # → most likely it is no longer within the subscription quota → automatically fall back to the tier-level alias
+    # "opus" (following the latest generation,
+    # no hardcoded version number) + leave a trace in a briefing. When AITEAM_MODEL_AUTOFALLBACK=off,
+    # it only reminds without changing the configuration. After a successful fallback the default model is no longer
+    # fable → it naturally never re-triggers.
     _MODEL_HEALTH_INTERVAL_S = 3600
     _FABLE_MISSING_DAYS = 3
 
@@ -334,7 +353,7 @@ class StateReaper:
             default = (md.read_default_model() or "").lower()
             if not any(k in default for k in ("fable", "mythos")):
                 return
-            # scan 扫全部 transcript ~1s，进线程池（M6 教训：勿阻塞事件循环）
+            # The scan sweeps all transcripts in ~1s; run it in the thread pool (M6 lesson: do not block the event loop)
             models = await asyncio.to_thread(md.scan_available_models)
             latest = max(
                 (
@@ -348,22 +367,24 @@ class StateReaper:
                 default=0.0,
             )
             if latest and _time.time() - latest < self._FABLE_MISSING_DAYS * 86400:
-                return  # fable 家族仍活跃，额度正常
+                return  # The fable family is still active; the quota is normal
             if self._model_health_notified:
-                return  # 本进程已提醒/已处置过，不刷屏
+                return  # This process has already reminded / handled it; do not spam
             auto_on = os.environ.get(
                 "AITEAM_MODEL_AUTOFALLBACK", "on"
             ).lower() not in ("off", "0", "false")
             if auto_on:
                 res = await asyncio.to_thread(md.set_default_model, "opus")
                 await _repo.create_briefing(
-                    title="默认启动模型已自动回退到 opus",
+                    title="The default startup model has automatically fallen back to opus",
                     description=(
-                        f"检测到默认模型 {default!r} 在全部 CC transcript 中已超过 "
-                        f"{self._FABLE_MISSING_DAYS} 天未出现（大概率不在订阅额度内）。"
-                        f"已将 ~/.claude/settings.json 的 model 改为层级别名 opus"
-                        f"（自动跟随最新版），原文件备份 settings.json.bak-aiteam。"
-                        f"写入结果: {res}。如需关闭自动回退：AITEAM_MODEL_AUTOFALLBACK=off"
+                        f"Detected that the default model {default!r} has not appeared in any CC transcript for more "
+                        f"than "
+                        f"{self._FABLE_MISSING_DAYS} days (most likely no longer within the subscription quota)."
+                        f"The model in ~/.claude/settings.json has been changed to the tier-level alias opus"
+                        f" (which automatically follows the latest version); the original file was backed up as "
+                        f"settings.json.bak-aiteam."
+                        f"Write result: {res}. To disable automatic fallback: AITEAM_MODEL_AUTOFALLBACK=off"
                     ),
                     urgency="high",
                 )
@@ -372,16 +393,18 @@ class StateReaper:
                 )
             else:
                 await _repo.create_briefing(
-                    title=f"默认模型 {default} 疑似已不可用",
+                    title=f"The default model {default} appears to be unavailable",
                     description=(
-                        f"该模型家族已 {self._FABLE_MISSING_DAYS} 天未出现在任何 "
-                        f"transcript 中。自动回退已关闭（AITEAM_MODEL_AUTOFALLBACK=off），"
-                        f"建议手动切换：Settings 页模型治理卡或 model_config_set('opus')。"
+                        f"This model family has not appeared in any "
+                        f"transcript for {self._FABLE_MISSING_DAYS} days. Automatic fallback is disabled "
+                        f"(AITEAM_MODEL_AUTOFALLBACK=off); "
+                        f"consider switching manually: use the model governance card on the Settings page, or "
+                        f"model_config_set('opus')."
                     ),
                     urgency="high",
                 )
             self._model_health_notified = True
-        except Exception as exc:  # noqa: BLE001 — 健康巡检失败不影响主收割
+        except Exception as exc:  # noqa: BLE001 — a health patrol failure does not affect the main reaping
             logger.debug("default model health check failed: %s", exc)
 
     async def _has_recent_active_meeting(
@@ -421,10 +444,14 @@ class StateReaper:
         teams = await _repo.list_teams()
         for team in teams:
             if team.status != "active":
-                # 矛盾态自愈（2026-07-25 实锤 wenge：队 completed 却挂着 4 个 busy
-                # 成员，前端按 active 筛队 → 整队工作全盲）。成员在干活是比任何
-                # 会话探活都硬的"队还活着"证据：发现该矛盾立即复活队。覆盖存量
-                # 错乱与任何未被预见的关队路径（防御性，不依赖上游全部改对）。
+                # Contradiction-state self-healing (confirmed in practice on 2026-07-25, wenge: the team was completed
+                # yet carried 4 busy
+                # members, and with the frontend filtering teams by active → the whole team's work was invisible).
+                # Members actively working is harder evidence that "the team is still alive" than any
+                # session liveness probe: upon discovering this contradiction, revive the team immediately. This covers
+                # the existing stock of
+                # corruption and any unforeseen team-closure path (defensive; it does not rely on every upstream path
+                # being fixed).
                 if team.status == "completed":
                     busy_members = [
                         m for m in await _repo.list_agents(team.id) if m.status == "busy"
@@ -438,9 +465,12 @@ class StateReaper:
                         )
                 continue
 
-            # workflow 队豁免：成员靠 promote/收尸迁移懒到位，run 长跑期间队可能
-            # 长期 0 成员或全 offline；其关闭由 ingest 按 run 终态跟随（2026-07-08）。
-            # 豁免只覆盖「run 还没跑完」，跑完了必须有人收——见 _close_settled_workflow_team。
+            # Workflow team exemption: members arrive lazily via promote/corpse-collection migration, and during a long
+            # run the team may
+            # remain at 0 members or fully offline for a long time; its closure follows the run's terminal state via
+            # ingest (2026-07-08).
+            # The exemption only covers "the run has not finished yet"; once it has finished, someone must collect it —
+            # see _close_settled_workflow_team.
             cfg = team.config or {}
             if cfg.get("kind") == "workflow":
                 await self._close_settled_workflow_team(
@@ -473,12 +503,16 @@ class StateReaper:
                 # Fall back to created_at when the file can't be resolved (unbound
                 # project or missing owner) so an idle container still ages out.
                 reference = last_active or team.created_at
-                # 成员活性兜底（2026-07-25 实锤：wenge 4 个 agent 在跑却全不可见）。
-                # owner_session_id 常常探不到 transcript——CC v2.1.219 的隐式团队名
-                # 是内部 id（session-87500462 这类无对应会话文件），会话 resume 后
-                # hook 的 session_id 也会换。此时 session_probe=None 便回退 created_at
-                # 判死，把正在干活的整队连人带队打成 completed/offline，前端全盲。
-                # 成员最近活跃时间不依赖任何会话 id 追踪，是最可靠的"队还活着"证据。
+                # Member-activity fallback (confirmed in practice on 2026-07-25: 4 wenge agents were running yet
+                # completely invisible).
+                # owner_session_id often cannot locate a transcript — CC v2.1.219's implicit team names
+                # are internal ids (such as session-87500462, with no corresponding session file), and after a session
+                # resumes,
+                # the hook's session_id changes too. At that point, session_probe=None falls back to created_at
+                # to pronounce death, marking the entire working team — members and all — as completed/offline and
+                # leaving the frontend blind.
+                # Members' most recent activity time depends on no session-id tracking at all, making it the most
+                # reliable evidence that "the team is still alive".
                 member_latest = max(
                     (m.last_active_at for m in members if m.last_active_at),
                     default=None,
@@ -587,7 +621,7 @@ class StateReaper:
         """
         try:
             runs = await repo.list_workflow_runs_by_team(team.id)
-        except Exception:  # noqa: BLE001 — 查不到就不收，绝不把查询失败当成"没在跑"
+        except Exception:  # noqa: BLE001 — If it cannot be looked up, do not reap it; never treat a query failure as "not running"
             logger.debug("workflow team runs lookup failed team=%s", team.id, exc_info=True)
             return None
         adopted = str(cfg.get("workflow_run_id") or "")
@@ -596,8 +630,9 @@ class StateReaper:
                 run = await repo.get_workflow_run(adopted)
             except Exception:  # noqa: BLE001
                 return None
-            # 认养 id 指向的 run 行不存在（记录从未落库/已清）→ 当作零 run 证据，
-            # 由调用方的长宽限兜住，不当作"跑完了"。
+            # The run row pointed to by the adopted id does not exist (the record was never persisted / was cleared) →
+            # treat it as zero run evidence,
+            # covered by the caller's long grace period, and not treated as "finished running".
             if run is not None:
                 runs.append(run)
         return runs
@@ -614,16 +649,20 @@ class StateReaper:
 
         The blanket workflow exemption had exactly one way out — an empty
         ``workflow-session-<sid8>`` shell — so a team that kept its members never
-        closed at all. 2026-07-28 实测：3 支这样的队挂在 Teams 页上恒 active，最老的
-        自 07-06 起 22 天，认养的 run 全部早已终态。豁免本身是对的（长跑期间成员靠
-        promote/收尸懒到位，空名册什么都不证明），但它必须随 run 一起结束。
+        closed at all. Measured 2026-07-28: 3 such teams hung on the Teams page permanently active, the oldest
+        for 22 days since 07-06, and all adopted runs had long reached terminal states. The exemption itself is correct
+        (during a long run, members arrive lazily via
+        promote/corpse collection, and an empty roster proves nothing), but it must end together with the run.
 
-        收队要同时满足三条：
-          * 队名下每条 run 都已停（终态，或 interrupted——live tail 判定它不再推进）；
-          * 没有成员在 busy（busy 的 leader 行同样算数：那是活会话停在这支队里）；
-          * 队龄与成员最后活跃都已越过宽限（run 只提供"停没停"的判据，不提供时钟——
-            真正还有活儿的证据是成员活跃，它同时也是 straggler 注册的第一现场）。
-        仍有 running/planned run 的队，原样维持整类豁免。
+        Closing a team requires all three conditions at once:
+          * every run under the team's name has stopped (terminal, or interrupted — the live tail judges that it no
+            longer advances);
+          * no member is busy (a busy leader row counts too: that is a live session parked inside this team);
+          * both the team's age and the members' last activity have passed the grace period (a run only provides the
+            "stopped or not" criterion, not a clock —
+            the genuine evidence that work remains is member activity, which is also the primary scene where stragglers
+            register).
+        Teams that still have running/planned runs keep the entire class of exemption unchanged.
         """
         members = await repo.list_agents(team.id)
         if any(str(getattr(m, "status", "")).endswith("busy") for m in members):
@@ -633,12 +672,16 @@ class StateReaper:
         if runs is None:
             return
         if any(str(r.status) not in _WORKFLOW_SETTLED_STATUSES for r in runs):
-            return  # 还有 run 在跑/待跑 → 维持豁免，等 promote 收尾与 straggler 注册
+            # Runs are still running/pending → keep the exemption, waiting for promote wrap-up
+            # and straggler registration
+            return
 
         reference = team.created_at
         for m in members:
-            # 没有心跳记录的成员用入队时间兜底（同 _check_hook_agent 的基线选择）：
-            # 刚注册、还没发出第一次心跳的成员不能被当成"上古静默"。
+            # Members with no heartbeat record fall back to their join time (the same baseline choice as
+            # _check_hook_agent):
+            # a member that just registered and has not yet sent its first heartbeat must not be treated as "anciently
+            # silent".
             ts = getattr(m, "last_active_at", None) or getattr(m, "created_at", None)
             if ts is not None and (reference is None or ts > reference):
                 reference = ts
@@ -646,20 +689,25 @@ class StateReaper:
             return
 
         if runs or not members:
-            # 有 run 记录（或队里连人都没有）→ 常规 30 分钟陈旧阈值。空壳沿用 30 分钟
-            # 是既有行为，2026-07-10 实锤空壳空挂 2h，不回退。
+            # With run records (or a team with nobody in it at all) → the regular 30-minute staleness threshold. Empty
+            # shells keep using 30 minutes,
+            # which is the existing behavior; on 2026-07-10 an empty shell was confirmed hanging empty for 2h; do not
+            # regress this.
             deadline = stale_threshold
         else:
-            # 零 run 记录却有成员：证据链整条缺失，多等 WORKFLOW_TEAM_NO_RUN_GRACE_HOURS
-            # （理由写在 settings 常量旁）。
+            # Zero run records yet the team has members: the entire evidence chain is missing, so wait an extra
+            # WORKFLOW_TEAM_NO_RUN_GRACE_HOURS
+            # (the rationale is written next to the settings constant).
             deadline = now - timedelta(hours=WORKFLOW_TEAM_NO_RUN_GRACE_HOURS)
         if reference >= deadline:
             return
 
         await repo.update_team(team.id, status="completed", completed_at=now)
         for m in members:
-            # 寄生在 workflow 队里的历史 Leader 行不归本队收（03fe7cae 实录，与
-            # workflow_ingest 终态收工的排除同源）：它的活性属于会话，不属于这条 run。
+            # Historical Leader rows parasitizing a workflow team are not this team's to reap (03fe7cae record; from the
+            # same origin as
+            # the exclusion in workflow_ingest's terminal-state wrap-up): their activity belongs to the session, not to
+            # this run.
             if str(getattr(m, "role", "")) == "leader":
                 continue
             if not str(getattr(m, "status", "")).endswith("offline"):
@@ -704,22 +752,26 @@ class StateReaper:
             )
 
     async def _check_workflow_ingest(self, repo: StorageRepository | None = None) -> None:
-        """I3a: 保底轮询 Workflow 完成检测 + Phase2 live 追踪（同 tick，零新 timer）。
+        """I3a: fallback polling for Workflow completion detection + Phase 2 live tracking (same tick, zero new timers).
 
-        Cheap-Checks-First：观察集 = running ∪ 24h 复查窗内 interrupted，皆空即整段
-        跳过（稳态零文件 stat；interrupted 无变化时 updated_at 冻结，过窗自然老化）。
-        非空则：① 对观察集所属项目 reconcile（终态文件先行覆盖，fingerprint 短路）；
-        ② 重新取观察集（① 可能已转终态），按 updated_at 最旧优先截断
-        WF_LIVE_TAIL_MAX_RUNS 后逐 run live tail（journal 增量 + lastCtx token +
-        interrupted 判定）；interrupted run 加调 .output 兜底富化。
-        整段仍在治理租约门控 + _reap_cycle 30s 硬超时内，try/except 隔离。
+        Cheap-Checks-First: the observation set = running ∪ interrupted within the 24h recheck window; if both are
+        empty, the entire section is
+        skipped (zero file stats in steady state; when interrupted runs do not change, updated_at freezes and they age
+        out of the window naturally).
+        When non-empty: ① reconcile the projects the observation set belongs to (terminal-state files take precedence,
+        with fingerprint short-circuiting);
+        ② re-fetch the observation set (① may have moved some to terminal states), truncating oldest-updated_at first at
+        WF_LIVE_TAIL_MAX_RUNS, then live-tail each run (journal increments + lastCtx tokens +
+        interrupted determination); interrupted runs additionally get .output fallback enrichment.
+        The whole section still sits within the governance-lease gate + the _reap_cycle 30s hard timeout, isolated by
+        try/except.
         """
         from aiteam.api import workflow_ingest
 
         _repo = repo if repo is not None else self._repo
 
         async def _watch_runs() -> list:
-            """running ∪ 24h 复查窗内 interrupted（list 失败按空处理）。"""
+            """running ∪ interrupted within the 24h recheck window (a failed listing is treated as empty)."""
             runs = await _repo.list_workflow_runs(status="running", limit=200)
             try:
                 interrupted = await _repo.list_workflow_runs(
@@ -739,7 +791,7 @@ class StateReaper:
             logger.debug("workflow ingest check: list runs failed", exc_info=True)
             return
         if not watch:
-            return  # 稳态：无 running 且无近期 interrupted，不做任何文件 stat
+            return  # Steady state: no running and no recent interrupted; perform no file stat at all
 
         scan_all = any(not r.project_id for r in watch)
         dirs: set[str] = set()
@@ -760,8 +812,8 @@ class StateReaper:
         except Exception:
             logger.warning("workflow ingest check failed", exc_info=True)
 
-        # Phase2 live tail：重新取观察集（reconcile 可能已把部分转终态），
-        # 最旧优先截断，防 _reap_cycle 30s 硬超时。
+        # Phase 2 live tail: re-fetch the observation set (reconcile may have moved some entries to terminal states),
+        # truncating oldest first to guard against the _reap_cycle 30s hard timeout.
         try:
             live = await _watch_runs()
         except Exception:
@@ -863,7 +915,7 @@ class StateReaper:
                 registry_verdict,
                 getattr(record, "status", "?"),
             )
-        except Exception:  # noqa: BLE001 — 观察失败绝不能影响存活判定
+        except Exception:  # noqa: BLE001 — an observation failure must never affect the liveness determination
             logger.debug("liveness track comparison failed", exc_info=True)
     async def _backfill_agent_watermarks(
         self, repo: StorageRepository | None = None
@@ -972,18 +1024,23 @@ class StateReaper:
             for agent in agents:
                 if agent.source != "hook" or agent.status == "offline":
                     continue
-                # Leader 由 SessionStart/SessionEnd + 工具事件活性触摸管理，不在
-                # ~/.claude/teams 配置里——按成员名探活必然失败。旧代码只按名字
-                # 豁免 "team-lead"，而实际行名是 "Leader"（2026-07-07 实测：每个
-                # tick 被收割一次，刚复活 60s 内又被打 offline）。按角色豁免。
+                # The Leader is managed by SessionStart/SessionEnd + tool-event activity touches and is not present in
+                # the ~/.claude/teams configuration — probing liveness by member name would inevitably fail. The old
+                # code exempted by name only
+                # "team-lead", while the actual row name is "Leader" (measured on 2026-07-07: every
+                # tick it was reaped once, and within 60s of being revived it was knocked offline again). Exempt by
+                # role.
                 if agent.role == "leader" or agent.name == "team-lead":
                     continue
-                # workflow 子 agent 不在 ~/.claude/teams 配置里（它们是 CC Workflow
-                # 内部 fan-out，不是 Agent Teams 成员）——按成员名探活必然失败，曾令
-                # 活 agent 每个 tick 被打 offline（2026-07-06 监控实录：62~189s 即
-                # 误杀且单向不恢复）。其生死由观测层 live tail / SubagentStop /
-                # 加长心跳兜底（见 _check_hook_agent），此处豁免。
-                # 角色常量与 hook_translator.WORKFLOW_AGENT_TYPE 保持一致。
+                # Workflow sub-agents are not in the ~/.claude/teams configuration (they are CC Workflow's
+                # internal fan-out, not Agent Teams members) — probing liveness by member name would inevitably fail,
+                # and it once caused
+                # live agents to be knocked offline on every tick (monitoring record from 2026-07-06: falsely killed
+                # within 62~189s,
+                # and one-way with no recovery). Their life and death are governed by the observation layer's live tail
+                # / SubagentStop /
+                # extended-heartbeat fallback (see _check_hook_agent); they are exempted here.
+                # The role constant stays consistent with hook_translator.WORKFLOW_AGENT_TYPE.
                 if agent.role == "workflow-subagent":
                     continue
                 # busy/waiting agent not in any team config -> offline, UNLESS its

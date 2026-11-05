@@ -1,12 +1,16 @@
-"""模型发现与默认模型配置 — 模型治理（docs/model-governance-design.md）。
+"""Model discovery and default model configuration — model governance (docs/model-governance-design.md).
 
-可用模型 = 文件真相源自动拉取：扫本机全部 CC transcript 实际出现过的
-message.model（你真实用过的模型就是你可用的模型），零 API 依赖、零硬编码
-清单（硬编码清单收不到 deepreasoning-coding-max-4.7 这类第三方接入——实测存在）。
+Available models = automatically pulled from the file source of truth: scanning all local CC transcripts for the
+message.model values that actually appeared
+(the models you have genuinely used are the models available to you), with zero API dependency and zero hardcoded
+lists (a hardcoded list cannot capture third-party integrations like deepreasoning-coding-max-4.7 — verified to exist in
+practice).
 
-默认启动模型写 ~/.claude/settings.json 顶层 "model" 键（CC 官方支持，新会话
-生效）。settings.json 是用户全局配置，写保护三层：只动 model 一个键 /
-写前备份 / tmp+rename 原子写。
+The default startup model is written to the top-level "model" key of ~/.claude/settings.json (officially supported by
+CC; takes effect in new
+sessions). settings.json is the user's global configuration, protected by three layers of write protection: touch only
+the model key /
+back up before writing / atomic tmp+rename write.
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ from pathlib import Path
 _MODEL_RE = re.compile(rb'"model"\s*:\s*"([^"]{2,80})"')
 _TAIL_BYTES = 100_000
 _SYNTHETIC = "<synthetic>"
-# 纯层级别名（非完整模型 ID）——标注 alias，不进默认下拉主列表
+# Pure tier-level aliases (not full model IDs) — marked as aliases and kept out of the default dropdown's main list
 _ALIASES = {"opus", "sonnet", "haiku", "fable", "default"}
 
 _cache: dict = {"ts": 0.0, "data": None}
@@ -36,10 +40,10 @@ def _settings_path() -> Path:
 
 
 def scan_available_models(force: bool = False) -> list[dict]:
-    """扫描全部主会话 transcript，聚合出现过的模型。
+    """Scan all main-session transcripts and aggregate the models that appeared.
 
-    返回 [{model, file_count, last_seen_ts, alias}]，按 last_seen 降序。
-    109 文件实测 ~1s；60s 进程内缓存。
+    Returns [{model, file_count, last_seen_ts, alias}], in descending last_seen order.
+    Measured at ~1s over 109 files; 60s in-process cache.
     """
     now = time.time()
     if not force and _cache["data"] is not None and now - _cache["ts"] < _CACHE_TTL:
@@ -89,7 +93,7 @@ def scan_available_models(force: bool = False) -> list[dict]:
 
 
 def read_default_model() -> str:
-    """读 settings.json 顶层 model 键（未设置返回空串）。"""
+    """Read the top-level model key of settings.json (returns an empty string when unset)."""
     try:
         with open(_settings_path(), encoding="utf-8") as f:
             return str(json.load(f).get("model") or "")
@@ -98,9 +102,10 @@ def read_default_model() -> str:
 
 
 def set_default_model(model: str) -> dict:
-    """写 settings.json 顶层 model 键（空串=移除，恢复 CC 自身默认）。
+    """Write the top-level model key of settings.json (empty string = remove it, restoring CC's own default).
 
-    三层写保护：只动 model 键 / 写前备份 .bak-aiteam / tmp+rename 原子写。
+    Three layers of write protection: touch only the model key / back up to .bak-aiteam before writing / atomic
+    tmp+rename write.
     """
     model = (model or "").strip()
     sp = _settings_path()
@@ -110,9 +115,9 @@ def set_default_model(model: str) -> dict:
     except FileNotFoundError:
         settings = {}
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"settings.json 解析失败，拒绝写入: {exc}"}
+        return {"ok": False, "error": f"settings.json failed to parse; Write refused: {exc}"}
 
-    # 备份（best-effort）
+    # Back up (best-effort)
     try:
         if sp.exists():
             backup = sp.with_name("settings.json.bak-aiteam")
@@ -133,5 +138,5 @@ def set_default_model(model: str) -> dict:
             f.write("\n")
         os.replace(tmp, sp)
     except OSError as exc:
-        return {"ok": False, "error": f"写入失败: {exc}"}
+        return {"ok": False, "error": f"Write failed: {exc}"}
     return {"ok": True, "previous": prev or "", "current": model}

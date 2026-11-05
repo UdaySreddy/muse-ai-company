@@ -68,9 +68,9 @@ class InputGuardrailMiddleware(BaseHTTPMiddleware):
             )
             return JSONResponse(
                 {
-                    "detail": "请求体过大，已被安全策略拒绝",
+                    "detail": "Request body too large; rejected by the security policy",
                     "max_bytes": _MAX_BODY_BYTES,
-                    "_hint": "请求体超过 2MB 上限，请拆分或缩减内容",
+                    "_hint": "The request body exceeds the 2MB limit; please split or reduce the content",
                 },
                 status_code=413,
             )
@@ -90,9 +90,9 @@ class InputGuardrailMiddleware(BaseHTTPMiddleware):
             )
             return JSONResponse(
                 {
-                    "detail": "请求被安全策略拒绝",
+                    "detail": "Request rejected by the security policy",
                     "violations": violations,
-                    "_hint": "输入包含危险模式，请检查请求内容",
+                    "_hint": "The input contains a dangerous pattern; please check the request content",
                 },
                 status_code=400,
             )

@@ -1,8 +1,10 @@
-"""跨域引用抽取器 — 知识层 P1a（docs/knowledge-layer-design.md）。
+"""Cross-domain reference extractor — knowledge layer P1a (docs/knowledge-layer-design.md).
 
-从 memo/report 文本抽取 OS 原生 ID 引用，纯正则零 LLM（GBrain「约定即边」
-路线，实体换成 OS 的 ID——语言无关，中文内容零影响）。挂在 API 路由写入
-路径（task_memo_add / report_save 双入口的汇聚点），失败静默绝不阻塞主写入。
+Extract OS-native ID references from memo/report text using pure regex and zero LLM (GBrain's "convention is the edge"
+route, with entities replaced by OS IDs — language-agnostic, and Chinese content has zero impact). It is attached to the
+API route write
+path (the convergence point of the task_memo_add / report_save dual entry points); failures are silent and never block
+the main write.
 """
 
 from __future__ import annotations
@@ -10,23 +12,29 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-# 命中点上下文窗口（证据快照 ±120 字；link_type 推断 ±60 字）
+# Hit-point context window (evidence snapshot ±120 characters; link_type inference ±100 characters —
+# widened from 60 when the codebase went English-only: an English cue phrase spans roughly twice the
+# characters of the equivalent Chinese, so the original radius silently cut cues off mid-word)
 _CONTEXT_CHARS = 120
-_TYPE_WINDOW = 60
+_TYPE_WINDOW = 100
 
-# wf_id：wf_ + 8 hex，可带 -xxx 后缀（观测层 run 编号格式）
+# wf_id: wf_ + 8 hex, optionally with a -xxx suffix (the observation layer's run numbering format)
 _WF_RE = re.compile(r"\bwf_[0-9a-f]{8}(?:-[0-9a-f]{2,4})?\b")
-# 标准 UUID（任务/报告 id）
+# Standard UUID (task/report id)
 _UUID_RE = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"
 )
-# CC 记忆链接 [[slug]]
+# CC memory link [[slug]]
 _MEMORY_RE = re.compile(r"\[\[([a-z0-9][a-z0-9-]{2,60})\]\]")
-# commit 短 hash：7-10 hex——高误报风险，必须有 commit 语境词才算
+# Short commit hash: 7-10 hex — high false-positive risk; only counts when a commit context word is present
 _COMMIT_RE = re.compile(r"\b[0-9a-f]{7,10}\b")
-_COMMIT_CUES = re.compile(r"commit|提交|修复|修|fix|feat|refactor|release|版本", re.I)
-# fixes 语义线索（±60 字窗口内出现则边类型升级为 fixes）
-_FIX_CUES = re.compile(r"修复|修好|根治|根因|fix(?:ed|es)?\b|已修|修掉", re.I)
+_COMMIT_CUES = re.compile(r"commit|\u63d0\u4ea4|\u4fee\u590d|\u4fee|fix|feat|refactor|release|\u7248\u672c", re.I)
+# fixes semantic cues (when one appears within a ±60-character window, the edge type is upgraded to fixes)
+_FIX_CUES = re.compile(
+    r"\u4fee\u590d|\u4fee\u597d|\u6839\u6cbb|\u6839\u56e0|"
+    r"fix(?:ed|es)?\b|\u5df2\u4fee|\u4fee\u6389",
+    re.I,
+)
 
 
 @dataclass
@@ -34,7 +42,7 @@ class ExtractedRef:
     to_kind: str  # run / task / commit / memory
     to_id: str
     link_type: str  # references / fixes
-    context: str  # 命中点证据快照
+    context: str  # Hit-point evidence snapshot
 
 
 def _window(text: str, start: int, end: int, radius: int) -> str:
@@ -42,7 +50,8 @@ def _window(text: str, start: int, end: int, radius: int) -> str:
 
 
 def extract_refs(text: str) -> list[ExtractedRef]:
-    """从文本抽取全部跨域引用（同一 (kind,id) 去重，保首个命中的上下文）。"""
+    """Extract all cross-domain references from the text (deduplicated by (kind, id), keeping the context of the
+    first hit)."""
     if not text:
         return []
     refs: dict[tuple[str, str], ExtractedRef] = {}
@@ -67,7 +76,8 @@ def extract_refs(text: str) -> list[ExtractedRef]:
     for m in _MEMORY_RE.finditer(text):
         _add("memory", m.group(1), m.start(), m.end())
     for m in _COMMIT_RE.finditer(text):
-        # 已被 wf_/uuid 命中的片段跳过；无 commit 语境词跳过（防裸 hex 误抽）
+        # Skip fragments already hit by wf_/uuid; skip when there is no commit context word (prevents bare hex from
+        # being falsely extracted)
         frag = m.group(0)
         if any(frag in k[1] for k in refs):
             continue

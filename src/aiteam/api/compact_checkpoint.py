@@ -1,17 +1,22 @@
-"""压缩检查点 — 上下文被压缩前，把 OS 侧的作战态拍一张快照。
+"""Compaction checkpoint — before the context is compacted, take a snapshot of the OS-side operational state.
 
-CC 压缩会话时，模型自己的记忆由 CC 的 compact_summary 接管；**丢掉的是 OS 这
-一侧的运营态**：这个会话派了哪些 agent、它们在做什么、项目墙上什么还开着、
-有哪些待决事项挂在缔造者那里。这些东西一直都在库里，压缩后的 Leader 只是不
-知道该去问。检查点做的就是把它们在压缩那一刻定格，压缩后的第一次 SessionStart
-（source=compact）原样递回去。
+When CC compacts a session, the model's own memory is taken over by CC's compact_summary; **what gets lost is the OS
+side's operational state**: which agents this session dispatched, what they are doing, what is still open on the project
+wall,
+and which pending decisions are hanging with the Creator. All of these live in the database the whole time; the
+post-compaction Leader simply does not
+know to ask for them. The checkpoint freezes them at the moment of compaction and hands them back as-is at the first
+post-compaction SessionStart
+(source=compact).
 
-刻意不存 CC 的 compact_summary：那段摘要**压缩后本来就在模型上下文里**，再注
-入一遍是重复；OS 该补的是模型没有的那半边。
+It deliberately does not store CC's compact_summary: that summary **is already in the model's context after
+compaction**, so injecting it
+once more would be duplication; what the OS should supply is the half the model does not have.
 
-存储用 events 表（``session.compact_checkpoint``，按 ``session:<id>`` 定位）：
-压缩是低频事件（本机 23 天 159 次），不值得为它单开一张表和一次迁移，而事件流
-天然带时间戳、天然 append-only，正合检查点的语义。
+Storage uses the events table (``session.compact_checkpoint``, located by ``session:<id>``):
+Compaction is a low-frequency event (159 times in 23 days on this machine) and is not worth a dedicated table and a
+migration; the event stream
+naturally carries timestamps and is naturally append-only, which fits checkpoint semantics exactly.
 """
 
 from __future__ import annotations
@@ -35,10 +40,11 @@ _MAX_BRIEFINGS = 5
 async def build_snapshot(
     repo: StorageRepository, session_id: str, cwd: str = ""
 ) -> dict[str, Any]:
-    """把这个会话此刻的 OS 侧作战态收成一个可 JSON 化的快照。
+    """Collect this session's current OS-side operational state into a JSON-serializable snapshot.
 
-    每一块都单独兜底：某一块查不出来就留空，绝不让一次探测失败把整张检查点搞
-    没——压缩这一刻拿不到第二次机会。
+    Every block is individually guarded: if a block cannot be queried, leave it empty; never let one probe failure ruin
+    the entire checkpoint
+    — at the moment of compaction there is no second chance.
     """
     snapshot: dict[str, Any] = {
         "session_id": session_id,
@@ -50,7 +56,8 @@ async def build_snapshot(
         "background_jobs": [],
     }
 
-    # CC 的 --bg 后台会话不经 hook 注册，压缩后的 Leader 尤其容易忘掉它们还在跑。
+    # CC's --bg background sessions are not registered through hooks, and the post-compaction Leader is especially prone
+    # to forgetting they are still running.
     try:
         snapshot["background_jobs"] = [
             {"job_id": j.job_id, "intent": j.intent, "cwd": j.cwd, "state": j.state}
@@ -111,9 +118,9 @@ async def build_snapshot(
 
 
 def render(snapshot: dict[str, Any]) -> str:
-    """把快照渲染成压缩后直接注入 Leader 上下文的文本块。
+    """Render the snapshot into a text block that is injected directly into the Leader's context after compaction.
 
-    空快照返回空串——没东西可说的时候不占用户的上下文。
+    An empty snapshot returns an empty string — when there is nothing to say, do not occupy the user's context.
     """
     agents = snapshot.get("agents") or []
     tasks = snapshot.get("open_tasks") or []
@@ -122,33 +129,34 @@ def render(snapshot: dict[str, Any]) -> str:
     if not (agents or tasks or briefings or jobs):
         return ""
 
-    lines = ["", "## 压缩前的作战态（OS 检查点）", ""]
+    lines = ["", "## Pre-compaction operational state (OS checkpoint)", ""]
     if agents:
-        lines.append(f"在飞 Agent（{len(agents)}）：")
+        lines.append(f"In-flight Agents ({len(agents)}):")
         for a in agents:
             task = f" — {a['current_task']}" if a.get("current_task") else ""
-            ctx = f"（上下文 {a['ctx_pct']:.0%}）" if a.get("ctx_pct") else ""
+            ctx = f" (context {a['ctx_pct']:.0%})" if a.get("ctx_pct") else ""
             lines.append(f"  - {a['name']} [{a['status']}]{task}{ctx}")
         lines.append("")
     if tasks:
-        lines.append(f"未完成任务（{len(tasks)}）：")
+        lines.append(f"Unfinished tasks ({len(tasks)}):")
         for t in tasks:
             owner = f" @{t['assigned_to']}" if t.get("assigned_to") else ""
             lines.append(f"  - [{t['status']}] {t['title']}{owner}")
         lines.append("")
     if jobs:
-        lines.append(f"在飞后台任务（{len(jobs)}）：")
+        lines.append(f"In-flight background jobs ({len(jobs)}):")
         for j in jobs:
             intent = f" — {j['intent']}" if j.get("intent") else ""
             lines.append(f"  - {j['job_id']} [{j['state']}]{intent}")
         lines.append("")
     if briefings:
-        lines.append(f"待缔造者裁决（{len(briefings)}）：")
+        lines.append(f"Awaiting the Creator's decision ({len(briefings)}):")
         for b in briefings:
-            lines.append(f"  - [{b['urgency']}] {b['title']}（id {b['id'][:8]}）")
+            lines.append(f"  - [{b['urgency']}] {b['title']} (id {b['id'][:8]})")
         lines.append("")
     lines.append(
-        "以上是压缩那一刻 OS 库里的实况，不是回忆。要细节请用 task_memo_read / "
-        "briefing_list / taskwall_view 现查，别凭这段摘要推断。"
+        "The above is the actual state in the OS database at the moment of compaction, not a recollection. For "
+        "details, query live with task_memo_read / "
+        "briefing_list / taskwall_view; do not infer from this summary."
     )
     return "\n".join(lines)

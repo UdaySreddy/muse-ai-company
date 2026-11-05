@@ -22,7 +22,7 @@ _GIT_TIMEOUT = 8
 
 # Fallback base branch when `origin/HEAD` has no symbolic ref configured
 # (true for this repo today; see worktree-governance-design.md section 3
-# "前置条件"). Kept as a constant rather than hardcoded inline for clarity.
+# "Prerequisites"). Kept as a constant rather than hardcoded inline for clarity.
 _DEFAULT_BASE_BRANCH = "master"
 
 
@@ -80,7 +80,7 @@ def _resolve_base_branch(root_path: str) -> str:
     """Resolve the merge-target base branch, falling back when unconfigured.
 
     This repo has no `origin/HEAD` symbolic ref today (confirmed by design
-    doc §3's "前置条件" note), so the fallback path is the normal path here,
+    doc §3's "Prerequisites" note), so the fallback path is the normal path here,
     not an edge case — it must not log noise or fail the probe.
     """
     code, out, _ = _run_git(["rev-parse", "--abbrev-ref", "origin/HEAD"], root_path)

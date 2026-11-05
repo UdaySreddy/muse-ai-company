@@ -1,6 +1,6 @@
-"""CC 会话注册表桥接 — 读 ``~/.claude/sessions/<pid>.json``，零注册依赖。
+"""CC session registry bridge — reads ``~/.claude/sessions/<pid>.json``, with zero registration dependency.
 
-CC v2.1.219 每个进程各自维护一份会话登记：
+In CC v2.1.219, each process maintains its own session registration:
 
     ~/.claude/sessions/<pid>.json
     {"pid":32220,"sessionId":"80d0cc5e-…","cwd":"/…/AI team OS",
@@ -8,17 +8,19 @@ CC v2.1.219 每个进程各自维护一份会话登记：
      "version":"2.1.219","kind":"interactive","entrypoint":"cli",
      "name":"ai-team-os-18","status":"busy","updatedAt":…,"statusUpdatedAt":…}
 
-它比 OS 现有的两路会话信号都更权威：
+It is more authoritative than both of the OS's existing session signals:
 
-- 比 ``~/.claude/teams/<team>/config.json`` 的 ``leadSessionId`` 新。队目录在
-  建队那一刻盖章后**不再改名**，而同一个进程换会话（结束后重开、resume）时
-  只有本文件跟着改 ``sessionId``。实测 pid 32220：队目录仍写
-  ``session-0def8f84``，注册表已是 ``80d0cc5e``。
-- 比 transcript mtime 直接。mtime 只能推断"最近有没有落盘"，本文件带
-  ``status``（idle/busy）与真实 ``pid``，可以直接问进程死没死。
+- Newer than the ``leadSessionId`` in ``~/.claude/teams/<team>/config.json``. A team directory,
+  once stamped at team-creation time, is **never renamed afterwards**, while when the same process switches sessions
+  (reopened after ending, resume),
+  only this file updates its ``sessionId`` accordingly. Measured on pid 32220: the team directory still says
+  ``session-0def8f84``, while the registry already has ``80d0cc5e``.
+- More direct than transcript mtime. mtime can only infer "whether anything was written to disk recently", while this
+  file carries
+  ``status`` (idle/busy) and the real ``pid``, so you can ask directly whether the process is dead or alive.
 
-本模块只读、不写、不缓存，任何异常都退化为"不知道"（None / False），
-绝不让探测失败反过来影响调用方。
+This module is read-only, writes nothing, and caches nothing; any exception degrades to "unknown" (None / False),
+and a probe failure never affects the caller in return.
 """
 
 from __future__ import annotations
@@ -31,9 +33,9 @@ from pathlib import Path
 
 from aiteam.clock import from_timestamp, parse_utc
 
-# CC 写 sessions/<pid>.json 时对时间字段有两种写法（二进制内两条代码路径并存）：
-# 纪元毫秒（updatedAt: Date.now()）与 ISO 串（updatedAt: new Date().toISOString()）。
-# 两种都要认，认不出就留空。
+# When CC writes sessions/<pid>.json, it has two formats for the time fields (two code paths coexist in the binary):
+# epoch milliseconds (updatedAt: Date.now()) and ISO strings (updatedAt: new Date().toISOString()).
+# Both must be recognized; leave the value empty when it is unrecognizable.
 _EPOCH_MS_MIN = 10**11
 
 
@@ -54,10 +56,11 @@ def _parse_ts(value: object) -> datetime | None:
 
 @dataclass(frozen=True)
 class SessionRecord:
-    """一条 CC 会话登记。``procStart`` 刻意不解析 —— 它是 UTC 渲染的字符串，
-    和 ``ps -o lstart=`` 的本地时间差一个时区，直接比对必然假性不符
-    （实测同一进程：注册表 "Mon Jul 27 01:49:50"，ps "Mon Jul 27 09:49:50"）。
-    需要开始时间请用 ``started_at``（由纪元毫秒解析，与 ps 对得上）。"""
+    """One CC session registration. ``procStart`` is deliberately not parsed — it is a UTC-rendered string
+    that differs from ``ps -o lstart=``'s local time by one timezone, so comparing them directly would inevitably
+    produce false mismatches
+    (measured on the same process: registry "Mon Jul 27 01:49:50", ps "Mon Jul 27 09:49:50").
+    For the start time, use ``started_at`` (parsed from epoch milliseconds, which lines up with ps)."""
 
     pid: int
     session_id: str
@@ -78,12 +81,15 @@ class SessionRecord:
 
 
 def process_alive(pid: int) -> bool:
-    """进程是否还在。
+    """Whether the process is still around.
 
-    ⚠️ 判据是 ``os.kill(pid, 0)``，**不防 pid 复用**：进程退出后 pid 被系统
-    分配给别的程序时这里会误判为活。会话注册表目前只作并行观察（不参与任何
-    下线决策），这个精度够用；在把它切成主判据之前必须先补进程身份校验
-    （见 docs 里的双轨切换前置条件）。
+    ⚠️ The criterion is ``os.kill(pid, 0)``, which **does not guard against pid reuse**: after the process exits, when
+    the pid is reassigned by the system
+    to another program, this will falsely judge it to be alive. The session registry currently serves only as a parallel
+    observation (it takes part in no
+    offline decision), and this precision suffices; before switching it into the main criterion, process identity
+    verification must be added first
+    (see the dual-track switching preconditions in the docs).
     """
     if pid <= 0:
         return False
@@ -92,14 +98,15 @@ def process_alive(pid: int) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True  # 存在但不属于本用户
+        return True  # exists but does not belong to this user
     except OSError:
         return False
     return True
 
 
 def read_sessions() -> list[SessionRecord]:
-    """读取全部会话登记，坏文件跳过。按 pid 升序返回，结果稳定可比对。"""
+    """Read all session registrations, skipping corrupt files. Returned in ascending pid order; results are stable
+    and comparable."""
     records: list[SessionRecord] = []
     try:
         entries = sorted(_sessions_dir().glob("*.json"))
@@ -136,7 +143,8 @@ def read_sessions() -> list[SessionRecord]:
 
 
 def find_session(session_id: str) -> SessionRecord | None:
-    """按 CC 会话 id 找登记。同一 id 出现在多个 pid 上时优先返回活着的那个。"""
+    """Find a registration by CC session id. When the same id appears under multiple pids, prefer the one that is
+    alive."""
     if not session_id:
         return None
     matches = [r for r in read_sessions() if r.session_id == session_id]
@@ -146,7 +154,8 @@ def find_session(session_id: str) -> SessionRecord | None:
 
 
 def sessions_for_cwd(root_path: str) -> list[SessionRecord]:
-    """某个项目根目录下的会话登记（含子目录会话），按启动时间倒序。"""
+    """Session registrations under a project root directory (including subdirectory sessions), in descending
+    start-time order."""
     if not root_path:
         return []
     root = root_path.rstrip("/")
@@ -160,26 +169,29 @@ def sessions_for_cwd(root_path: str) -> list[SessionRecord]:
 
 
 def pid_for_session(session_id: str) -> int | None:
-    """会话属于哪个 CC 进程；登记里没有这条就是 None。
+    """Which CC process a session belongs to; None when the registry has no such entry.
 
-    只认注册表这一条**精确键匹配**（``sessionId`` 相等），刻意不做任何
-    cwd / 启动时间窗的近似认亲：本机实测 pid 32147 与 32220 在同一个 cwd 下
-    相隔 1.0 秒启动，而队目录的 createdAt 正好落在两者之间——近似匹配在真实
-    数据上就是二义的（2026-07-27 用户裁定否掉该路线）。
+    Only this one **exact key match** in the registry is recognized (``sessionId`` equality); deliberately no
+    approximate kinship matching by cwd / start-time window is performed: measured locally, pids 32147 and 32220 started
+    under the same cwd
+    1.0 seconds apart, and the team directory's createdAt falls exactly between the two — approximate matching on real
+    data is simply ambiguous (the user ruling of 2026-07-27 rejected that route).
 
-    注意它只答得出**当前**会话：CC 每进程一份登记，进程换会话时该文件原地改写
-    ``sessionId``，旧值不留痕。所以历史会话在这里一律查不到，调用方必须把
-    None 当作"不知道"而不是"不属于任何进程"。
+    Note that it can only answer for the **current** session: CC keeps one registration per process, and when the
+    process switches sessions the file is rewritten in place
+    (``sessionId``), leaving no trace of the old value. Historical sessions are therefore never found here, and callers
+    must treat
+    None as "unknown" rather than "belongs to no process".
     """
     record = find_session(session_id)
     return record.pid if record is not None else None
 
 
 def session_alive(session_id: str) -> bool | None:
-    """会话是否活着：True/False = 注册表说了算；None = 注册表里根本没有这条。
+    """Whether a session is alive: True/False = the registry decides; None = the registry has no such entry at all.
 
-    None 与 False 必须分开——"没登记"多半是老会话或非 CC 来源（测试、
-    workflow 注入），不是"已经死了"，调用方不该拿它当死亡证据。
+    None and False must be kept separate — "not registered" usually means an old session or a non-CC source (tests,
+    workflow injection), not "already dead"; callers should not treat it as evidence of death.
     """
     record = find_session(session_id)
     if record is None:

@@ -48,12 +48,12 @@ _EXCLUDED_ROLES = frozenset({"leader", "workflow-subagent"})
 # Domain tokenization: ASCII words (>=2 chars) plus individual CJK characters, so
 # both English-ish role/task text and Chinese task descriptions yield some signal.
 _ASCII_WORD_RE = re.compile(r"[a-z0-9]{2,}")
-_CJK_RE = re.compile(r"[一-鿿]")
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 _STOPWORDS = frozenset(
     {
         "the", "a", "an", "and", "or", "of", "to", "for", "in", "on", "with",
         "is", "are", "be", "task", "agent", "use", "the", "this", "that",
-        "的", "了", "和", "与", "在", "是", "做", "个", "任务",
+        "\u7684", "\u4e86", "\u548c", "\u4e0e", "\u5728", "\u662f", "\u505a", "\u4e2a", "\u4efb\u52a1",
     }
 )
 
@@ -132,24 +132,35 @@ def recommend_action(
     """Apply the three-way decision tree (section 5.3). Returns (action, rationale)."""
     if dmatch < DOMAIN_MATCH_MIN:
         return ACTION_NEW, (
-            f"域匹配 {dmatch:.2f} < {DOMAIN_MATCH_MIN} — 跨域续用有上下文污染风险，建议新开"
+            f"Domain match {dmatch:.2f} < {DOMAIN_MATCH_MIN} — cross-domain reuse carries a context contamination "
+            f"risk; starting fresh is recommended"
         )
     if availability == AVAIL_EXPIRED:
-        return ACTION_NEW, "transcript 已过保留窗口，无法续用，建议新开"
+        return ACTION_NEW, (
+            "The transcript is past its retention window and cannot be reused; "
+            "starting fresh is recommended"
+        )
     if availability == AVAIL_CROSS_SESSION:
         return ACTION_NEW, (
-            "候选在别的会话，当前会话不可直接寻址；建议新开，或 claude --resume 原会话后续用"
+            "The candidate is in another session and cannot be addressed directly from the current session; start "
+            "fresh, or claude --resume the original session and reuse it there"
         )
     # Domain matches and the candidate is reachable (live / resumable).
     pct = ctx_pct or 0.0
     tokens = ctx_tokens or 0
     unknown = ctx_tokens is None
-    note = "（水位未测，按低处理）" if unknown else f"（{pct:.0f}% / {tokens} tok）"
+    note = "(watermark untested; treated as low)" if unknown else f" ({pct:.0f}% / {tokens} tok)"
     if pct < CTX_PCT_REUSE_MAX and tokens < CTX_TOKENS_REUSE_MAX:
-        return ACTION_REUSE, f"同域 + 水位低{note} — 直接续用，认知完整延续"
+        return ACTION_REUSE, f"Same domain + low watermark{note} — reuse directly, with cognition continuing intact"
     if pct < CTX_PCT_SLIM_MAX and tokens < CTX_TOKENS_SLIM_MAX:
-        return ACTION_SLIM, f"同域 + 水位中{note} — 先让其自总结再新开继承摘要"
-    return ACTION_NEW, f"同域但水位高{note} — 续用将很快触顶，建议新开"
+        return ACTION_SLIM, (
+            f"Same domain + medium watermark{note} — have it summarize itself first, "
+            f"then start fresh inheriting the summary"
+        )
+    return ACTION_NEW, (
+        f"Same domain but high watermark{note} — reuse would hit the ceiling soon; "
+        f"starting fresh is recommended"
+    )
 
 
 def resume_hint(
@@ -169,28 +180,30 @@ def resume_hint(
     is a string, so every emitted call carries one.
     """
     ref = (name or "").strip()
-    fallback = f"（同名冲突时改用 agentId '{cc_tool_use_id}'）" if cc_tool_use_id else ""
+    fallback = f" (on a name conflict, use agentId '{cc_tool_use_id}' instead)" if cc_tool_use_id else ""
     if not ref:
         # Nameless row — agentId is the documented addressing fallback.
         ref = cc_tool_use_id or "<agentId>"
         fallback = ""
     if action == ACTION_REUSE:
         return (
-            f"SendMessage(to='{ref}', summary='续用同域 agent', message='<后续任务>') "
-            f"直接续用{fallback}"
+            f"SendMessage(to='{ref}', summary='Reuse same-domain agent', message='<follow-up task>') "
+            f"Reuse directly{fallback}"
         )
     if action == ACTION_SLIM:
         return (
-            f"SendMessage(to='{ref}', summary='索取交接摘要', message='<请自总结交接>') "
-            f"让其产出交接摘要 → report_save/task_memo_add → 新开同域 agent 承接摘要{fallback}"
+            f"SendMessage(to='{ref}', summary='Request handover summary', message='<Please summarize yourself for the "
+            f"handover>') "
+            f"Have it produce a handover summary → report_save/task_memo_add → start a fresh same-domain agent to take "
+            f"over from the summary{fallback}"
         )
     # spawn_new
     if availability == AVAIL_CROSS_SESSION and session_id:
         return (
-            f"新开全新 agent；或 claude --resume {session_id} 恢复原会话后 "
-            f"SendMessage(to='{ref}', summary='<一句话概述>', message='<后续任务>')"
+            f"Start a brand-new agent; or claude --resume {session_id} to restore the original session, then "
+            f"SendMessage(to='{ref}', summary='<one-sentence summary>', message='<follow-up task>')"
         )
-    return "新开全新 agent（干净隔离上下文）"
+    return "Start a brand-new agent (clean, isolated context)"
 
 
 # Ranking: prefer higher domain match, then more reachable, then lower watermark.

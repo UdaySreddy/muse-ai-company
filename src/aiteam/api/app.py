@@ -61,7 +61,7 @@ def create_app() -> FastAPI:
     """Create a FastAPI application instance."""
     app = FastAPI(
         title="AI Team OS",
-        description="通用可复用的AI Agent团队操作系统 API",
+        description="General-purpose, reusable AI agent team operating system API",
         version=__version__,
         lifespan=lifespan,
     )
@@ -75,8 +75,10 @@ def create_app() -> FastAPI:
 
     app.add_middleware(InputGuardrailMiddleware)
 
-    # 请求级账本：给"零调用"判断补第二个采集口径（MCP 工具面只看得见自己那一半）。
-    # 内存计数 + 按小时惰性翻滚成一条 rollup 事件，不新建表、不逐请求写库。
+    # Request-level ledger: gives the "zero calls" determination a second collection caliber (the MCP tool surface only
+    # sees its own half).
+    # In-memory counting + lazily rolled up hourly into a single rollup event; no new tables and no per-request DB
+    # writes.
     from aiteam.api.request_ledger import RequestLedgerMiddleware
 
     app.add_middleware(RequestLedgerMiddleware)

@@ -1,20 +1,25 @@
-"""``agent --worked_on--> task`` 边的寄生写入 —— token 用量归因 v1 §2.4。
+"""``agent --worked_on--> task`` Parasitic writing of the edge — token usage attribution v1 §2.4.
 
-**为什么不给 agents 加一个 task_id 列**：``SubagentStart`` 的 payload 里只有
-agent_id / agent_type / session_id / cc_team_name，没有 prompt、没有任何任务标识。
-在 agent 出生的那一刻，OS 无从得知它是为哪个 task 干活的。那一列会长期为 NULL，
-而 NULL 在归因语境里极易被读成"这段工作没花 token" —— 加一个填不上的列比不加更糟
-（§2.3）。
+**Why not add a task_id column to agents**: the ``SubagentStart`` payload only contains
+agent_id / agent_type / session_id / cc_team_name, with no prompt and no task identifier of any kind.
+At the moment an agent is born, the OS has no way to know which task it is working for. That column would stay NULL for
+a long time,
+and in an attribution context a NULL is very easily read as "this work cost no tokens" — adding a column that cannot be
+filled is worse than not adding one
+ (§2.3).
 
-**为什么不新增一个"绑定 agent 与 task"的工具**：22 天内 ``task_memo_add`` 被调
-711 次、``task_update`` 179 次，而"任何需要人主动多调一次工具的设计都很难存活"已被
-反复验证。所以这里的做法是：在**已经必然发生**的记账行为里顺手把边写下来 —— 这三个
-工具的调用参数里天然同时带着 ``task_id`` 与 ``author``（§2.4）。
+**Why not add a new "bind agent to task" tool**: within 22 days, ``task_memo_add`` was called
+711 times and ``task_update`` 179 times, while "any design that requires a human to proactively make one extra tool call
+rarely survives" has been
+verified repeatedly. So the approach here is: write the edge down inside bookkeeping behavior that **already necessarily
+happens** — these three
+tools' call parameters naturally carry both ``task_id`` and ``author`` (§2.4).
 
-边的语义边界（写在这里是因为它极易被读成另一个意思）：这条边说的是"这个 agent 在
-这个 task 上留过账"，**不是**"这个 agent 的全部 token 都属于这个 task"。一个 agent
-跨多个 task 时，归因推导器如实计为 task 级未归因，不做平均分摊（见
-``repository._single_worked_on_agents_subquery``）。
+The edge's semantic boundary (written here because it is very easily read as something else): this edge says "this agent
+left records on this task", **not** "all of this agent's tokens belong to this task". When one agent
+spans multiple tasks, the attribution deriver honestly counts it as task-level unattributed and does not
+average-allocate it (see
+``repository._single_worked_on_agents_subquery``).
 """
 
 from __future__ import annotations
@@ -34,13 +39,15 @@ from aiteam.types import (
 
 logger = logging.getLogger(__name__)
 
-# MCP 侧把当前 CC 会话 id 放在这个头里（见 mcp/_base._api_call）。没有它就解析不出
-# 域，也就不写边 —— 见 resolve_author_agent_id 的文档。
+# The MCP side puts the current CC session id in this header (see mcp/_base._api_call). Without it, the domain cannot be
+# resolved
+# and no edge is written — see the resolve_author_agent_id documentation.
 SESSION_HEADER = "X-CC-Session-Id"
 
 
 def session_id_from_request(request: Request | None) -> str:
-    """从请求头取当前 CC 会话 id；取不到返回空串（调用方据此放弃写边）。"""
+    """Get the current CC session id from the request headers; return an empty string when unavailable (the caller
+    then gives up writing the edge)."""
     if request is None:
         return ""
     return (request.headers.get(SESSION_HEADER) or "").strip()
@@ -49,21 +56,28 @@ def session_id_from_request(request: Request | None) -> str:
 async def resolve_author_agent_id(
     repo: StorageRepository, author: str, session_id: str
 ) -> str | None:
-    """把记账动作里的 ``author`` 名解析成一个 agent 行 id；解析不出返回 None。
+    """Resolve the ``author`` name in a bookkeeping action into an agent row id; return None when it cannot be resolved.
 
-    两档，都**限定在当前会话的域内**，域内再按 ``created_at`` 取最新：
+    Two tiers, both **restricted to the current session's domain**, taking the latest by ``created_at`` within the
+    domain:
 
-    档① ``agents.session_id`` 命中 —— 身份的权威来源。阶段 1 由 transcript 路径
-        回填后，子 agent 行 78.5% 有值。
-    档② 该会话名下的队（``teams.config.owner_session_id`` / ``session-<sid8>``）里的
-        同名行。这一档不是冗余：Leader 行的 ``session_id`` 实测 0/117 全为 NULL
-        （历史上被启动清扫抹过，阶段 1 修了根因但旧行补不回来），而 Leader 恰好是
-        记账动作最频繁的作者，缺了这一档它一条边都建不出来。
+    Tier 1: a hit on ``agents.session_id`` — the authoritative source of identity. After stage 1 backfilled values from
+    transcript paths,
+        78.5% of sub-agent rows have a value.
+    Tier 2: in a team under that session's name (``teams.config.owner_session_id`` / ``session-<sid8>``),
+        the same-named row. This tier is not redundant: measured in practice, 0 of 117 Leader rows have a non-NULL
+        ``session_id``
+        (they were historically wiped by the startup sweep; stage 1 fixed the root cause, but the old rows cannot be
+        recovered), and the Leader happens to be
+        the most frequent author of bookkeeping actions; without this tier it could not build a single edge.
 
-    **解析不到就不写**，绝不退回"全表按名字找最新"。这不是保守，是因为那样做必然
-    绑错：``name`` 在 agents 表里不唯一，实测 ``Leader`` 一个名字 117 行横跨 79 支队、
-    时间跨度三周。跨时重名错绑的边写进去照样查得到、不报错，只会让 task 级归因悄悄
-    指向另一个会话的另一个 agent —— 一个永远不会有人发现的错误。宁可少一条边。
+    **If it cannot be resolved, do not write it**, and never fall back to "searching the whole table by name for the
+    latest". This is not conservatism; it is because doing so inevitably
+    Mis-binding: ``name`` is not unique in the agents table — measured in practice, the single name ``Leader`` spans 117
+    rows across 79 teams,
+    over a three-week span. A mis-bound edge written from a cross-time name collision still queries fine and raises no
+    error; it only quietly makes task-level attribution
+    point at another agent in another session — an error nobody would ever discover. Better one fewer edge.
     """
     author = (author or "").strip()
     if not author or not session_id:
@@ -87,12 +101,14 @@ async def record_worked_on(
     project_id: str = "",
     origin: str = "",
 ) -> str | None:
-    """记一条 ``agent --worked_on--> task`` 边；返回绑定到的 agent id，没绑上返回 None。
+    """Record one ``agent --worked_on--> task`` edge; return the bound agent id, or None if nothing was bound.
 
-    幂等：``knowledge_links`` 的五元组 UNIQUE 使同一 (agent, task) 只留一条边，重复
-    记账不会堆积。``origin`` 只进 context 供事后审计（是哪个记账动作带出来的这条边）。
+    Idempotent: the ``knowledge_links`` five-tuple UNIQUE keeps only one edge for the same (agent, task); repeated
+    bookkeeping does not pile up. ``origin`` only enters the context for later auditing (which bookkeeping action
+    brought this edge about).
 
-    调用方一律 best-effort 包裹：**归因是观测，观测坏了不该拖垮被观测的记账动作**。
+    Callers uniformly wrap this as best-effort: **attribution is observation; broken observation must not drag down the
+    bookkeeping action being observed**.
     """
     if not task_id:
         return None
@@ -123,7 +139,8 @@ async def try_record_worked_on(
     project_id: str = "",
     origin: str = "",
 ) -> None:
-    """路由层调用的 best-effort 包装 —— 任何失败只记日志，绝不影响记账动作本身。"""
+    """The best-effort wrapper called by the route layer — any failure is only logged and never affects the
+    bookkeeping action itself."""
     try:
         agent_id = await record_worked_on(
             repo,
@@ -139,5 +156,5 @@ async def try_record_worked_on(
                 author,
                 origin,
             )
-    except Exception:  # noqa: BLE001 — 观测失败不该拖垮被观测的动作
+    except Exception:  # noqa: BLE001 — an observation failure must not drag down the action being observed
         logger.warning("worked_on edge write failed (%s)", origin, exc_info=True)

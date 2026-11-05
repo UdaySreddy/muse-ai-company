@@ -1,38 +1,52 @@
-"""Leader 主会话 token 用量采集 —— 归因 v1 阶段 4。
+"""Leader main-session token usage collection — attribution v1 stage 4.
 
-子 agent 侧的用量已由 SubagentStop 落 agents 五列，主会话侧则是**整片空白**
-（实测 117 个 leader 行的 token 五列与 transcript_path 全为空）。缺口本身好补：
-主会话 transcript 就在 ``~/.claude/projects/<slug>/<session_id>.jsonl``，
-:func:`aiteam.services.token_attribution.parse_transcript_usage` 不加改动就能解析。
+Sub-agent usage is already recorded into the agents table's five columns by SubagentStop, while the main-session side is
+a **complete blank**
+(measured: the five token columns and transcript_path of all 117 leader rows are empty). The gap itself is easy to fill:
+the main-session transcript sits right at ``~/.claude/projects/<slug>/<session_id>.jsonl``, and
+:func:`aiteam.services.token_attribution.parse_transcript_usage` can parse it without modification.
 
-真正会把数字变成谎言的是**怎么落库**。三条语义各自对应一个坑，实现时不许简化：
+What truly turns numbers into lies is **how they are persisted**. Three semantics each correspond to a pitfall; do not
+simplify them in implementation:
 
-1. **快照覆写，绝不累加。** 主会话 transcript 是**累计文件** —— 每次解析得到的
-   都是"从会话开始到此刻"的总量，不是这一轮的增量。所以落库只能是覆写；照抄子
-   agent 那种"stop 时写一次"的累加心智，一个会话有多少轮就会虚高多少倍。
-   本模块所有写入都经 :meth:`UsageSnapshot.as_agent_updates`，那里全是赋值，
-   没有任何一处 ``+=`` —— 这不是巧合，是唯一允许的形态。
-2. **节流。** ``Stop`` 每轮对话都触发，而全量解析随会话线性变贵（实测 45.1 MB /
-   0.18 s）。于是 ``Stop`` 走 :meth:`SessionUsageMeter.should_measure` 的门；
-   ``SessionEnd`` / ``PostCompact`` / ``SessionStart`` 带 ``force=True`` 强制定格。
-3. **合成行过滤。** compact 会在 transcript 里留下 ``model="<synthetic>"`` 的
-   assistant 行。实测这些行的 usage 四字段**全是 0**（不会虚高 token），但
-   ``parse_transcript_usage`` 取 model 时不跳过它们，于是主会话解析出来的 model
-   就是 ``<synthetic>``（本机 54d51683 那份实测复现，真实模型是 claude-fable-5）。
-   本模块在**调用侧**用 ``session_probe.SYNTHETIC_MODEL`` 兜一层，见 :func:`_resolve_model`。
+1. **Snapshot overwrite, never accumulate.** A main-session transcript is a **cumulative file** — every parse yields
+   the total "from session start to now", not this round's increment. So persistence can only overwrite; copying the
+   sub-
+   agent's "write once at stop" accumulation mindset would inflate the numbers by however many rounds a session has.
+   All writes in this module go through :meth:`UsageSnapshot.as_agent_updates`, where everything is assignment
+   and there is not a single ``+=`` — that is no coincidence; it is the only permitted form.
+2. **Throttling.** ``Stop`` fires on every conversation round, while a full parse grows linearly more expensive with the
+   session (measured 45.1 MB /
+   0.18 s). So ``Stop`` goes through the :meth:`SessionUsageMeter.should_measure` gate;
+   ``SessionEnd`` / ``PostCompact`` / ``SessionStart`` force a freeze-frame with ``force=True``.
+3. **Synthetic-row filtering.** Compaction leaves ``model="<synthetic>"`` assistant rows
+   in the transcript. Measured in practice, these rows' four usage fields are **all 0** (they do not inflate tokens),
+   but
+   ``parse_transcript_usage`` does not skip them when taking the model, so the model parsed from a main session
+   comes out as ``<synthetic>`` (reproduced in practice on this machine's 54d51683 transcript; the real model was
+   claude-fable-5).
+   This module adds a caller-side safety layer with ``session_probe.SYNTHETIC_MODEL``; see :func:`_resolve_model`.
 
-compact 行为实测（阶段 4 顺手考古，回答设计 §8 未决问题②）：compact **原地追加**
-一条 ``system/compact_boundary`` + 一条 ``user/isCompactSummary``，**不截断、不替换、
-不归档** —— 45.1 MB 的单份 transcript 里躺着 7 次 compact，19 天前的行原样还在。
-所以 ``PostCompact`` 的强制定格不是"抢救即将消失的数据"，而是①把 compact 这一刻
-定格；②覆盖"compact/resume 后会话另起文件"的交接点（另起的文件会重放一条同样的
-compact_boundary，但重放的 assistant 行 usage 全 0，两份文件各自解析不会重复计数）。
+Measured compact behavior (stage 4 archaeology along the way, answering design §8 open question 2): compact **appends in
+place**
+one ``system/compact_boundary`` + one ``user/isCompactSummary`` row, and **does not truncate, replace,
+or archive** — a single 45.1 MB transcript holds 7 compactions, with rows from 19 days ago still present as-is.
+So the ``PostCompact`` forced freeze-frame is not "rescuing data about to disappear", but ① freezing the moment of
+compaction;
+② covering the handover point where "after compact/resume the session starts a new file" (the new file replays an
+identical
+compact_boundary, but the replayed assistant rows have all-zero usage, so parsing the two files separately does not
+double-count).
 
-**呈现约束（仅在此标注，落地属阶段 5）**：Leader 主会话的量级远超全部子 agent 之和
-（单会话实测 8.5 亿 vs 子 agent 合计），二者混进同一个排行榜会让子 agent 的归因结果
-被彻底淹没。因此 Leader 行（``role='leader'``）与子 agent 行**必须分列呈现、默认不
-合并**，且两者都是 ``usage_sum`` 口径 —— 与 ``workflow_agents.tokens`` 的 ``ctx_last``
-口径不可相加（设计 §0.2 / §3.3）。本模块刻意**不产出任何合计字段**，四层永远分列。
+**Presentation constraint (only noted here; implementation belongs to stage 5)**: a Leader main session's magnitude far
+exceeds the sum of all sub-agents
+(measured for a single session: 850M vs the sub-agent total); mixing the two into one leaderboard would completely drown
+the sub-agents' attribution results.
+Leader rows (``role='leader'``) and sub-agent rows **must therefore be presented in separate columns and are not merged
+by default**,
+and both use the ``usage_sum`` caliber — which cannot be added to ``workflow_agents.tokens``' ``ctx_last``
+caliber (design §0.2 / §3.3). This module deliberately **produces no total field**; the four layers are always presented
+separately.
 """
 
 from __future__ import annotations
@@ -48,22 +62,25 @@ from aiteam.config import settings
 from aiteam.services import token_attribution
 from aiteam.types import TokenSource
 
-# 进程内节流状态的上限。一个 API 进程可以横跨很多会话，字典本身很小（每会话两个
-# 时间戳），但无上限的字典在长命进程里就是慢性泄漏。超限时整体丢弃：节流状态丢了
-# 最坏结果是下一次事件多解析一次，语义无损（覆写是幂等的）。
+# Cap on the in-process throttle state. One API process can span many sessions; the dict itself is small (two timestamps
+# per session),
+# but an unbounded dict in a long-lived process is a slow leak. When the cap is exceeded, it is discarded wholesale:
+# losing the throttle state
+# means at worst the next event parses once more; semantics are lossless (overwriting is idempotent).
 _MAX_TRACKED_SESSIONS = 512
 
-# 采集没落库时的具体理由。原本三种结局共用一个 ``None``，事后无法区分"节流挡下"
-# 与"文件读不到"——2026-08-03 的排查就是卡在这一点上（见
-# tests/unit/api/test_leader_usage_observability.py 的模块头）。名字本身就是契约：
-# 调用侧据此决定要不要喊 WARNING，所以不要随手改字面量。
+# The concrete reason when a capture was not persisted. Originally three outcomes shared one ``None``, making it
+# impossible to distinguish afterwards between "blocked by throttling"
+# and "file unreadable" — the 2026-08-03 investigation got stuck exactly on this point (see
+# tests/unit/api/test_leader_usage_observability.py 's module header). The names themselves are the contract:
+# the caller decides from them whether to raise a WARNING, so do not change the literals casually.
 SKIP_THROTTLED = "throttled"
 SKIP_UNREADABLE = "transcript-unreadable"
 SKIP_NO_USAGE = "no-usage-rows"
 
 
 def _projects_dir() -> Path:
-    """CC 主会话 transcript 的根目录 —— 约定只在 session_probe 留一份。"""
+    """Root directory of CC main-session transcripts — by convention, only session_probe keeps a copy of this."""
     return session_probe._claude_projects_dir()  # noqa: SLF001
 
 
@@ -75,11 +92,12 @@ def locate_main_transcript(
 ) -> Path | None:
     """Resolve the main-session transcript for a hook payload, or None.
 
-    payload 里的路径优先，但**必须先确认它真的在磁盘上**：hook 侧对超长路径会追加
-    ``...(truncated)``（send_event._trim_payload），超大载荷还会整体剥离到必留字段，
-    两种情况拿到的都是不可用的路径。兜底走 ``<slug>/<session_id>.jsonl`` 这条既有
-    约定（``session_probe.session_last_active`` 用的是同一条），这样 ``PostCompact``
-    这种载荷最容易被裁剪的事件也能定位到文件。
+    The path in the payload takes priority, but **you must first confirm it really is on disk**: the hook side appends
+    ``...(truncated)`` to over-long paths (send_event._trim_payload), and oversized payloads are stripped wholesale down
+    to the must-keep fields,
+    so in both cases the path obtained is unusable. The fallback follows the existing ``<slug>/<session_id>.jsonl``
+    convention (``session_probe.session_last_active`` uses the same one), so that even ``PostCompact``,
+    whose payload is the most easily trimmed, can still locate the file.
     """
     candidate = (payload_path or "").strip()
     if candidate:
@@ -96,9 +114,11 @@ def locate_main_transcript(
 def _resolve_model(raw: str, transcript: Path) -> str:
     """Drop the compact placeholder model, falling back to the last real one.
 
-    TODO(阶段 0): ``parse_transcript_usage`` 一旦复用 session_probe 的合成行过滤
-    （设计 §1.3 / §7 阶段 0），这里的调用侧兜底就退化成一层冗余保险，可连同本注释
-    一并收敛。在那之前主会话采集不能裸信 usage['model'] —— 主会话 100% 有合成行。
+    TODO(stage 0): once ``parse_transcript_usage`` reuses session_probe's synthetic-row filtering
+    (design §1.3 / §7 stage 0), this caller-side fallback degrades into a redundant safety layer and can be consolidated
+    together with this comment.
+    Until then, main-session collection must not blindly trust usage['model'] — main sessions have synthetic rows 100%
+    of the time.
     """
     if raw and raw != session_probe.SYNTHETIC_MODEL:
         return raw
@@ -107,11 +127,14 @@ def _resolve_model(raw: str, transcript: Path) -> str:
 
 @dataclass(frozen=True)
 class UsageSnapshot:
-    """一次主会话用量测量的结果 —— 是**当前累计值的快照**，不是增量。
+    """The result of one main-session usage measurement — a **snapshot of the current cumulative value**, not an
+    increment.
 
-    四层分列，刻意**没有合计字段**：任何"总量"实际上是"缓存读取量"的同义词
-    （实测 cache_read 占 95.6%），单独呈现会让跨模型、跨路径的比较系统性失真
-    （设计 §1.2）。要合计请到阶段 2 的 TokenAttribution 里连同口径与分母一起拿。
+    The four layers are listed separately and deliberately **have no total field**: any "total" is effectively a synonym
+    for "cache-read amount"
+    (measured: cache_read accounts for 95.6%); presenting it alone would systematically distort cross-model and
+    cross-path comparisons
+    (design §1.2). For a total, go to stage 2's TokenAttribution and take it together with its caliber and denominator.
     """
 
     session_id: str
@@ -128,8 +151,9 @@ class UsageSnapshot:
     def as_agent_updates(self) -> dict[str, Any]:
         """Fields to write onto the leader row — every one is an assignment.
 
-        覆写语义的唯一落点。这里出现任何形如 ``old + new`` 的写法都是把累计文件当
-        增量文件读，会让数值随轮次线性虚高（设计 §3.3 陷阱①、R4）。
+        The single landing point of the overwrite semantics. Any expression of the form ``old + new`` appearing here
+        treats the cumulative file as
+        an incremental file, making the values inflate linearly with the round count (design §3.3 pitfall 1, R4).
         """
         updates: dict[str, Any] = {
             "input_tokens": self.input_tokens,
@@ -137,8 +161,9 @@ class UsageSnapshot:
             "cache_creation_tokens": self.cache_creation_tokens,
             "cache_read_tokens": self.cache_read_tokens,
             "tokens_measured_at": self.measured_at,
-            # Leader 行此前 0/117 有 transcript_path；采到用量的同时把来源路径一并
-            # 落库，覆盖率与回采才有据可查（设计 §2.6 回填项）。
+            # Leader rows previously had a transcript_path in 0/117 cases; when usage is captured, the source path is
+            # persisted along with it,
+            # so that coverage and backfill have evidence to check against (design §2.6 backfill item).
             "transcript_path": self.transcript_path,
             "tokens_source": TokenSource.TRANSCRIPT.value,
         }
@@ -147,7 +172,7 @@ class UsageSnapshot:
         return updates
 
     def as_summary(self) -> dict[str, Any]:
-        """Compact form for hook responses / logs（同样不含合计）。"""
+        """Compact form for hook responses / logs (likewise contains no total)."""
         return {
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
@@ -162,7 +187,7 @@ class UsageSnapshot:
 
 @dataclass
 class _LastMeasure:
-    """上一次**解析尝试**的时点与当时的文件 mtime。"""
+    """The time of the last **parse attempt** and the file's mtime at that time."""
 
     measured_at: datetime
     mtime: datetime | None
@@ -171,8 +196,10 @@ class _LastMeasure:
 class SessionUsageMeter:
     """Throttled, snapshot-overwrite usage probe for main-session transcripts.
 
-    进程内保持每会话的上次测量指纹，据此决定这一轮 ``Stop`` 要不要真去解析文件。
-    状态丢失（进程重启、超限清空）不影响正确性：覆写是幂等的，最坏是多解析一次。
+    Keeps each session's last measurement fingerprint in-process and decides from it whether this round's ``Stop``
+    should really parse the file.
+    Losing the state (process restart, cap-exceeded clearing) does not affect correctness: overwriting is idempotent,
+    and the worst case is one extra parse.
     """
 
     def __init__(
@@ -207,17 +234,21 @@ class SessionUsageMeter:
     ) -> bool:
         """Whether this event is allowed to pay for a full transcript parse.
 
-        判据顺序本身就是语义，不要重排：
+        The order of the criteria is itself semantic; do not reorder:
 
-        1. ``force``（SessionStart / SessionEnd / PostCompact）永远直通 —— 强制
-           定格不受任何窗口约束，否则"定格"就名不副实。
-        2. 本会话还没测过 -> 测（首测建立基线，Leader 行才会从空变有值）。
-        3. **文件一个字节都没动 -> 不测。** 同一份文件重复解析必然得到同一份快照，
-           解析器是纯函数，这一趟纯属白花。
-        4. 距上次解析已超过 ``min_interval`` -> 测。
-        5. transcript 落盘时间比上次测量时推进了超过 ``mtime_advance`` -> 测。
-           这一条兜的是"一轮跑了很久"的长任务：窗口还没到，但这段时间里写进去的
-           量级可能已经很可观。
+        1. ``force`` (SessionStart / SessionEnd / PostCompact) always passes straight through — a forced
+           freeze-frame is not constrained by any window, otherwise "freeze-frame" would be a misnomer.
+        2. This session has not been measured yet -> measure (the first measurement establishes the baseline; only then
+           does the Leader row go from empty to valued).
+        3. **The file has not moved a single byte -> do not measure.** Re-parsing the same file necessarily yields the
+           same snapshot;
+           the parser is a pure function, so this trip would be pure waste.
+        4. More than ``min_interval`` has passed since the last parse -> measure.
+        5. The transcript's on-disk time has advanced by more than ``mtime_advance`` since the last measurement ->
+           measure.
+           This rule covers long tasks where "one round ran for a very long time": the window has not arrived yet, but
+           the amount written in during that period
+           may already be considerable.
         """
         if force:
             return True
@@ -244,9 +275,10 @@ class SessionUsageMeter:
     ) -> UsageSnapshot | None:
         """Parse the transcript and return a snapshot, or None when skipped.
 
-        None 有三种含义，调用方都只需"什么都不写"：被节流挡下 / 文件读不到 /
-        文件里还没有任何 usage 行。**绝不把这三种写成 0** —— no-data ≠ zero。
-        要知道是哪一种，用 :meth:`capture_or_reason`。
+        None has three meanings, and in all of them the caller need only "write nothing": blocked by throttling / file
+        unreadable /
+        the file has no usage rows yet. **Never write any of these three as 0** — no-data ≠ zero.
+        To know which one it is, use :meth:`capture_or_reason`.
         """
         return self.capture_or_reason(session_id, transcript, force=force, now=now)[0]
 
@@ -260,10 +292,12 @@ class SessionUsageMeter:
     ) -> tuple[UsageSnapshot | None, str | None]:
         """Same as :meth:`capture`, but says **why** when it hands back nothing.
 
-        落库语义与 ``capture`` 一字不差（那三种结局照样一列都不写）；多出来的只是
-        一个理由字符串。区分它们是有代价的信息：``throttled`` 是稳态里最常见的正常
-        结局，而 ``transcript-unreadable`` 出现在 ``force=True`` 的强制定格上时，
-        意味着这一刻的水位永久丢失了 —— 两者从前长得一模一样。
+        The persistence semantics are identical to ``capture`` word for word (in those three outcomes, still not a
+        single column is written); the only extra is
+        a reason string. Distinguishing them is information with a cost: ``throttled`` is the most common normal outcome
+        in steady state,
+        while ``transcript-unreadable`` appearing on a ``force=True`` forced freeze-frame
+        means this moment's watermark is permanently lost — the two used to look exactly alike.
         """
         now = now or utc_now()
         try:
@@ -274,9 +308,11 @@ class SessionUsageMeter:
             return None, SKIP_THROTTLED
 
         usage = token_attribution.parse_transcript_usage(transcript)
-        # 记在解析**之后**、返回之前：被节流的是"解析"这个动作，所以哪怕这次解析
-        # 一无所获（新会话还没有 assistant 行），也要记时点，否则每一轮 Stop 都会
-        # 重新扫一遍同一个文件。
+        # Recorded **after** parsing and before returning: what is throttled is the "parse" action, so even if this
+        # parse
+        # gains nothing (a new session has no assistant rows yet), the timestamp must still be recorded; otherwise every
+        # round's Stop would
+        # rescan the same file all over again.
         self._remember(session_id, measured_at=now, mtime=mtime)
         if not usage:
             return None, SKIP_NO_USAGE

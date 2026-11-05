@@ -56,10 +56,12 @@ def _build_prompt(sched_task) -> str:
     # If no custom template, use default
     if not prompt_template:
         prompt_template = (
-            "你是AI Team OS的调度Agent '{agent_name}'。你被自动唤醒来推进待办任务。\n"
-            "请查看任务墙，找到分配给你的pending任务，选择最高优先级的一个来推进。\n"
-            "完成后通过task_update更新任务状态，并通过task_memo_add记录你的工作进展。\n"
-            "如果没有可推进的任务，直接结束即可。"
+            "You are AI Team OS dispatch Agent '{agent_name}'. You have been automatically woken up to advance pending "
+            "tasks.\n"
+            "Please check the task wall, find the pending tasks assigned to you, and choose the highest-priority one "
+            "to advance.\n"
+            "When done, update the task status via task_update and record your work progress via task_memo_add.\n"
+            "If there is no task you can advance, simply finish."
         )
 
     prompt_template = prompt_template.replace("{agent_name}", agent_name)
@@ -76,11 +78,13 @@ def _build_prompt(sched_task) -> str:
 # make strategic decisions or decide on the user's behalf. The instruction is wrapped in
 # XML tags to keep the data section separable from this template (injection mitigation).
 _FLEET_DISPATCH_PREAMBLE = (
-    "你收到一次 AI Team OS 舰队定向下发（fleet dispatch）。这是对本会话主线的一次"
-    "自动化恢复，只做被指派的**操作级**工作：推进指定任务 / 收集你的当前状态 / "
-    "把结果用 task_memo_add 记录。\n"
-    "红线：不做战略决策、不替用户拍板项目方向或重大架构；遇到需要用户定夺的事，用 "
-    "briefing_add 记录待决事项后结束，不要自行拍板。完成后简述你做了什么并结束。"
+    "You have received an AI Team OS fleet dispatch. This is an automated resumption of this session's main line;"
+    "only do the assigned **operational-level** work: advance the specified task / collect your current status / "
+    "record the results with task_memo_add.\n"
+    "Red line: do not make strategic decisions, and do not decide project direction or major architecture on the "
+    "user's behalf; when something requires the user's decision, use "
+    "briefing_add to record it as a pending item and then finish — do not decide for the user. When done, briefly "
+    "describe what you did and finish."
 )
 
 

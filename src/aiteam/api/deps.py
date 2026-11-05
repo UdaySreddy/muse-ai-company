@@ -107,7 +107,7 @@ async def _run_migrations(db_url: str | None = None) -> None:
         ("events", "state_snapshot", "JSON"),
         # v1.0 P2: agent trust scoring
         ("agents", "trust_score", "REAL DEFAULT 0.5"),
-        # Stage B: ecosystem_repo_profiles 扩展字段
+        # Stage B: ecosystem_repo_profiles extension fields
         ("ecosystem_repo_profiles", "pushed_at", "DATETIME"),
         ("ecosystem_repo_profiles", "is_archived", "BOOLEAN DEFAULT 0"),
         ("ecosystem_repo_profiles", "scan_run_id", "VARCHAR(36)"),
@@ -115,7 +115,7 @@ async def _run_migrations(db_url: str | None = None) -> None:
     ]
     # v1.0 P1-6: channel_messages table (created via create_all, no ALTER needed)
     # Stage B: ecosystem_deep_reviews / ecosystem_tags / ecosystem_repo_tags /
-    # ecosystem_relations / ecosystem_scan_runs 由 create_all 自动建表
+    # the ecosystem_relations / ecosystem_scan_runs tables are created automatically by create_all
 
     async with engine.connect() as conn:
         for table_name, col_name, col_type in migrations:
@@ -199,52 +199,53 @@ async def _run_migrations(db_url: str | None = None) -> None:
 
 _DEFAULT_ECOSYSTEM_TAGS: list[tuple[str, str, str]] = [
     # capability
-    ("memory_system", "capability", "记忆 / 长期上下文系统"),
-    ("skill_system", "capability", "Skill / 技能注入系统"),
-    ("agent_orchestration", "capability", "多 Agent 编排"),
-    ("mcp_server", "capability", "MCP Server 实现"),
-    ("mcp_framework", "capability", "MCP 框架 / SDK (用于构建 MCP)"),
-    ("tool_use", "capability", "工具调用相关"),
-    ("workflow_engine", "capability", "工作流引擎"),
-    ("multi_agent", "capability", "多 Agent 协作系统"),
-    ("single_agent", "capability", "单 Agent 系统"),
-    ("claude_code", "capability", "Claude Code 生态 (skills/hooks/agents)"),
-    ("agent_harness", "capability", "Agent 运行时 / 框架外壳"),
+    ("memory_system", "capability", "Memory / long-term context system"),
+    ("skill_system", "capability", "Skill / skill injection system"),
+    ("agent_orchestration", "capability", "Multi-Agent orchestration"),
+    ("mcp_server", "capability", "MCP Server implementation"),
+    ("mcp_framework", "capability", "MCP framework / SDK (for building MCP)"),
+    ("tool_use", "capability", "Tool-use related"),
+    ("workflow_engine", "capability", "Workflow engine"),
+    ("multi_agent", "capability", "Multi-Agent collaboration system"),
+    ("single_agent", "capability", "Single-Agent system"),
+    ("claude_code", "capability", "Claude Code ecosystem (skills/hooks/agents)"),
+    ("agent_harness", "capability", "Agent runtime / framework shell"),
     # tech_stack
-    ("python", "tech_stack", "Python 实现"),
-    ("typescript", "tech_stack", "TypeScript 实现"),
-    ("javascript", "tech_stack", "JavaScript 实现"),
-    ("java", "tech_stack", "Java 实现"),
-    ("rust", "tech_stack", "Rust 实现"),
-    ("go", "tech_stack", "Go 实现"),
+    ("python", "tech_stack", "Python implementation"),
+    ("typescript", "tech_stack", "TypeScript implementation"),
+    ("javascript", "tech_stack", "JavaScript implementation"),
+    ("java", "tech_stack", "Java implementation"),
+    ("rust", "tech_stack", "Rust implementation"),
+    ("go", "tech_stack", "Go implementation"),
     # maturity
-    ("official_anthropic", "maturity", "Anthropic 官方项目"),
-    ("battle_tested", "maturity", "已经过实战检验"),
-    ("experimental", "maturity", "实验性 / 尝鲜阶段"),
+    ("official_anthropic", "maturity", "Official Anthropic project"),
+    ("battle_tested", "maturity", "Battle-tested in practice"),
+    ("experimental", "maturity", "Experimental / early-tryout stage"),
     # positioning
-    ("framework", "positioning", "框架级项目"),
-    ("application", "positioning", "终端应用"),
-    ("library", "positioning", "工具库"),
-    ("plugin", "positioning", "插件 / 扩展"),
-    ("template", "positioning", "项目模板"),
-    ("docs_only", "positioning", "纯文档 / 教程 / awesome-list / cookbook"),
-    # v1.5.0-A: lifecycle (positioning) — 漏斗 Stage 3 + 失败状态自动打
-    ("evaluating", "positioning", "正在评估中（Stage 1-2）"),
-    ("reference", "positioning", "已作为架构借鉴参考"),
-    ("integrated", "positioning", "已集成到本项目"),
-    ("deleted", "positioning", "GitHub 端仓已被删除"),
-    ("private_now", "positioning", "GitHub 端仓已设为私密"),
+    ("framework", "positioning", "Framework-level project"),
+    ("application", "positioning", "End-user application"),
+    ("library", "positioning", "Tool library"),
+    ("plugin", "positioning", "Plugin / extension"),
+    ("template", "positioning", "Project template"),
+    ("docs_only", "positioning", "Docs only / tutorials / awesome-list / cookbook"),
+    # v1.5.0-A: lifecycle (positioning) — funnel Stage 3 + failure states, auto-tagged
+    ("evaluating", "positioning", "Currently being evaluated (Stage 1-2)"),
+    ("reference", "positioning", "Used as an architecture reference"),
+    ("integrated", "positioning", "Integrated into this project"),
+    ("deleted", "positioning", "The GitHub-side repo has been deleted"),
+    ("private_now", "positioning", "The GitHub-side repo has been set to private"),
 ]
 
 
 async def ensure_default_tags(repo: StorageRepository) -> None:
-    """启动时确保默认 31 个 EcosystemTag 存在 (INSERT OR IGNORE 语义)。
+    """At startup, ensure the default 31 EcosystemTags exist (INSERT OR IGNORE semantics).
 
-    v1.5.0-A: 26 → 31 (新增 5 个 lifecycle positioning tags：
-    evaluating / reference / integrated / deleted / private_now)。
+    v1.5.0-A: 26 → 31 (5 new lifecycle positioning tags added:
+    evaluating / reference / integrated / deleted / private_now).
 
-    使用 upsert_tag 实现幂等：已存在则保留，不会覆盖人工修改的描述。
-    实际逻辑通过 get_tag_by_name 检查后才插入，避免覆盖。
+    Uses upsert_tag to achieve idempotency: existing entries are kept, and manually edited descriptions are not
+    overwritten.
+    The actual logic checks via get_tag_by_name before inserting, to avoid overwriting.
     """
     from aiteam.types import EcosystemTag, EcosystemTagCategory
 
@@ -266,15 +267,15 @@ async def ensure_default_tags(repo: StorageRepository) -> None:
 
 
 async def _backfill_ecosystem_default_project(repo: StorageRepository) -> None:
-    """Stage J 启动迁移：把历史 project_id IS NULL 的 ecosystem 行
-    回填到当前 cwd 匹配的项目，保证旧 188 仓在 "AI Team OS" 项目下仍可见。
+    """Stage J startup migration: backfill historical ecosystem rows whose project_id IS NULL
+    to the project matching the current cwd, ensuring the old 188 repos remain visible under the "AI Team OS" project.
 
-    选择规则：
-    1. 优先匹配 cwd 最长前缀的项目（与 _auto_create_projects 一致）；
-    2. 找不到时回退到首个项目；
-    3. 没有任何项目时跳过（数据保持 NULL，待项目创建后再次 backfill）。
+    Selection rules:
+    1. Prefer the project with the longest cwd prefix match (consistent with _auto_create_projects);
+    2. When none is found, fall back to the first project;
+    3. When there are no projects at all, skip (the data stays NULL, to be backfilled again after a project is created).
 
-    幂等：仅迁移 NULL 行，已有 project_id 的行不动。
+    Idempotent: only NULL rows are migrated; rows with an existing project_id are untouched.
     """
     import os
 
@@ -320,19 +321,19 @@ async def _backfill_ecosystem_default_project(repo: StorageRepository) -> None:
 
 
 async def _backfill_v150_progressive_funnel(repo: StorageRepository) -> None:
-    """v1.5.0-A 启动迁移：
+    """v1.5.0-A startup migration:
 
-    1) 现有 DeepReview.stage_status 推断
-       - 已完成且有 risks_md+learnings_md (说明跑过深扫总结) → DEBATED
-       - 否则有 architecture_md → ARCHITECTURE_DONE
-       - 否则有 summary_md → SHALLOW_DONE
-       - 其他保持 QUEUED
-    2) 现有 Profile.is_active 字段（默认 True 已由 column default 保证）
-    3) 为每个项目创建 EcosystemProjectSettings 默认行
-       - 名称含 "AI Team OS" 的项目用严格默认 (min_stars=5000, top_n=200)
-       - 其他项目用通用默认 (min_stars=1000, top_n=100)
+    1) Infer from the existing DeepReview.stage_status
+       - completed and has risks_md+learnings_md (meaning a deep-scan summary ran) → DEBATED
+       - otherwise has architecture_md → ARCHITECTURE_DONE
+       - otherwise has summary_md → SHALLOW_DONE
+       - otherwise keep QUEUED
+    2) The existing Profile.is_active field (its default True is guaranteed by the column default)
+    3) Create a default EcosystemProjectSettings row for each project
+       - Projects whose name contains "AI Team OS" use the strict defaults (min_stars=5000, top_n=200)
+       - Other projects use the general defaults (min_stars=1000, top_n=100)
 
-    幂等：每次启动重跑都安全，已有 stage_status / settings 不动。
+    Idempotent: safe to re-run on every startup; existing stage_status / settings are untouched.
     """
     try:
         projects = await repo.list_projects()
@@ -340,7 +341,7 @@ async def _backfill_v150_progressive_funnel(repo: StorageRepository) -> None:
         logger.warning("v1.5.0 backfill: list_projects failed: %s", exc)
         return
 
-    # 1) DeepReview stage_status 推断（仅迁移 stage_status='queued' 的历史行）
+    # 1) DeepReview stage_status inference (only migrates historical rows still at stage_status='queued')
     try:
         deep_reviews = await repo.list_deep_reviews(limit=10000, project_id=None)
     except Exception as exc:
@@ -356,10 +357,10 @@ async def _backfill_v150_progressive_funnel(repo: StorageRepository) -> None:
     from aiteam.types import EcosystemDeepReviewStatus, EcosystemStageStatus
 
     for review in deep_reviews:
-        # 仅迁移 stage_status 仍是默认 QUEUED 的行；保护已手工推进的状态
+        # Only migrate rows whose stage_status is still the default QUEUED; protect manually advanced states
         if review.stage_status != EcosystemStageStatus.QUEUED:
             continue
-        # 推断规则（保守，从严到松）
+        # Inference rules (conservative, from strict to loose)
         if (
             review.status == EcosystemDeepReviewStatus.COMPLETED
             and review.risks_md
@@ -399,7 +400,7 @@ async def _backfill_v150_progressive_funnel(repo: StorageRepository) -> None:
             promoted_counts["kept_queued"],
         )
 
-    # 2) 项目 ecosystem_project_settings 默认值
+    # 2) Project ecosystem_project_settings defaults
     settings_created = 0
     for p in projects:
         is_ai_team_os = "ai team os" in (p.name or "").lower() or "ai-team-os" in (
@@ -429,23 +430,30 @@ async def _backfill_v150_progressive_funnel(repo: StorageRepository) -> None:
 async def _auto_create_projects(repo: StorageRepository) -> None:
     """Back-fill project_id on orphan Teams from each team's OWN members.
 
-    归属只认「队自己的成员」这一条权威链：Leader 行的 project_id（会话开启时按
-    该会话 cwd 锁定，见归属铁律「session 启动目录为准」）优先，其次任一已绑定
-    成员。解析不出就**保持无主**。
+    Attribution recognizes only the one authoritative chain of "the team's own members": the Leader row's project_id
+    (locked at session start by
+    that session's cwd; see the ownership iron rule "the session's startup directory is authoritative") takes priority,
+    followed by any already-bound
+    member. If nothing resolves, it **stays unowned**.
 
-    2026-07-27 事故：本函数原先把**所有**孤儿队一次性绑到「用 API 进程自身
-    os.getcwd() 最长前缀匹配出的项目」，匹配不到还兜底 existing_projects[0]。
-    API 进程 cwd 是跨会话共享的全局态——服务器从哪个目录启动，那个项目就吃下
-    全部无主队。实测污染 116 支队（大量 AI Team OS 会话的 session-* 容器队被
-    记成 Wenge），并顺着 _on_subagent_start 的 `project_id=team.project_id`
-    传染给 agent 行与其 system_prompt 里的 {project_path}。
-    e812de4 已在 hook_translator 的补绑路径禁掉同类 cwd 兜底，这条启动路径漏网。
+    2026-07-27 incident: this function originally bound **all** orphan teams at once to "the project matched by the API
+    process's own
+    os.getcwd() longest-prefix match, and when nothing matched it fell back to existing_projects[0].
+    The API process's cwd is global state shared across sessions — whichever directory the server starts from, that
+    project swallows
+    all unowned teams. In practice it polluted 116 teams (many session-* container teams of AI Team OS sessions were
+    recorded as Wenge), and it propagated along _on_subagent_start's `project_id=team.project_id`
+    into agent rows and the {project_path} in their system_prompts.
+    e812de4 already disabled the same kind of cwd fallback in hook_translator's rebind path; this startup path slipped
+    through.
     """
     teams = await repo.list_teams()
     orphan_teams = [t for t in teams if not t.project_id]
-    # workflow 队不参与兜底认领：其归属由观测层按落盘 slug（文件真相源）精确
-    # 回填（用户 2026-07-07 定案：曾有外部项目的 workflow 队被 API 进程 cwd
-    # 吸进 OS 项目；匹配不到项目就保持无主，绝不猜）。
+    # Workflow teams do not participate in the fallback claim: their ownership is precisely backfilled by the
+    # observation layer from the on-disk slug (file source of truth)
+    # (user decision 2026-07-07: an external project's workflow team was once sucked into the OS project by the API
+    # process's cwd;
+    # when no project matches, it stays unowned — never guess).
     orphan_teams = [
         t for t in orphan_teams if (t.config or {}).get("kind") != "workflow"
     ]
@@ -456,7 +464,7 @@ async def _auto_create_projects(repo: StorageRepository) -> None:
     for team in orphan_teams:
         try:
             members = await repo.list_agents(team.id)
-        except Exception as exc:  # noqa: BLE001 — 单队失败不拖垮整个启动回填
+        except Exception as exc:  # noqa: BLE001 — a single team's failure must not drag down the whole startup backfill
             logger.warning("orphan team backfill: list_agents(%s) failed: %s", team.id, exc)
             continue
         pid = _project_id_from_members(members)
@@ -486,9 +494,9 @@ def _project_id_from_members(members: list) -> str | None:
 
 
 async def _backfill_shallow_done_status(repo: StorageRepository) -> None:
-    """v1.6.1 backfill: stage='shallow_done' 行的 status 字段对齐 'completed'。
+    """v1.6.1 backfill: align the status field of stage='shallow_done' rows to 'completed'.
 
-    幂等：只修改 status='running' 的脏数据行，已是 'completed' 的行不动。
+    Idempotent: only modifies dirty rows with status='running'; rows already at 'completed' are untouched.
     """
     try:
         count = await repo.backfill_shallow_done_status_completed()
@@ -504,9 +512,10 @@ async def _backfill_shallow_done_status(repo: StorageRepository) -> None:
 
 
 async def _backfill_task_memos(repo: StorageRepository) -> None:
-    """记忆系统 v2 P0：tasks.config['memo'] → task_memos 表一次性回填。
+    """Memory system v2 P0: one-time backfill of tasks.config['memo'] → the task_memos table.
 
-    幂等：task_memos 表非空即视为已迁移，直接跳过；原 JSON 保留不动（档案）。非致命。
+    Idempotent: a non-empty task_memos table is treated as already migrated and skipped directly; the original JSON is
+    kept untouched (archive). Non-fatal.
     """
     try:
         count = await repo.backfill_task_memos_from_config()
@@ -523,12 +532,13 @@ async def _backfill_task_memos(repo: StorageRepository) -> None:
 
 
 async def _backfill_dual_axis_convergence(repo: StorageRepository) -> None:
-    """D5 双轴收敛回填：status 列全量对齐派生语义（stage_status 为唯一权威轴）。
+    """D5 dual-axis convergence backfill: fully align the status column with the derived semantics (stage_status is the
+    single authoritative axis).
 
-    5 条幂等 UPDATE 按 R1→R2→F1→F2→F3 固定序执行（反向先于正向铁律），
-    详见 repository.backfill_deep_review_dual_axis。必须在
-    _backfill_v150_progressive_funnel（按内容标记推 stage）与
-    _backfill_shallow_done_status（v1.6.1 子集）之后运行。非致命。
+    The 5 idempotent UPDATEs run in the fixed R1→R2→F1→F2→F3 order (the iron rule: reverse before forward),
+    see repository.backfill_deep_review_dual_axis for details. Must run after
+    _backfill_v150_progressive_funnel (infers stage from content markers) and
+    _backfill_shallow_done_status (the v1.6.1 subset). Non-fatal.
     """
     try:
         counts = await repo.backfill_deep_review_dual_axis()
@@ -546,10 +556,11 @@ async def _backfill_dual_axis_convergence(repo: StorageRepository) -> None:
 
 
 async def _backfill_alert_max_new_per_scan(repo: StorageRepository) -> None:
-    """v1.6.1 Phase 2 启动迁移：从 scan_profile.alert_thresholds 迁移 max_new_per_scan 到 settings。
+    """v1.6.1 Phase 2 startup migration: migrate max_new_per_scan from scan_profile.alert_thresholds into settings.
 
-    仅迁移 settings.alert_max_new_per_scan 仍是默认值 50 且 scan_profile 有非默认值时。
-    幂等：已迁移过的项目跳过（settings 中值 != 50 则视为已迁移或用户已手动设置）。
+    Only migrates when settings.alert_max_new_per_scan is still the default 50 and scan_profile has a non-default value.
+    Idempotent: already-migrated projects are skipped (a settings value != 50 is treated as already migrated or manually
+    set by the user).
     """
     try:
         projects = await repo.list_projects()
@@ -558,11 +569,11 @@ async def _backfill_alert_max_new_per_scan(repo: StorageRepository) -> None:
         for project in projects:
             try:
                 settings = await repo.ensure_ecosystem_project_settings(project.id)
-                # 若已非默认值，说明用户已设置或已迁移过，跳过
+                # If it is already non-default, the user has set it or it has already been migrated; skip
                 current_val = getattr(settings, "alert_max_new_per_scan", 50)
                 if current_val != 50:
                     continue
-                # 查找该项目活跃的 scan_profile
+                # Find this project's active scan_profile
                 scan_profile = await repo.get_active_scan_profile(project.id)
                 if scan_profile is None:
                     continue
@@ -570,7 +581,7 @@ async def _backfill_alert_max_new_per_scan(repo: StorageRepository) -> None:
                 alert_thresholds = profile_data.get("alert_thresholds", {})
                 sp_max_new = alert_thresholds.get("max_new_per_scan")
                 if sp_max_new is not None and sp_max_new != 50:
-                    # 迁移非默认值到 settings
+                    # Migrate the non-default value into settings
                     from aiteam.types import EcosystemProjectSettings as _Settings
                     updated = _Settings(
                         project_id=project.id,
@@ -723,17 +734,19 @@ async def init_dependencies() -> None:
     # v1.6.1 Phase 2: backfill alert_max_new_per_scan from scan_profile to settings
     await _backfill_alert_max_new_per_scan(_repository)
 
-    # 2026-07-10 用户裁定：ecosystem 周期刷新 cron 退役（CC 非常驻，长期定时器
-    # 无意义且其 emit_event 从无消费者）——改为按需 POST /api/ecosystem/refresh
-    # + MCP ecosystem_refresh，需要更新时手动调用。_ensure_ecosystem_weekly_cron 已删。
+    # User ruling 2026-07-10: the ecosystem periodic-refresh cron is retired (CC is not resident, so a long-term timer
+    # is meaningless and its emit_event never had a consumer) — replaced by the on-demand POST /api/ecosystem/refresh
+    # + MCP ecosystem_refresh, invoked manually when an update is needed. _ensure_ecosystem_weekly_cron has been
+    # deleted.
 
-    # Bug 2 二次修复：backfill stage='shallow_done' 行的 status 字段 running -> completed
+    # Bug 2 second fix: backfill the status field of stage='shallow_done' rows, running -> completed
     await _backfill_shallow_done_status(_repository)
 
-    # D5 双轴收敛：status 派生视图全量回填（R1→R2→F1→F2→F3，幂等）
+    # D5 dual-axis convergence: full backfill of the status derived view (R1→R2→F1→F2→F3, idempotent)
     await _backfill_dual_axis_convergence(_repository)
 
-    # 记忆系统 v2 P0：task memo 升表一次性回填（表空才跑，幂等）
+    # Memory system v2 P0: one-time backfill for the task memo table promotion (runs only when the table is empty;
+    # idempotent)
     await _backfill_task_memos(_repository)
 
     # Start StateReaper background harvester
@@ -808,7 +821,7 @@ def get_scoped_repository(request: Request) -> StorageRepository:
     3. Falls back to the global unscoped repository when neither is present.
 
     When a project scope is resolved, all list/create operations on
-    project-aware tables (ecosystem 5 数据表 + tasks/teams/agents) are
+    project-aware tables (the ecosystem's 5 data tables + tasks/teams/agents) are
     automatically filtered to that project via _apply_project_filter.
     """
     # Delegate to get_repository() so FastAPI dependency overrides on
