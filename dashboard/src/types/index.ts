@@ -10,8 +10,8 @@ export interface Team {
   created_at: string;
   updated_at: string;
   completed_at?: string | null;
-  // 拥有此会话容器队的 CC 进程；后端派生，不落库。同一进程的多支容器队靠它归组。
-  // 证不出来就是 null（历史会话在 CC 的进程登记里查不到），非容器队恒为 null。
+  // The CC process that owns this session container team; derived by the backend, not persisted. Multiple container teams of the same process are grouped by it.
+  // Null when it cannot be established (historic sessions are not found in CC's process registry); always null for non-container teams.
   cc_pid?: number | null;
 }
 
@@ -25,11 +25,11 @@ export interface Agent {
   status: string;
   config: Record<string, unknown>;
   created_at: string;
-  source?: 'api' | 'hook';       // 来源标记
-  session_id?: string | null;     // CC会话ID
-  cc_tool_use_id?: string | null; // CC内部agent ID
-  current_task?: string | null;   // 当前正在执行的任务描述
-  last_active_at?: string | null; // 最后活跃时间
+  source?: 'api' | 'hook';       // Source marker
+  session_id?: string | null;     // CC session ID
+  cc_tool_use_id?: string | null; // CC-internal agent ID
+  current_task?: string | null;   // Description of the task currently being executed
+  last_active_at?: string | null; // Last active time
   // Sub-agent context watermark ledger (docs/agent-reuse-design.md section 4).
   // Populated on SubagentStop; agents with no capture yet leave these null.
   ctx_tokens?: number | null;
@@ -95,8 +95,8 @@ export interface Memory {
 export interface APIResponse<T> {
   data: T;
   message: string;
-  /** 部分写操作端点（如 task run/decompose）会额外回一句操作指引，
-   *  诚实说明"这只是入队，需要 CC 会话领取"——前端应尽量透出而非丢弃。 */
+  /** Some write endpoints (e.g. task run/decompose) additionally return a line of operating guidance,
+   *  honestly stating "this only enqueues; a CC session must pick it up" — the frontend should surface it rather than discard it. */
   _hint?: string;
 }
 
