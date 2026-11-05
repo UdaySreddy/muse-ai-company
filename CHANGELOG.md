@@ -3,6 +3,20 @@
 All notable changes to AI Team OS will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
+## [Unreleased]
+
+### Added
+
+- **Standalone mode (runs without Claude Code)** — an LLM provider factory (`AITEAM_LLM_PROVIDER`: anthropic / openai / fake offline provider) and an `aiteam standalone org|run` CLI that operates the company org (Chairman → CEO → COO/CTO/engineering/QA) on any host with Python 3.12+, plus a Chief Operating Officer agent template (26 templates total).
+
+### Changed
+
+- **Codebase is now English-only** — the entire tree (source, tests, docs, dashboard, plugin) was translated from Chinese to English; the Chinese README/CHANGELOG/INSTALL editions and the dashboard zh locale were removed. A small set of test fixtures intentionally keeps Chinese sample inputs to cover Chinese-input handling.
+
+### Fixed
+
+- **CI dependency lists** — the CI workflow's hand-written pip install lists now include `greenlet>=3.0` (already declared in `pyproject.toml`), which SQLAlchemy's async engine requires; without it the test and invariants jobs failed at import time.
+
 ## [1.11.2] - 2026-08-03
 
 A **data-integrity patch**. One near-miss set the theme: the container-team reaper - shipped two days before token ledgers landed on agent rows - was deleting rows that carried the only copy of their token attribution. This release stops that deletion (twice, at two different gates), restores byte-exact what one purge had already destroyed, pins dispatch identity so ledgers cannot be overwritten by a same-name dispatch, and brings the roster tools back under the MCP result cap so damage of this kind is at least visible. Surfaces stay put: MCP tools **113**, REST endpoints **207**, machine checks **I1-I14**. Tests **2,307 -> 2,493**.
