@@ -1,13 +1,15 @@
-"""批 3 ⑤：project_create 的 root_path 校验放行了不该放行的目录。
+"""Batch 3 (5): project_create's root_path validation let through directories it should not have.
 
-两条独立的漏洞，都冲撞「归属铁律：session 启动目录为准」：
+Two independent vulnerabilities, both colliding with the 'ownership iron law: the session startup directory governs':
 
-1. ``cwd.startswith(given)`` 是裸前缀比较，没有分隔符边界：cwd=
-   /Users/cronus/Desktop/AI team OS 时 root_path='/Users/cron' 也能过关
-   （半个路径段）。修法照抄 _base.py 的 ``cwd == rp or cwd.startswith(rp + "/")``。
-2. 分隔符对齐后 '/Users' 仍是 cwd 的合法祖先，照样能过关 —— 而把家目录的祖先
-   注册成项目根，等于用一个项目吞掉整台机器（此后任何未注册目录都被它前缀
-   认领）。故追加一条：项目根不得是家目录的**严格祖先**。
+1. ``cwd.startswith(given)`` is a bare prefix comparison with no separator boundary: cwd=
+   /Users/cronus/Desktop/AI team OS, so root_path='/Users/cron' could also pass
+   (half a path segment). The fix copies _base.py's ``cwd == rp or cwd.startswith(rp + "/")``.
+2. After separator alignment, '/Users' is still a legitimate ancestor of the cwd, so it would still pass — whereas
+registering an ancestor of the home directory
+   as a project root amounts to swallowing the whole machine with one project (afterwards, any unregistered directory
+   would be prefix-
+   claimed). Therefore one more rule is added: a project root must not be a **strict ancestor** of the home directory.
 """
 
 from __future__ import annotations
@@ -47,7 +49,7 @@ def _call(root_path: str, cwd: str = CWD):
 
 class TestRootPathBoundary:
     def test_partial_segment_rejected(self):
-        """半个路径段（/Users/cron 之于 /Users/cronus）—— 旧实现放行。"""
+        """Half a path segment (/Users/cron with respect to /Users/cronus) — the old implementation let it through."""
         result, api = _call("/Users/cronus/Desk")
         assert result["success"] is False
         api.assert_not_called()
@@ -58,7 +60,8 @@ class TestRootPathBoundary:
         api.assert_not_called()
 
     def test_home_ancestor_rejected(self, monkeypatch):
-        """/Users（家目录的严格祖先）—— 旧实现放行，等于一个项目吞掉整台机器。"""
+        """/Users (a strict ancestor of the home directory) — the old implementation let it through, equivalent to
+        one project swallowing the whole machine."""
         monkeypatch.setenv("HOME", "/Users/cronus")
         result, api = _call("/Users")
         assert result["success"] is False
@@ -76,8 +79,8 @@ class TestRootPathBoundary:
         assert result.get("success") is not False
 
     def test_true_parent_of_cwd_accepted(self, monkeypatch):
-        """真祖先目录（按分隔符对齐、且不在家目录之上）仍放行——
-        在仓库子目录里启动会话是正常场景。"""
+        """A true ancestor directory (separator-aligned, and not above the home directory) is still allowed —
+        starting a session in a repository subdirectory is a normal scenario."""
         monkeypatch.setenv("HOME", "/Users/cronus")
         result, _ = _call("/Users/cronus/Desktop", cwd=CWD)
         assert result.get("success") is not False

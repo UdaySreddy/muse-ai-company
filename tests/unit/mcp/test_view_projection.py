@@ -1,9 +1,9 @@
-"""列表工具精简投影视图（views.py）单测。
+"""Unit tests for the slimmed projection views of list tools (views.py).
 
-规格：docs/tool-loading-design.md §4。核心不变量：
-- id 等后续调用键永远完整保留；
-- 语义内容降级为截断摘要而非删除；
-- fields 参数只认 compact/all（含 full 别名），其余显式报错。
+Spec: docs/tool-loading-design.md §4. Core invariants:
+- Keys for later calls, such as id, are always preserved in full;
+- Semantic content is downgraded to a truncated summary rather than deleted;
+- The fields parameter recognizes only compact/all (including the full alias); anything else errors explicitly.
 """
 
 from __future__ import annotations
@@ -38,10 +38,10 @@ class TestResolveView:
 
 class TestExcerpt:
     def test_short_text_unchanged(self):
-        assert excerpt("短文本", 80) == "短文本"
+        assert excerpt("short text", 80) == "short text"
 
     def test_long_text_truncated_with_ellipsis(self):
-        text = "字" * 100
+        text = "x" * 100
         out = excerpt(text, 80)
         assert len(out) == 81
         assert out.endswith("…")
@@ -55,14 +55,14 @@ class TestCompactTaskRow:
     def _task(self, **overrides):
         base = {
             "id": "1279bdd9-35da-4b20-b44d-7de60282f1c0",
-            "title": "讨论⑩：RangeID fencing 防双写",
-            "description": "仅讨论不实施。" + "机制细节" * 50,
+            "title": "Discussion (10): RangeID fencing prevents double writes",
+            "description": "Discussion only, no implementation." + "mechanism details" * 50,
             "status": "pending",
             "priority": "high",
             "horizon": "mid",
             "score": 90.0,
             "assigned_to": None,
-            "tags": ["讨论"],
+            "tags": ["discussion"],
             "depends_on": [],
             "config": {},
             "team_id": None,
@@ -78,7 +78,7 @@ class TestCompactTaskRow:
 
     def test_description_truncated_not_dropped(self):
         row = compact_task_row(self._task())
-        assert row["desc"].startswith("仅讨论不实施。")
+        assert row["desc"].startswith("Discussion only, no implementation.")
         assert row["desc"].endswith("…")
         assert len(row["desc"]) <= 81
 
@@ -94,7 +94,7 @@ class TestCompactTaskRow:
         assert "subtask_count" not in plain
         rich = compact_task_row(
             self._task(
-                result="修复完成" * 40,
+                result="Fix complete" * 40,
                 depends_on=["dep-1"],
                 subtasks=[{"id": "s1"}, {"id": "s2"}],
             )
@@ -116,16 +116,16 @@ class TestCompactEventRow:
                 "source": "agent:x",
                 "timestamp": "2026-07-14T10:00:00",
                 "data": {
-                    "intent_summary": "正在使用 Bash",
-                    "tool_input_summary": "别选我",
+                    "intent_summary": "Using Bash",
+                    "tool_input_summary": "Do not pick me",
                 },
                 "entity_id": None,
                 "state_snapshot": None,
             }
         )
-        assert row["summary"] == "正在使用 Bash"
+        assert row["summary"] == "Using Bash"
         assert row["ts"] == "2026-07-14T10:00:00"
-        # 恒空占位字段不进精简行
+        # Always-empty placeholder fields do not enter the slimmed row
         assert "entity_id" not in row
         assert "state_snapshot" not in row
 
@@ -149,7 +149,7 @@ class TestCompactProfileRow:
                 "stars": 195894,
                 "language": None,
                 "stage_status": "queued",
-                "one_line_summary": "可视化工作流自动化平台",
+                "one_line_summary": "Visual workflow automation platform",
                 "topics": ["a"] * 20,
                 "canonical_id": "github/n8n-io/n8n",
             }
@@ -159,20 +159,20 @@ class TestCompactProfileRow:
             "stars": 195894,
             "lang": "",
             "status": "queued",
-            "summary": "可视化工作流自动化平台",
+            "summary": "Visual workflow automation platform",
         }
 
     def test_summary_falls_back_to_excerpt_then_description(self):
         row = compact_profile_row(
-            {"repo_full_name": "a/b", "description_excerpt": "excerpt 版"}
+            {"repo_full_name": "a/b", "description_excerpt": "excerpt version"}
         )
-        assert row["summary"] == "excerpt 版"
-        row2 = compact_profile_row({"repo_full_name": "a/b", "description": "desc 版"})
-        assert row2["summary"] == "desc 版"
+        assert row["summary"] == "excerpt version"
+        row2 = compact_profile_row({"repo_full_name": "a/b", "description": "desc version"})
+        assert row2["summary"] == "desc version"
 
 
 class TestHints:
     def test_hints_declare_not_missing_and_escape_hatch(self):
         for hint in (TASK_WALL_HINT, EVENT_HINT, ECO_LIST_HINT):
-            assert "非字段缺失" in hint
+            assert "not a missing field" in hint
             assert 'fields="all"' in hint

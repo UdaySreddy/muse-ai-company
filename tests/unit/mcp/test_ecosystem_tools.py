@@ -1,4 +1,4 @@
-"""ecosystem_scan + ecosystem_search MCP 工具单元测试（mock gh + API）。"""
+"""ecosystem_scan + ecosystem_search MCP tool unit tests (mock gh + API)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import aiteam.mcp.tools.ecosystem as eco
 
 
 class _ToolCapture:
-    """最简 mock：捕获 @mcp.tool() 注册的函数。"""
+    """Minimal mock: captures the functions registered via @mcp.tool()."""
 
     def __init__(self):
         self.tools: dict = {}
@@ -98,14 +98,14 @@ class TestEcosystemScanDryRun:
         )
 
     def test_dry_run_returns_dry_run_flag(self):
-        """dry_run=True 时返回 dry_run 标记，不写库。"""
+        """With dry_run=True it returns a dry_run marker and writes nothing to the database."""
         p1, p2 = self._patch_scan()
         with p1, p2:
             result = _ecosystem_scan(min_stars=5000, dry_run=True)
         assert result["dry_run"] is True
 
     def test_dry_run_filters_low_stars(self):
-        """dry_run 结果只包含 stars >= min_stars 的仓库。"""
+        """dry_run results contain only repositories with stars >= min_stars."""
         p1, p2 = self._patch_scan()
         with p1, p2:
             result = _ecosystem_scan(min_stars=5000, dry_run=True)
@@ -113,7 +113,7 @@ class TestEcosystemScanDryRun:
         assert "low-stars/tiny-agent" not in sample_names
 
     def test_dry_run_does_not_call_api(self):
-        """dry_run 模式下不调用 _api_call 写入数据库。"""
+        """In dry_run mode, _api_call is not called to write to the database."""
         p1, p2 = self._patch_scan()
         with p1, p2:
             with patch.object(eco, "_api_call") as mock_api:
@@ -121,7 +121,7 @@ class TestEcosystemScanDryRun:
         mock_api.assert_not_called()
 
     def test_dry_run_reports_per_query_stats(self):
-        """dry_run 返回 per_query_stats 字段。"""
+        """The dry_run return includes the per_query_stats field."""
         p1, p2 = self._patch_scan()
         with p1, p2:
             result = _ecosystem_scan(min_stars=5000, dry_run=True)
@@ -129,7 +129,7 @@ class TestEcosystemScanDryRun:
         assert isinstance(result["per_query_stats"], dict)
 
     def test_dry_run_excludes_known_repos(self):
-        """已知排除仓库（CronusL-1141/AI-company）不出现在 dry_run 结果中。"""
+        """A known excluded repository (CronusL-1141/AI-company) is not present in dry_run results."""
         items_with_excluded = list(_SAMPLE_GH_ITEMS) + [
             {
                 "fullName": "CronusL-1141/AI-company",
@@ -178,7 +178,7 @@ class TestEcosystemScanWrite:
         )
 
     def test_scan_calls_api_for_each_valid_repo(self):
-        """scan 正常模式调用 _api_call 写入每个有效仓库。"""
+        """scan in normal mode calls _api_call to write each valid repository."""
         p1, p2 = self._patch_scan()
         with p1, p2:
             with patch.object(eco, "_api_call", side_effect=self._mock_api_call) as mock_api:
@@ -186,7 +186,7 @@ class TestEcosystemScanWrite:
         assert mock_api.call_count >= 2
 
     def test_scan_returns_count_stats(self):
-        """scan 返回包含 scanned / new_profiles / updated_profiles / skipped 字段。"""
+        """scan returns fields including scanned / new_profiles / updated_profiles / skipped."""
         p1, p2 = self._patch_scan()
         with p1, p2:
             with patch.object(eco, "_api_call", side_effect=self._mock_api_call):
@@ -197,7 +197,7 @@ class TestEcosystemScanWrite:
         assert "skipped" in result
 
     def test_scan_returns_category_distribution(self):
-        """scan 结果包含 category_distribution 字段。"""
+        """scan returns the category_distribution field."""
         p1, p2 = self._patch_scan()
         with p1, p2:
             with patch.object(eco, "_api_call", side_effect=self._mock_api_call):
@@ -229,35 +229,35 @@ _SEARCH_RESPONSE = {
 
 class TestEcosystemSearch:
     def test_search_passes_keyword_to_api(self):
-        """ecosystem_search 将 keyword 参数传给 API。"""
+        """ecosystem_search passes the keyword parameter to the API."""
         with patch.object(eco, "_api_call", return_value=_SEARCH_RESPONSE) as mock_api:
             _ecosystem_search(keyword="claude")
         call_url = mock_api.call_args[0][1]
         assert "keyword=claude" in call_url
 
     def test_search_returns_profiles_list(self):
-        """ecosystem_search 返回 profiles 列表。"""
+        """ecosystem_search returns a list of profiles."""
         with patch.object(eco, "_api_call", return_value=_SEARCH_RESPONSE):
             result = _ecosystem_search(keyword="claude")
         assert "profiles" in result
         assert result["total"] == 1
 
     def test_search_api_failure_returns_empty(self):
-        """API 返回 None 时 ecosystem_search 返回空列表。"""
+        """When the API returns None, ecosystem_search returns an empty list."""
         with patch.object(eco, "_api_call", return_value=None):
             result = _ecosystem_search(keyword="claude")
         assert result["profiles"] == []
         assert result["total"] == 0
 
     def test_search_passes_category_param(self):
-        """ecosystem_search 将 category 参数传给 API。"""
+        """ecosystem_search passes the category parameter to the API."""
         with patch.object(eco, "_api_call", return_value=_SEARCH_RESPONSE) as mock_api:
             _ecosystem_search(category="mcp-server")
         call_url = mock_api.call_args[0][1]
         assert "category=mcp-server" in call_url
 
     def test_search_passes_min_stars_param(self):
-        """ecosystem_search 将 min_stars 参数传给 API。"""
+        """ecosystem_search passes the min_stars parameter to the API."""
         with patch.object(eco, "_api_call", return_value=_SEARCH_RESPONSE) as mock_api:
             _ecosystem_search(min_stars=10000)
         call_url = mock_api.call_args[0][1]

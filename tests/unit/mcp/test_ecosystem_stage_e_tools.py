@@ -1,4 +1,4 @@
-"""Stage E MCP 工具单元测试：ecosystem_search 升级 + ecosystem_repo_get + ecosystem_search_by_capability。"""
+"""Stage E MCP tool unit tests: ecosystem_search upgrade + ecosystem_repo_get + ecosystem_search_by_capability."""
 
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ class TestEcosystemSearchStageE:
         assert "sort=recency" in url
 
     def test_search_default_sort_omitted(self):
-        """sort=stars 是默认值，不发送参数（节省 url）。"""
+        """sort=stars is the default value; no parameter is sent (saving URL space)."""
         with patch.object(eco, "_api_call", return_value=_SEARCH_RESPONSE) as mock_api:
             _search()
         url = mock_api.call_args[0][1]
@@ -164,7 +164,7 @@ _BY_CAP_RESPONSE = {
 
 class TestEcosystemSearchByCapability:
     def test_no_tags_short_circuits(self):
-        """空 tags 不发请求。"""
+        """Empty tags send no request."""
         with patch.object(eco, "_api_call") as mock_api:
             result = _search_by_capability(tags=None)
         mock_api.assert_not_called()
