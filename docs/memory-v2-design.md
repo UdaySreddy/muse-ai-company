@@ -1,263 +1,263 @@
-# 记忆系统 v2 设计 — 双层台账 + 按需整理
+# Memory System v2 Design — Two-Layer Ledger + On-Demand Tidying
 
-> 状态：**已实施**（P0/P1/P2 自 v1.9.0 起在产）｜ 初稿 2026-07-12 ｜ **v2.1 修订 2026-07-31**
-> 来源：讨论①②（任务 f5524057 / 3a1c54aa）+ 三路工业实践调研（wf_e75cf7d4，逐路对抗核验）
-> 定位红线：**OS 是 Claude Code 的治理观测台账层，记忆是子系统，不做专业记忆产品。**
+> Status: **implemented** (P0/P1/P2 in production since v1.9.0) | First draft 2026-07-12 | **v2.1 revision 2026-07-31**
+> Sources: discussions 1 and 2 (tasks f5524057 / 3a1c54aa) + three lines of industry-practice research (wf_e75cf7d4, adversarially verified line by line)
+> Positioning red line: **The OS is Claude Code's governance/observation ledger layer; memory is a subsystem, not a professional memory product.**
 >
-> v2.1 改了什么（详见 §3.1，全部已实施）：方向层体量红线从「≤40 条 × 400 字」的**双轴**
-> 改为**单一轴「存储上限 = 注入预算」**（分桶字符配额）；超限从一句提示改为**协议化**
-> （交回全桶清单 + 用量缺口 + 当轮整理指令）；`memory_add` 加**写入侧安全扫描**；
-> `memory_invalidate` 加**子串定位**；会议结论**停止自动写入方向/团队记忆**。
+> What v2.1 changed (details in §3.1, all implemented): the direction layer's volume red line changed from the **two axes** of "≤40 entries × 400 characters"
+> to a **single axis, "storage cap = injection budget"** (per-bucket character quotas); exceeding the cap changed from a one-line hint to a **protocol**
+> (hand back the full bucket list + the usage gap + a same-turn tidying instruction); `memory_add` gained a **write-side safety scan**;
+> `memory_invalidate` gained **substring location**; meeting conclusions **stopped being automatically written into direction/team memory**.
 
-## 0. 证据审计（设计依据的可信度声明）
+## 0. Evidence audit (a credibility statement for the design basis)
 
-对抗核验后，本设计只站在 **confirmed 级证据**上：
+After adversarial verification, this design stands only on **confirmed-level evidence**:
 
-| 证据（confirmed） | 支撑的设计决策 |
+| Evidence (confirmed) | Design decision it supports |
 |---|---|
-| ChatGPT 双层记忆：saved memories（显式/可审计/常驻参考）+ reference chat history（后台综合/按需召回）——OpenAI 官方帮助中心 | 双层模型（方向层常驻 + 情景层按需）有消费级官方实证 |
-| Zep 论文 bi-temporal：冲突时 invalidate 边而非删除（arXiv，t_valid/t_invalid + 事务时序） | "显式失效不删除"（讨论①结论） |
-| mem0 论文两阶段管道：先检索 top-K 相似记忆作候选，LLM 直接择 ADD/UPDATE/DELETE/NOOP | memory_reconcile 的四操作决策程序（BM25 替代向量） |
-| OpenAI Agents SDK Sessions：写入原文逐条 append、零 LLM，SQLite 默认后端 | "写入轻、零 LLM"是一线 SDK 的合法默认，抽取是可选增强不是强制写路径 |
-| Google ADK：短期原始事件（无 LLM）与长期库分离，长期化是**显式 API**（add_session_to_memory，通常会话完成时） | 整理是会话内按需显式动作，不是后台守护——正合 CC 非常驻 |
-| Zep 异步入库逼出的双读：prompt 同时拼长期 context 串 + 最近几条原文 | 注入时"方向层摘要 + 最近记录"的拼装范式 |
+| ChatGPT's two-layer memory: saved memories (explicit/auditable/resident reference) + reference chat history (background synthesis/on-demand recall) — OpenAI's official help center | The two-layer model (direction layer resident + episodic layer on demand) has consumer-grade official proof |
+| The Zep paper's bi-temporal model: on conflict, invalidate an edge rather than delete it (arXiv, t_valid/t_invalid + transaction ordering) | "Explicit invalidation without deletion" (discussion 1's conclusion) |
+| The mem0 paper's two-stage pipeline: first retrieve the top-K similar memories as candidates, then the LLM directly chooses ADD/UPDATE/DELETE/NOOP | memory_reconcile's four-operation decision procedure (BM25 in place of vectors) |
+| OpenAI Agents SDK Sessions: written text appended item by item, zero LLM, SQLite default backend | "Light writes, zero LLM" is a legitimate default for a first-tier SDK; extraction is an optional enhancement, not a forced write path |
+| Google ADK: short-term raw events (no LLM) separated from the long-term store; long-term-ization is an **explicit API** (add_session_to_memory, usually at session completion) | Tidying is an on-demand explicit action within a session, not a background daemon — exactly fitting CC's non-residency |
+| The dual read forced out by Zep's asynchronous ingestion: the prompt assembles the long-term context string + the most recent few raw items | The injection-time assembly paradigm of "direction-layer summary + recent records" |
 
-Partial 级（主干成立、细节降权使用）：CoALA 四分类（arXiv:2309.02427 §4.1 确有 working/episodic/semantic/procedural，但"溯源 Tulving/ACT-R"是调研放水——**只借术语命名，不做认知科学背书宣称**）；Letta core memory blocks 常驻编译进 system prompt + 字符上限；Letta sleep-time compute（离线整理 agent 存在，默认参数未逐字核验）；Generative Agents reflection（arXiv:2304.03442，重要度累计过阈触发、产出带引用的高层结论）；CrewAI 旧版 LTM 用 SQLite 零 embedding（文档已改版，仅作历史先例）。
+Partial level (the main trunk holds; details are used with reduced weight): the CoALA four-way classification (arXiv:2309.02427 §4.1 does have working/episodic/semantic/procedural, but "tracing it to Tulving/ACT-R" was research padding — **only the terminology naming is borrowed, with no cognitive-science endorsement claimed**); Letta core memory blocks compiled resident into the system prompt + character caps; Letta sleep-time compute (an offline tidying agent exists; its default parameters were not verified verbatim); Generative Agents reflection (arXiv:2304.03442, triggered when accumulated importance crosses a threshold, producing high-level conclusions with citations); CrewAI's old LTM using SQLite with zero embeddings (the docs have since been revised; a historical precedent only).
 
-已剔除的论据：LangMem "data-independent vs data-dependent" 官方原话（核验判 unsupported，系调研员自创综合）。
+Rejected arguments: LangMem's "data-independent vs data-dependent" as an official quote (verification judged it unsupported; the researcher's own synthesis).
 
-## 1. 总体形态：双层 + 一工具
+## 1. Overall shape: two layers + one tool
 
 ```
-┌─ 方向层（memories 表激活）────────────────┐
-│ 偏好/纠正/设计意图/约束                     │
-│ 低频·高价值密度·跨任务长寿命                │
-│ 写：Leader 显式 memory_add（用户给出偏好时）│
-│ 读：SessionStart + SubagentStart 常驻注入  │←—— 杀手级：派出的 agent 出生即继承
+┌─ Direction layer (memories table activated) ─┐
+│ Preferences/corrections/design intents/constraints │
+│ Low frequency · high value density · cross-task long life │
+│ Write: Leader explicitly memory_adds (when the user gives a preference) │
+│ Read: SessionStart + SubagentStart resident injection  │ ←—— killer: a dispatched agent inherits from birth
 └──────────────────△───────────────────────┘
-                   │ 蒸馏提升（带 source_refs 溯源）
-┌─ 情景层（task_memos 升表）───────△────────┐
-│ 任务过程记录/结论/失败原因                  │
-│ 高频·agent 自动书写·量大                   │
-│ 写：task_memo_add（接口不变）              │
-│ 读：unified_search 按需检索（BM25 三臂）    │
+                   │ Distillation and promotion (with source_refs provenance)
+┌─ Episodic layer (task_memos promoted to a table) ─△─┐
+│ Task process records/conclusions/failure causes │
+│ High frequency · written automatically by agents · large volume │
+│ Write: task_memo_add (interface unchanged) │
+│ Read: unified_search on-demand retrieval (BM25, three arms) │
 └───────────────────────────────────────────┘
-        △ 两层之间：memory_reconcile（按需整理工具，①②⑧合并）
+        △ Between the two layers: memory_reconcile (the on-demand tidying tool, merging items 1, 2 and 8)
 ```
 
-- 与 CC 记忆的关系：MEMORY.md 是 Leader 个人记忆；memories 是**团队共享方向记忆**（可观测、可治理、agent 可继承）。
-- 决策不入表：保持 events append-only，推翻 = 追加 `decision.superseded` 事件，有效性为派生视图（讨论①已定）。
+- Relation to CC memory: MEMORY.md is the Leader's personal memory; memories are the **team-shared direction memory** (observable, governable, inheritable by agents).
+- Decisions do not enter the table: events stay append-only; overturning = appending a `decision.superseded` event, with validity as a derived view (settled in discussion 1).
 
-## 2. 情景层：task_memos 升表（P0）
+## 2. Episodic layer: task_memos promoted to a table (P0)
 
-memo 现状是 `tasks.config` JSON 数组——无行级 ID、无索引、无法挂失效轴/质量分。升为真表：
+A memo currently is a `tasks.config` JSON array — no row-level ID, no index, no way to hang an invalidation axis/quality score on it. Promote it to a real table:
 
 ```sql
 CREATE TABLE task_memos (
-    id            TEXT PRIMARY KEY,          -- uuid，真 ID（可被 knowledge_links 引用）
-    task_id       TEXT NOT NULL,             -- FK tasks.id（天然溯源）
+    id            TEXT PRIMARY KEY,          -- uuid, a real ID (referenceable by knowledge_links)
+    task_id       TEXT NOT NULL,             -- FK tasks.id (natural provenance)
     project_id    TEXT,
     author        TEXT DEFAULT 'leader',
     memo_type     TEXT DEFAULT 'progress',   -- progress/decision/issue/summary
     content       TEXT NOT NULL,
-    scope_path    TEXT DEFAULT '',           -- ②路径作用域 /project/ecosystem/research
-    quality_score INTEGER,                   -- ⑧质量分（NULL=未评，整理时补）
-    invalid_at    DATETIME,                  -- ①失效轴（NULL=有效）
-    invalidated_by TEXT,                     -- 取代者 memo id
-    meta          JSON DEFAULT '{}',         -- entities/topics（整理时补）
+    scope_path    TEXT DEFAULT '',           -- item 2: path scoping /project/ecosystem/research
+    quality_score INTEGER,                   -- item 8: quality score (NULL=unscored, filled at tidying time)
+    invalid_at    DATETIME,                  -- item 1: invalidation axis (NULL=valid)
+    invalidated_by TEXT,                     -- the replacing memo id
+    meta          JSON DEFAULT '{}',         -- entities/topics (filled at tidying time)
     created_at    DATETIME NOT NULL
 );
 CREATE INDEX idx_memos_task ON task_memos(task_id);
 CREATE INDEX idx_memos_valid ON task_memos(project_id, invalid_at);
 ```
 
-- **接口完全不变**：`task_memo_add` 签名照旧，新增可选 `supersedes=<memo_id>`（写入即置旧条 invalid_at，零 LLM）。所有 agent 回写指令零改动。
-- 迁移：一次性把各 tasks.config.memo 数组回填成行（历史 memo 无 id → 迁移时生成）。
-- 读侧：unified_search BM25 臂从"全量解包 JSON"改直查表，默认过滤 `invalid_at IS NULL`，加 `include_invalidated` 开关。
+- **The interface is completely unchanged**: the `task_memo_add` signature stays as-is, with a new optional `supersedes=<memo_id>` (writing sets the old entry's invalid_at, zero LLM). All agents' write-back instructions change not at all.
+- Migration: one-off backfill of each tasks.config.memo array into rows (historical memos have no id → generated at migration time).
+- Read side: the unified_search BM25 arm changes from "unpacking all the JSON" to querying the table directly, filtering `invalid_at IS NULL` by default, with an `include_invalidated` switch.
 
-## 3. 方向层：memories 表激活重定位（P1）
+## 3. Direction layer: the memories table activated and repositioned (P1)
 
-复用现有空表，加列不建新表：
+Reuse the existing empty table; add columns rather than building a new table:
 
 ```sql
 ALTER TABLE memories ADD COLUMN kind TEXT DEFAULT 'preference';
-    -- preference(偏好) / directive(指令·工作方式) / constraint(约束) / design(设计意图)
+    -- preference / directive (instructions · working style) / constraint / design (design intent)
 ALTER TABLE memories ADD COLUMN invalid_at DATETIME;
 ALTER TABLE memories ADD COLUMN invalidated_by TEXT;
-ALTER TABLE memories ADD COLUMN source_refs JSON DEFAULT '[]';  -- ④溯源：回指 memo/report/meeting id
--- scope 语义收窄：global / project / user（不再用 task 级——那是情景层的事）
+ALTER TABLE memories ADD COLUMN source_refs JSON DEFAULT '[]';  -- item 4: provenance, pointing back to memo/report/meeting ids
+-- scope semantics narrowed: global / project / user (no more task level — that is the episodic layer's business)
 ```
 
-- **写入口（本次真的要建）**：MCP `memory_add(content, kind, scope, supersedes?)` + `memory_invalidate(id)`。
-  行为规则（进 Leader 规则集）：**用户给出偏好/纠正/方向设计时，Leader 当场落一条**；偏好被改 = 新条 supersede 旧条（Zep 失效语义）。
-- **体量红线**（Letta block 字符上限的教训）：**v2.1 起改为单一轴，见 §3.1**。（初稿口径：每项目有效条目 ≤ 40 条、单条 ≤ 400 字，超限提示"先整理再添加"——保留在此作为被推翻的原始设计。）**方向层的价值在小而准，不在多。**
-- **读侧 = 本层的存在理由**：
-  - `session_bootstrap.py`（SessionStart）：简报追加「方向记忆」节（有效条目按 kind 分组）；
-  - `inject_subagent_context.py`（SubagentStart）：**每个派出的 agent 出生即注入方向层**——"全中文""完成即汇报"这类偏好不再靠 Leader 手抄进 prompt；
-  - 注入预算：**v2.1 起与存储上限合并为同一根轴，见 §3.1**（初稿口径：两处合计 ≤ 2000 字）。
+- **Write entry (this time it really gets built)**: MCP `memory_add(content, kind, scope, supersedes?)` + `memory_invalidate(id)`.
+  Behavior rules (entering the Leader rule set): **when the user gives a preference/correction/direction design, the Leader records an entry on the spot**; a changed preference = a new entry supersedes the old one (Zep invalidation semantics).
+- **Volume red line** (the lesson of Letta blocks' character caps): **from v2.1, a single axis; see §3.1**. (The first draft's measure: at most 40 valid entries per project and at most 400 characters per entry, with a hint past the cap to "tidy first, then add" — kept here as the overturned original design.) **The direction layer's value lies in being small and accurate, not in being numerous.**
+- **The read side = this layer's reason to exist**:
+  - `session_bootstrap.py` (SessionStart): the briefing gains a "Direction memory" section (valid entries grouped by kind);
+  - `inject_subagent_context.py` (SubagentStart): **every dispatched agent is injected with the direction layer from birth** — preferences like "everything in Chinese" and "report as soon as completed" no longer depend on the Leader hand-copying them into prompts;
+  - Injection budget: **from v2.1, merged with the storage cap into the same axis; see §3.1** (the first draft's measure: the two places together ≤ 2000 characters).
 
-## 3.1 v2.1 修订：单一轴 + 超限协议 + 写入安全（2026-07-31 已实施）
+## 3.1 v2.1 revision: a single axis + over-cap protocol + write safety (implemented 2026-07-31)
 
-### 3.1.1 病灶：存储红线与注入预算不在同一根轴上
+### 3.1.1 The lesion: the storage red line and the injection budget were not on the same axis
 
-初稿把两件事分开定：存储侧「每桶 ≤40 条 × 单条 ≤400 字」＝允许 16,000 字，注入侧
-给 900 字。两个数字差 17 倍，后果不是"多存的没用"，而是**多存的等于没存**：实测
-48 条有效条目里只有排在最前的 2-3 条真的进了 agent 的 system prompt，其余被折成一句
-"另有 46 条，Leader 可用 memory_list 查看"。而"派出的 agent 出生即继承方向层"正是本层
-存在的唯一理由——红线自己把卖点架空了，且这件事在 UI 与工具返回里都看不出来：
-写入成功，注入静默截断。
+The first draft set the two things separately: on the storage side, "≤40 entries per bucket × ≤400 characters per entry" = 16,000 characters allowed, while the injection side
+got 900 characters. The two numbers differ 17-fold, and the consequence is not "the extra stored is useless" but **the extra stored is the same as not stored**: measured,
+of 48 valid entries, only the first 2-3 in line really entered an agent's system prompt; the rest were folded into a single sentence,
+"there are 46 more; the Leader can view them with memory_list". And "a dispatched agent inherits the direction layer from birth" is precisely this layer's
+only reason to exist — the red line itself hollowed out the selling point, and it was visible neither in the UI nor in tool returns:
+writes succeed, injection silently truncates.
 
-### 3.1.2 裁定：单一轴「存储上限 = 注入预算」+ 分桶配额
+### 3.1.2 The ruling: a single axis, "storage cap = injection budget", + per-bucket quotas
 
-只保留一个数字：**方向层注入池 3000 字**。分桶配额（键为 `(scope, scope_id)`）：
+Only one number is kept: **a direction-layer injection pool of 3000 characters**. Per-bucket quotas (keyed by `(scope, scope_id)`):
 
-| 桶 | 配额 | 说明 |
+| Bucket | Quota | Notes |
 |---|---|---|
-| `global` / `system` | 1200 字 | 跨目录跨会话恒成立的纪律 |
-| 每个 `project` | 1500 字 | 本项目专属；每项目各计一份 |
-| `user` | 300 字 | 用户级偏好 |
+| `global` / `system` | 1200 characters | Discipline that holds across directories and sessions |
+| Each `project` | 1500 characters | Specific to this project; counted once per project |
+| `user` | 300 characters | User-level preferences |
 
-一个会话实际继承 = global + 本项目 project + user = **3000 字**。单条 ≤400 字保留
-（指针条目哲学不变：触发条件 + 指向权威文件，正文外置）。条数轴（`≤40 条`）**废除**
-——字符是注入侧真正稀缺的资源，条数不是。
+What one session actually inherits = global + this project's project bucket + user = **3000 characters**. The ≤400 characters per entry is kept
+(the pointer-entry philosophy is unchanged: a trigger condition + a pointer to the authoritative file, with the body externalized). The entry-count axis (`≤40 entries`) is **abolished**
+— characters are the genuinely scarce resource on the injection side; entry counts are not.
 
-- **校验口径**：写入后该桶有效条目（`invalid_at IS NULL`）总字符 ≤ 配额。带
-  `supersedes` 时算的是**置换之后**的总量（旧条字数计为腾出），否则"拿一条长条换一条
-  短条"会被误拒——那是条数轴留下的思维惯性。
-- **注入侧的 900 变 3400**（3000 + 格式开销），且语义从"常态截断线"改为**保险丝**：
-  写入侧已经卡死存储量，正常情况下永不触发；它只兜"有人绕过 API 直改 DB 把方向层
-  撑爆"这一种异常，防止记忆节淹掉简报/记账约定/身份块。两个 hook 是纯 stdlib 进程
-  （不 import `aiteam` 包），各自定义常量，与 `plugin/hooks` 逐字节副本同步（I1 机检）。
-- **过渡态（重要）**：改轴当日现库处于**超配额状态**（project 桶 33 条远超 1500 字）。
-  红线**只拦新写入，不追溯、不迁移、不删任何行**——超限响应如实报告当前用量，容量
-  由后续蒸馏任务在用户过目下压回配额内。治理层不黑盒改数据这条原则优先于数字好看。
+- **Verification measure**: after a write, the bucket's total characters over valid entries (`invalid_at IS NULL`) must be ≤ the quota. With
+  `supersedes`, what is computed is the total **after the replacement** (the old entry's characters count as freed), or "swap a long entry for a
+  short one" would be wrongly rejected — that is the inertia of entry-count-axis thinking.
+- **The injection side's 900 becomes 3400** (3000 + formatting overhead), and its semantics change from "the normal truncation line" to a **fuse**:
+  the write side already clamps the stored volume dead, so in normal circumstances it never triggers; it only backstops the one anomaly of "someone bypassed the API and edited the DB directly, blowing up the direction layer",
+  preventing the memory section from drowning the briefing/accounting conventions/identity blocks. Both hooks are pure-stdlib processes
+  (not importing the `aiteam` package), each defines its own constants, kept in sync with the byte-for-byte copies in `plugin/hooks` (I1 machine check).
+- **Transitional state (important)**: on the day of the axis change, the live database was in an **over-quota state** (the project bucket's 33 entries far exceed 1500 characters).
+  The red line **only blocks new writes; it does not retrospect, migrate, or delete any row** — the over-cap response truthfully reports the current usage, and the capacity
+  is pressed back within quota by later distillation tasks under the user's review. The governance-layer principle of never black-box-changing data takes precedence over pretty numbers.
 
-### 3.1.3 超限协议化：让整理发生在被拒绝的那一刻
+### 3.1.3 The over-cap protocol: making tidying happen at the moment of rejection
 
-旧行为是回一句"先整理再添加"，实际效果是调用方换个更短的句子重试，容量压力没有
-任何人处理。现在超限响应交回一整套**可当轮执行**的材料：
+The old behavior was to reply "tidy first, then add"; its actual effect was that the caller retried with a shorter sentence, and the capacity pressure was handled by
+nobody. Now the over-cap response hands back a complete set of material **executable in the same turn**:
 
-1. `quota`：桶名 / 配额 / 已用 / 条数 / 本次新增 / 置换腾出 / 落库后总量 / 超出多少；
-2. `bucket_entries`：该桶**当前全部有效条目**的 id、kind、字数、创建时间、**全文**；
-3. `error` + `next_action`：明确要求在**本轮之内**先 `memory_invalidate`
-   （可用 `content_match` 子串定位）或 `memory_reconcile_apply` 腾出至少 N 字，再重试
-   本次写入。
+1. `quota`: the bucket name / quota / used / entry count / this addition / freed by replacement / total after landing / by how much it exceeds;
+2. `bucket_entries`: the id, kind, character count, creation time and **full text** of **all the bucket's currently valid entries**;
+3. `error` + `next_action`: explicitly requiring that **within this turn**, `memory_invalidate` first be used
+   (substring location via `content_match` is available) or `memory_reconcile_apply` free at least N characters, and only then the
+   present write be retried.
 
-`memory_reconcile_apply` 的 `promote` 分支走同一套校验，但不回挂全桶清单
-（整理流程的 `direction_inventory` 已给过全文，逐条复述只会把响应撑爆）。
+The `promote` branch of `memory_reconcile_apply` goes through the same verification, but does not hand back the full bucket list
+(the tidying flow's `direction_inventory` has already given the full text; restating it entry by entry would only blow up the response).
 
-### 3.1.4 写入侧安全扫描
+### 3.1.4 Write-side safety scan
 
-方向层内容会被编译进**每一个**派出 agent 的 system prompt，因此 `memory_add` 是全系统
-最强的注入放大器：一条被污染的条目影响此后所有子 agent。扫描放在写入侧（作者还在
-现场、可以改），不放注入侧（既太晚又是热路径）。三族：
+Direction-layer content is compiled into **every** dispatched agent's system prompt, so `memory_add` is the strongest injection amplifier
+in the whole system: one polluted entry affects every sub-agent thereafter. The scan sits on the write side (the author is still
+on the scene and can edit), not on the injection side (both too late and a hot path). Three families:
 
-| 族 | 内容 | 作用面 |
+| Family | Content | Surfaces it acts on |
 |---|---|---|
-| 不可见 Unicode | 零宽字符、双向覆盖、被弃用格式符、BOM、Tag 块（ASCII 走私） | 方向层 + 情景层 |
-| 提示注入句式 | 指令覆盖（中/英）、系统提示套取、伪造角色/轮次标记、人格接管、越狱口令 | 仅方向层 |
-| 凭据形态 | 私钥文件头、各家 API key 形状、`key=value` 密钥 | 仅方向层 |
+| Invisible Unicode | Zero-width characters, bidirectional overrides, deprecated format characters, BOM, the Tag block (ASCII smuggling) | Direction layer + episodic layer |
+| Prompt-injection phrasings | Instruction overrides (Chinese/English), system-prompt extraction, forged role/turn markers, persona takeover, jailbreak incantations | Direction layer only |
+| Credential shapes | Private-key file headers, each vendor's API key shape, `key=value` secrets | Direction layer only |
 
-- 命中即拒绝并说明命中了什么、在第几个字；**凭据命中不回显匹配内容**（否则拒绝信息
-  本身成了密钥的第二份副本）。
-- 模式表单一来源在服务端 `src/aiteam/memory/content_safety.py`，**不复制进 hook**
-  （hook 纯 stdlib，且注入端检查为时已晚）。表内不可见字符按**码点区间**书写，不写
-  字面字符——否则模式表自己就是一段不可审阅的文本，正是本检查要防的东西。
-- `task_memo_add` **只扫不可见 Unicode**：情景层高频，且不进任何 system prompt，注入
-  句式在那里只是被记录的文本；但肉眼不可见的内容无论进哪层都不该入库（检索会把它
-  捞回模型眼前）。
+- A hit is rejected, with a statement of what was hit and at which character; **a credential hit does not echo the matched content** (otherwise the rejection message
+  itself becomes a second copy of the secret).
+- The pattern table's single source is server-side, in `src/aiteam/memory/content_safety.py`; it is **not copied into the hooks**
+  (hooks are pure stdlib, and checking at the injection end is already too late). Invisible characters in the table are written by **code-point ranges**, not as
+  literal characters — otherwise the pattern table itself would be a stretch of unreviewable text, exactly what this check exists to prevent.
+- `task_memo_add` **only scans invisible Unicode**: the episodic layer is high-frequency and enters no system prompt, so injection
+  phrasings there are merely recorded text; but content invisible to the naked eye should not enter the database at any layer (retrieval will pull it
+  back before the model's eyes).
 
-### 3.1.5 `memory_invalidate` 子串定位
+### 3.1.5 `memory_invalidate` substring location
 
-整理最常发生在"刚被超限协议顶回来"的那一刻，此时调用方手里有的是**条目原文**，
-先查一次 id 再失效纯属多一跳。故加可选 `content_match`：在当前上下文的有效条目
-（global + user + 本项目，与 `memory_list`/注入同源）正文中做子串匹配，**必须唯一命中**
-——0 条或多条都不动数据，多条时交回候选要求给出更精确的子串。绝不猜。
+Tidying most often happens at "the moment of just having been pushed back by the over-cap protocol", when what the caller holds is the **entry's original text**;
+querying the id once and then invalidating is a pure extra hop. So an optional `content_match` is added: within the current context's valid entries
+(global + user + this project, the same source as `memory_list`/injection), a substring match is done over the body text, and it **must hit uniquely**
+— with 0 hits or multiple hits, no data is touched, and with multiple hits, candidates are handed back with a request for a more precise substring. Never guess.
 
-### 3.1.6 会议结论停止自动入层
+### 3.1.6 Meeting conclusions stop entering the layer automatically
 
-`PUT /api/meetings/{id}/conclude` 原会自动往 `team` 域 memories 塞一条
-`[会议决策] <topic>: <结论>`，这是记忆层唯一的自动写入口：无人审、不挂失效轴管理、
-按会议数线性增长，且与决策的正道重复。裁定：**停写**。结论的权威落点是 decision
-事件 + 任务墙条目（Council 纪律④，现行制度）。已有的 126 条历史行**冻结**：不删、
-不失效、不迁移——它们是当时制度下的真实记录，删了就是伪造历史。
+`PUT /api/meetings/{id}/conclude` used to automatically stuff a `[Meeting decision] <topic>: <conclusion>` entry into the `team`-domain memories;
+that was the memory layer's only automatic write entry: unreviewed by anyone, unmanaged by the invalidation axis,
+growing linearly with the number of meetings, and duplicating the proper path for decisions. Ruling: **stop writing**. A conclusion's authoritative landing place is the decision
+event + task-wall entry (Council discipline 4, the current system). The existing 126 historical rows are **frozen**: not deleted,
+not invalidated, not migrated — they are true records under the system of their time, and deleting them would be fabricating history.
 
-### 3.1.7 如实记录：未启用的扩展点与未交付的分期
+### 3.1.7 Truthfully recorded: unenabled extension points and undelivered phases
 
-- `task_memos.quality_score` / `scope_path`：**列在、语义在、实际未启用**。写入面只有
-  `memory_reconcile_apply` 的 `score` / `merge` 两个 op 会填，日常写入路径
-  （`task_memo_add`）不带这两个字段，检索与注入侧也不读它们。**保留列，不删**
-  ——I10 冻结原则：退役的表/列冻结而非删除，删列既不可逆又会让老库升级失败。
-- **P3 全部未交付**：scope_path 检索切片、Dashboard 记忆页（含方向层导出 markdown）、
-  CC MEMORY.md 高价值条目镜像、doctor 的 AGENTS.md 互通卫生检查——四项均未实施，
-  分期表里的"可缓"至今仍然成立。
+- `task_memos.quality_score` / `scope_path`: **the columns exist, the semantics exist, they are actually not enabled**. On the write side only
+  the `score` / `merge` ops of `memory_reconcile_apply` fill them; the everyday write path
+  (`task_memo_add`) does not carry these two fields, and neither the retrieval nor the injection side reads them. **Keep the columns; do not delete them**
+  — the I10 freezing principle: retired tables/columns are frozen rather than deleted; dropping a column is both irreversible and would make old databases fail to upgrade.
+- **P3 is entirely undelivered**: scope_path retrieval slicing, a Dashboard memory page (including direction-layer markdown export),
+  mirroring of high-value CC MEMORY.md entries, and a doctor AGENTS.md interop hygiene check — none of the four has been implemented;
+  the phase table's "can be deferred" still holds today.
 
-### 3.1.8 外部对照：NousResearch/hermes-agent
+### 3.1.8 External comparison: NousResearch/hermes-agent
 
-本次改造的机制来源。逐条对照结论：
+The mechanism source of this overhaul. Item-by-item comparison conclusions:
 
-| 该项目的做法 | 本设计的处置 |
+| That project's practice | This design's disposition |
 |---|---|
-| 记忆存储上限**就是**注入预算，只有一个数字，注入永不截断，超限时把当前全部条目连同"本轮内整理后重试"的指令一起回给模型 | **照搬**（§3.1.2 + §3.1.3）。这是本次改造的全部机制来源 |
-| 检索走 SQLite FTS5，**零 embedding** | **双佐证**：与本设计 §5「不做向量库」的判断独立同构（我们用纯 Python BM25，因为 FTS5 的中文分词不可靠）。两处独立实践指向同一结论，该项裁定加固 |
-| 写入前置 `write_approval` 暂存队列（记忆先入待批队列，人确认后落库） | **暂不实施，记为参考形态**。当前方向层只由 Leader/用户维护（§5「不让子 agent 自改方向层」），没有需要审批的第二写入方；若将来开放子 agent 提案方向层条目，这个暂存队列就是现成的通道形态 |
+| The memory storage cap **is** the injection budget — a single number; injection never truncates; when over the cap, all current entries are handed back to the model together with a "tidy within this turn, then retry" instruction | **Copied verbatim** (§3.1.2 + §3.1.3). This is the entire mechanism source of this overhaul |
+| Retrieval uses SQLite FTS5, **zero embeddings** | **Double corroboration**: independently isomorphic with this design's §5 judgment of "no vector store" (we use pure-Python BM25, because FTS5's Chinese word segmentation is unreliable). Two independent practices pointing at the same conclusion reinforce this ruling |
+| A pre-write `write_approval` staging queue (memory enters a pending-approval queue first; a human confirms before it lands) | **Not implemented for now; recorded as a reference shape**. The current direction layer is only maintained by the Leader/user (§5 "do not let sub-agents edit the direction layer themselves"), so there is no second writer needing approval; if sub-agents are ever allowed to propose direction-layer entries, this staging queue is the ready-made channel shape |
 
-## 4. 按需整理：memory_reconcile（P2，①②⑧⑦合并）
+## 4. On-demand tidying: memory_reconcile (P2, merging items 1, 2, 8 and 7)
 
-CC 非常驻 ⇒ 无后台整理进程（ADK/调度器退役同一原则）。整理 = **会话内按需显式动作**：
+CC is not resident ⇒ there is no background tidying process (the same principle as the ADK/scheduler retirement). Tidying = an **on-demand explicit action within a session**:
 
-- **触发**：用户明说"整理记忆"；或软提示——上次整理后新增有效 memo > 150 条时，工具返回/hook 附 hint（Generative Agents 重要度过阈的极简化：按量计数）。量大提示开 ultracode 用 Workflow 并发。
-- **流程**（mem0 四操作管道，BM25 版）：
-  1. **粗筛（零 LLM）**：同 scope_path/同任务簇内 BM25 两两相似度挑候选对（graphiti 两级去重思想，MinHash 换 BM25）；
-  2. **LLM 精判**：每候选组择一——`KEEP`（都留）/ `MERGE`（合并，旧条 supersede）/ `INVALIDATE`（矛盾，旧条失效）/ `NOOP`；
-  3. **蒸馏**（Generative Agents reflection，只做一层）：跨 memo 反复出现的结论/用户纠正 → 提案为方向层条目，`source_refs` 回指源 memo（④溯源在此闭环）；
-  4. **打分**（⑧）：为 summary/decision 型 memo 补 quality_score（1-10 带 reason 入 meta）；
-  5. **产出建议清单 → 用户确认 → 应用**。治理层原则：**不黑盒自动改**（ChatGPT chat history 式隐式综合与可审计定位相悖，明确不学）。
+- **Triggers**: the user says "tidy the memory" outright; or a soft hint — when more than 150 new valid memos have appeared since the last tidying, the tool return/hook attaches a hint (an extreme simplification of Generative Agents' importance-crossing-a-threshold: counting by volume). At large volumes, the hint suggests opening ultracode and using Workflow concurrency.
+- **Flow** (mem0's four-operation pipeline, the BM25 version):
+  1. **Coarse screening (zero LLM)**: within the same scope_path/the same task cluster, pairwise BM25 similarity picks candidate pairs (graphiti's two-level dedup idea, MinHash swapped for BM25);
+  2. **LLM fine judgment**: for each candidate group, choose one — `KEEP` (keep both) / `MERGE` (merge; the old entry is superseded) / `INVALIDATE` (contradiction; the old entry is invalidated) / `NOOP`;
+  3. **Distillation** (Generative Agents reflection, only one layer): conclusions/user corrections recurring across memos → proposed as direction-layer entries, with `source_refs` pointing back to the source memos (item 4's provenance closes the loop here);
+  4. **Scoring** (item 8): fill `quality_score` for summary/decision-type memos (1-10, with the reason in meta);
+  5. **Produce a recommendation list → user confirmation → apply**. Governance-layer principle: **no black-box automatic changes** (ChatGPT chat-history-style implicit synthesis conflicts with the auditable positioning and is explicitly not learned from).
 
-## 5. 明确不做（过度设计红线，全部来自调研标注）
+## 5. Explicitly not doing (over-design red lines, all from research annotations)
 
-| 不做 | 理由 |
+| Not doing | Reason |
 |---|---|
-| 向量库 / embedding | 语料百级，BM25 三臂 RRF 已足（Anthropic 官方记忆方案同样弃向量选透明文件） |
-| 常驻后台整理进程 / 定时器 | CC 非常驻——同调度器退役裁定；Letta sleep-time 的"思想"保留，"常驻"不搬 |
-| 图数据库 / 知识图 / 实体社区 | graphiti/Zep 的重资产形态，只搬失效语义 |
-| 完整双时序四时间戳 | 单一失效轴（invalid_at + invalidated_by）够用，valid_at 语义并入 created_at |
-| 自动黑盒综合 | 治理层要可审计：一切整理走"提案→确认→应用" |
-| LLM importance 常驻打分 | 按需整理时才打分 |
-| 让子 agent 自改方向层 | 方向层只由 Leader/用户维护（Letta 自编辑工具链裁掉），子 agent 只读 |
+| Vector store / embeddings | The corpus is at the hundred scale; BM25's three-arm RRF suffices (Anthropic's official memory approach likewise drops vectors for transparent files) |
+| Resident background tidying processes / timers | CC is not resident — the same ruling as the scheduler retirement; Letta sleep-time's "idea" is kept, its "residency" is not carried over |
+| Graph databases / knowledge graphs / entity communities | graphiti/Zep's heavy-asset shapes; only the invalidation semantics are carried over |
+| Full bi-temporal four timestamps | A single invalidation axis (invalid_at + invalidated_by) suffices; valid_at's semantics merge into created_at |
+| Automatic black-box synthesis | The governance layer must be auditable: all tidying goes "proposal → confirmation → apply" |
+| LLM importance resident scoring | Scored only at on-demand tidying time |
+| Letting sub-agents edit the direction layer themselves | The direction layer is maintained only by the Leader/user (Letta's self-editing toolchain is cut); sub-agents only read |
 
-## 5.5 方向层条目内容标准（2026-07-12 增补，源自 Kun Chen 全局 AGENTS.md 案例研究）
+## 5.5 Direction-layer entry content standards (added 2026-07-12, from the Kun Chen global AGENTS.md case study)
 
-一手案例：kunchenguid/dotfiles 的 `home/AGENTS.md`（前 Meta/Microsoft/Atlassian L8，博文《Everyone Should Have an OPINIONS.md》+ 视频 walkthrough）。该文件 7 条 bullet 管住所有 agent 的所有输出，验证方向层"价值在杠杆率不在条数"。
+A first-hand case: kunchenguid/dotfiles' `home/AGENTS.md` (formerly Meta/Microsoft/Atlassian L8; the blog post "Everyone Should Have an OPINIONS.md" + a video walkthrough). That file's 7 bullets govern all outputs of all its agents, verifying that the direction layer's "value lies in leverage, not in entry count".
 
-**写入检验（memory_add 的软门槛）**：这条能影响多少未来任务？只影响单个任务的 → 去 task_memos。
+**The write test (memory_add's soft gate)**: how many future tasks can this entry affect? If it only affects a single task → it goes to task_memos.
 
-**kind 分类与范本**（全部来自 Kun 文件逐字）：
-| kind | 范本 | 特征 |
+**Kind classification and exemplars** (all taken verbatim from Kun's file):
+| Kind | Exemplar | Character |
 |---|---|---|
-| constraint（禁令/护栏） | "Never use the em dash"；"NEVER auto-add agent name as co-author" | 一句话、可机检、终身有效 |
-| design（价值排序） | "技术决策不看重开发成本，偏向质量/简洁/健壮/可扩展/长期可维护" | 缺显式指令时的取舍依据 |
-| directive（方法论） | "bug 先在贴近最终用户的 E2E 场景复现"；童子军军规（顺手修 lint/flaky） | 回答"怎么干" |
-| preference（格式偏好） | 每句一行（semantic line breaks，利 diff） | 可选，不设默认 |
+| constraint (prohibitions/guardrails) | "Never use the em dash"; "NEVER auto-add agent name as co-author" | One sentence, machine-checkable, lifelong validity |
+| design (value ordering) | "Technical decisions do not weigh development cost, favoring quality/simplicity/robustness/extensibility/long-term maintainability" | The basis for trade-offs when no explicit instruction exists |
+| directive (methodology) | "Reproduce a bug first in an E2E scenario close to the end user"; the Boy Scout rule (fix lint/flaky on the way past) | Answers "how to do it" |
+| preference (formatting preferences) | One sentence per line (semantic line breaks, good for diffs) | Optional; no default set |
 
-**指针条目形态**（OPINIONS.md/VOICE.md 模式的 OS 等价物）：方向层条目允许"触发条件 + 指向"形态——常驻的只是一句触发指令，大体量内容放情景层/报告由检索按需拉取。这是体量红线的泄压阀：超限内容不是删，是降级为指针+正文外置。
+**The pointer-entry shape** (the OS equivalent of the OPINIONS.md/VOICE.md pattern): direction-layer entries may take a "trigger condition + pointer" shape — what resides permanently is just one trigger instruction, while large-volume content sits in the episodic layer/reports and is pulled by retrieval on demand. This is the volume red line's pressure valve: over-cap content is not deleted, it is demoted to a pointer + externalized body.
 
-**外部佐证两则**：① Kun 公开主张关闭 Claude auto-memory、改存 agent-agnostic 位置（防陈旧记忆污染上下文）——与本设计"Leader 显式 memory_add、不做自动黑盒写入"同判断；② 其仓库根级 AGENTS.md 维护元规则（只放几乎每个未来 session 都用的知识 / 指向权威文件而非重复 / 优先重写精简而非追加）与本设计体量红线 + reconcile 精简哲学同构；其 OPINIONS.md 配 cron watchdog 检测陈旧观点 = 本设计 memory_reconcile 失效判定的常驻版（OS 按 CC 非常驻现实改为按需，方向正确）。
+**Two pieces of external corroboration**: 1. Kun publicly advocates turning off Claude auto-memory and instead storing in an agent-agnostic location (guarding against stale memory polluting context) — the same judgment as this design's "the Leader explicitly memory_adds; no automatic black-box writes"; 2. His repo's root-level AGENTS.md maintenance meta-rules (only put knowledge used by almost every future session / point to authoritative files rather than repeating them / prefer rewriting and streamlining over appending) are isomorphic with this design's volume red line + reconcile streamlining philosophy; his OPINIONS.md having a cron watchdog detecting stale opinions = the resident version of this design's memory_reconcile invalidation judgment (the OS changes it to on-demand per CC's non-resident reality; the direction is right).
 
-**AGENTS.md 生态事实**（一手核验）：AGENTS.md 为 Linux 基金会 Agentic AI Foundation 托管的开放标准，28+ 工具原生读取；**Claude Code 不原生读**（官方文档明示，issue #6235 开放 4300+ 👍无路线图），官方桥接法 = CLAUDE.md 首行 `@AGENTS.md` import（优先）或 symlink。→ P3 可选项：doctor 增加互通卫生检查（检测仓库有 AGENTS.md 但 CLAUDE.md 未桥接时提示 @import）。方向层整体导出 AGENTS.md 判否：语义域错配（方向层=会演化的偏好台账，AGENTS.md=稳定工程约定），仅跨工具用户需要时导出"可稳定化子集"。
+**AGENTS.md ecosystem facts** (first-hand verified): AGENTS.md is an open standard hosted by the Linux Foundation's Agentic AI Foundation, natively read by 28+ tools; **Claude Code does not natively read it** (the official docs state it plainly; issue #6235 is open with 4300+ 👍 and no roadmap), and the official bridging method = a first line `@AGENTS.md` import in CLAUDE.md (preferred) or a symlink. → A P3 option: doctor gains an interop hygiene check (when a repo has an AGENTS.md but CLAUDE.md has not bridged it, hint at @import). Exporting the whole direction layer as AGENTS.md is judged no: a semantic-domain mismatch (direction layer = an evolving preference ledger; AGENTS.md = stable engineering conventions); only when a cross-tool user needs it, export the "stabilizable subset".
 
-## 6. 分期交付
+## 6. Phased delivery
 
-| 期 | 内容 | 性质 |
+| Phase | Content | Nature |
 |---|---|---|
-| **P0 地基** | task_memos 升表 + 迁移 + task_memo_add 兼容（含 supersedes）+ unified_search 直查表 | 纯机械重构，风险最低，解锁①④⑧字段落点 |
-| **P1 方向层** | memories 加列 + memory_add/memory_invalidate 工具 + 双 hook 注入（体量红线+注入预算）+ **种子条目**（把已知用户偏好首批落条：全中文/完成即汇报/co-author 禁令/生产只读铁律指针等，用户过目后入库） | 新能力，杀手级是 SubagentStart 注入 |
-| **P2 整理** | memory_reconcile（粗筛→四操作→蒸馏→打分→提案确认流）+ 量阈软提示 + **陈旧检测**（Kun watchdog 按需版：对方向层每条问"是否仍然成立"——引用的功能已退役/版本已过时/世界已变化 → 提案失效） | LLM 按需，ultracode 提示接规则1c |
-| **P3 可选** | scope_path 检索切片、Dashboard 记忆页（含方向层导出 markdown，可移植性）、CC MEMORY.md 高价值条目镜像、doctor AGENTS.md 互通卫生检查 | 增强，可缓 |
+| **P0 foundation** | task_memos table promotion + migration + task_memo_add compatibility (including supersedes) + unified_search querying the table directly | Pure mechanical refactor, lowest risk, unlocks the field landing points of items 1, 4 and 8 |
+| **P1 direction layer** | memories gains columns + memory_add/memory_invalidate tools + dual-hook injection (volume red line + injection budget) + **seed entries** (landing the first batch of known user preferences as entries: everything in Chinese / report on completion / the co-author ban / a pointer to the production read-only iron rule, etc., entering the database after the user's review) | New capability; the killer feature is SubagentStart injection |
+| **P2 tidying** | memory_reconcile (coarse screening → four operations → distillation → scoring → proposal-confirmation flow) + volume-threshold soft hints + **staleness detection** (the on-demand version of Kun's watchdog: for each direction-layer entry ask "does it still hold" — a referenced feature retired / a version outdated / the world changed → propose invalidation) | LLM on demand; the ultracode hint connects to rule 1c |
+| **P3 optional** | scope_path retrieval slicing, a Dashboard memory page (including direction-layer markdown export, for portability), mirroring of high-value CC MEMORY.md entries, doctor AGENTS.md interop hygiene check | Enhancements; can be deferred |
 
-**reconcile 三守则**（Kun 根级 AGENTS.md 维护元规则的移植）：只保留对几乎每个未来任务都有用的条目；指向权威文件/工具而非复述其内容；优先重写精简而非追加。
+**reconcile's three rules** (transplanted from the maintenance meta-rules of Kun's root AGENTS.md): keep only entries useful to almost every future task; point to authoritative files/tools rather than restating their content; prefer rewriting and streamlining over appending.
 
-每期独立可交付；P0 不依赖任何讨论③⑤⑥的结论。
+Each phase is independently deliverable; P0 depends on no conclusion of discussions 3, 5 or 6.
 
-**交付现状（2026-07-31 核对）**：P0 / P1 / P2 已实施并在产（v1.9.0 起）；P1 的体量红线
-与注入预算已按 §3.1 合并为单一轴，并补上超限协议与写入安全扫描；**P3 四项全部未交付**。
+**Delivery status (checked 2026-07-31)**: P0 / P1 / P2 are implemented and in production (since v1.9.0); P1's volume red line
+and injection budget have been merged into a single axis per §3.1, with the over-cap protocol and write-side safety scan added; **all four P3 items are undelivered**.

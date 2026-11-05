@@ -1,72 +1,73 @@
-# AI Team OS 架构
+# AI Team OS Architecture
 
-> CLAUDE.md 中「Storage → API → Dashboard」一行摘要的展开版。
-> 本文只记录真实存在的分层与文件路径，随代码演进同步维护。
+> The expanded version of the one-line "Storage → API → Dashboard" summary in CLAUDE.md.
+> This document records only layers and file paths that really exist, and is maintained in sync as the code evolves.
 
-## 总览：主数据流
+## Overview: the main data flow
 
 ```
 Claude Code (MCP client)
    │  stdio
    ▼
-src/aiteam/mcp/          MCP Server（fastmcp，113 工具）
-   │  server.py 注册 tools/ 16 个子模块；_autostart.py 自动拉起 uvicorn
-   │  HTTP (端口发现: ~/.claude/data/ai-team-os/api_port.txt)
+src/aiteam/mcp/          MCP Server (fastmcp, 113 tools)
+   │  server.py registers the 16 submodules in tools/; _autostart.py automatically brings up uvicorn
+   │  HTTP (port discovery: ~/.claude/data/ai-team-os/api_port.txt)
    ▼
-src/aiteam/api/          FastAPI 服务（app.py + routes/ 37 个路由模块）
-   │  后台任务: state_reaper.py（状态回收/治理循环）、wake_manager.py、event_bus.py
+src/aiteam/api/          FastAPI service (app.py + 37 route modules in routes/)
+   │  Background tasks: state_reaper.py (state reaping/governance loop), wake_manager.py, event_bus.py
    ▼
-src/aiteam/storage/      存储层（StorageRepository + SQLAlchemy async + SQLite）
-   │  connection.py（含手写幂等迁移）、engine_pool.py、models.py
-   │  真相源: ~/.claude/data/ai-team-os/aiteam.db（WAL）
+src/aiteam/storage/      Storage layer (StorageRepository + SQLAlchemy async + SQLite)
+   │  connection.py (with hand-written idempotent migrations), engine_pool.py, models.py
+   │  Source of truth: ~/.claude/data/ai-team-os/aiteam.db (WAL)
    ▼
-dashboard/               React 19 + Vite 前端（22 页面，Zustand 状态管理）
-                         构建产物双副本: dashboard/dist（本地构建，gitignore）
-                         与 plugin/dashboard-dist（入库分发，I3 机检约束一致性）
+dashboard/               React 19 + Vite frontend (22 pages, Zustand state management)
+                         Build artifacts in two copies: dashboard/dist (local build, gitignored)
+                         and plugin/dashboard-dist (committed for distribution; the I3 machine check constrains their consistency)
 ```
 
-## 旁路组件
+## Side components
 
-| 目录 | 职责 |
+| Directory | Responsibility |
 |------|------|
-| `plugin/hooks/` | CC 生命周期 hook 脚本**真相源**（send_event / session_bootstrap / context_tracker 等）。`src/aiteam/hooks/` 为同名镜像副本，I1 机检强制逐字节一致；install.py 安装到 `~/.claude/hooks/ai-team-os/` |
-| `src/aiteam/services/` | 生态扫描子系统（ecosystem_scanner / tagger / summarizer / deep_reviewer 等） |
-| `src/aiteam/meeting/` | 会议模板系统 |
-| `src/aiteam/memory/` | 记忆系统 v2 双层：情景层 task_memos（agent 工作日志，BM25 按需检索）+ 方向层 memories（偏好/纠正，双 hook 常驻注入）+ reconcile 按需整理（粗筛 reconcile.py，无向量/无常驻 LLM）；设计见 docs/memory-v2-design.md |
-| `src/aiteam/loop/` | 任务墙引擎与治理件（task_wall_engine / watchdog / auto_assign / completion_verifier / failure_alchemy / replay_engine / what_if）。loop 状态机本身已于 v1.10.3 退役，目录名保留 |
-| `src/aiteam/cli/` | Typer CLI（`aiteam` 入口，commands/ 子命令） |
-| `src/aiteam/config/` | pydantic-settings 配置（settings.py） |
-| `src/aiteam/integrations/` | 外部集成（notifier.py Slack webhook 等） |
-| `scripts/check_invariants.sh` | 红线机检 11 条：I1 hook 双副本 / I1b 遗留副本禁令 / I2 版本五处锁步 / I3 双 dist 一致 / I4 dist 时效 / I5 venv 禁令 / I6 README 数字（`check_readme_numbers.sh`）/ I7 ruff 门禁 / I8 hook 注册面统一（`check_hook_surface.py`）/ I9 MCP 工具参数描述（`check_tool_param_descriptions.py`）/ I10 表集合一致（`check_schema_tables.py`） |
+| `plugin/hooks/` | The **source of truth** for CC lifecycle hook scripts (send_event / session_bootstrap / context_tracker, etc.). `src/aiteam/hooks/` is the same-named mirror copy; the I1 machine check enforces byte-for-byte identity; install.py installs them to `~/.claude/hooks/ai-team-os/` |
+| `src/aiteam/services/` | The ecosystem scanning subsystem (ecosystem_scanner / tagger / summarizer / deep_reviewer, etc.) |
+| `src/aiteam/meeting/` | The meeting template system |
+| `src/aiteam/memory/` | Memory system v2, two layers: the episodic layer task_memos (agent work logs, BM25 on-demand retrieval) + the direction layer memories (preferences/corrections, resident injection by two hooks) + on-demand reconcile tidying (coarse screening in reconcile.py, no vectors/no resident LLM); design in docs/memory-v2-design.md |
+| `src/aiteam/loop/` | The task-wall engine and governance pieces (task_wall_engine / watchdog / auto_assign / completion_verifier / failure_alchemy / replay_engine / what_if). The loop state machine itself was retired in v1.10.3; the directory name is kept |
+| `src/aiteam/cli/` | The Typer CLI (the `aiteam` entry point, subcommands in commands/) |
+| `src/aiteam/config/` | pydantic-settings configuration (settings.py) |
+| `src/aiteam/integrations/` | External integrations (notifier.py Slack webhook, etc.) |
+| `scripts/check_invariants.sh` | 11 red-line machine checks: I1 hook dual copies / I1b leftover-copy ban / I2 version lockstep in five places / I3 dual dist consistency / I4 dist freshness / I5 venv ban / I6 README numbers (`check_readme_numbers.sh`) / I7 ruff gate / I8 hook registration surface unified (`check_hook_surface.py`) / I9 MCP tool parameter descriptions (`check_tool_param_descriptions.py`) / I10 table sets consistent (`check_schema_tables.py`) |
 
-## Legacy / 已退役
+## Legacy / retired
 
-- `src/aiteam/orchestrator/`：LangGraph 图执行路径，仅 CLI `aiteam task run`
-  可达，依赖可选 extra `[langgraph]`。
-- 自带 pipeline 已**整域删除**（2026-07 执行，决策同期）：OS 转型为 ultracode/CC
-  Workflow 的**持久化观测与治理层**，Workflow 运行由 hook 自动追踪为
-  `workflow-<wf_id>` 团队。删除范围含 `src/aiteam/pipeline/`、`loop/pipeline.py`、
-  pipeline REST 路由、`pipeline_gate` / `autopilot_auto_stop` 两个 hook、autopilot
-  skill 与 3 个 MCP 工具。**保留项**（勿清理）：`pipeline_stage_history` 表与其
-  ORM（append-only 历史，只停写不 drop）、`tasks.config['pipeline']` 历史字段位、
-  `task_create(task_type=...)` 参数（软退役 no-op）。
+- `src/aiteam/orchestrator/`: the LangGraph graph execution path, reachable only from the CLI `aiteam task run`,
+  depending on the optional extra `[langgraph]`.
+- The built-in pipeline has been **deleted as a whole domain** (executed 2026-07, decided in the same period): the OS transformed into the
+  **persistent observation and governance layer** for ultracode/CC
+  Workflow, and Workflow runs are automatically tracked by hooks as
+  `workflow-<wf_id>` teams. The deletion scope includes `src/aiteam/pipeline/`, `loop/pipeline.py`,
+  the pipeline REST routes, the `pipeline_gate` / `autopilot_auto_stop` hooks, the autopilot
+  skill and 3 MCP tools. **Kept items** (do not clean up): the `pipeline_stage_history` table and its
+  ORM (append-only history; writing stopped, never dropped), the `tasks.config['pipeline']` historical field slot,
+  and the `task_create(task_type=...)` parameter (soft-retired no-op).
 
-## 共享类型铁律
+## The shared-types iron rule
 
-所有跨模块共享类型只定义/引用 `src/aiteam/types.py`（CLAUDE.md 核心约束）。
+All cross-module shared types are only defined/referenced in `src/aiteam/types.py` (a CLAUDE.md core constraint).
 
-## 运行时文件位置
+## Runtime file locations
 
-| 文件 | 路径 |
+| File | Path |
 |------|------|
-| 主数据库 | `~/.claude/data/ai-team-os/aiteam.db` |
-| API 端口发现 | `~/.claude/data/ai-team-os/api_port.txt` |
-| MCP 调试日志 | `~/.claude/data/ai-team-os/mcp-debug.log` |
-| API PID 文件 | `<tmpdir>/aiteam-api.pid`（_autostart.py） |
-| API 启动锁 | `<tmpdir>/aiteam-api-startup.lock` |
-| 已安装 hooks | `~/.claude/hooks/ai-team-os/` |
+| Main database | `~/.claude/data/ai-team-os/aiteam.db` |
+| API port discovery | `~/.claude/data/ai-team-os/api_port.txt` |
+| MCP debug log | `~/.claude/data/ai-team-os/mcp-debug.log` |
+| API PID file | `<tmpdir>/aiteam-api.pid` (_autostart.py) |
+| API startup lock | `<tmpdir>/aiteam-api-startup.lock` |
+| Installed hooks | `~/.claude/hooks/ai-team-os/` |
 
-## 安装与分发
+## Installation and distribution
 
-- 推荐源码安装：`python install.py`（复制 hooks、注册 settings.json、系统 Python 无 venv——四类进程共享依赖，venv 隔离已被否决）。
-- Plugin/marketplace：根 `.claude-plugin/marketplace.json` 的 source 指向 `./plugin`。
+- Recommended source install: `python install.py` (copies hooks, registers settings.json, system Python with no venv — the four process types share dependencies, and venv isolation has been rejected).
+- Plugin/marketplace: the source of the root `.claude-plugin/marketplace.json` points at `./plugin`.

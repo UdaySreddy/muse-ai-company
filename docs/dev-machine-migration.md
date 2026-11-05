@@ -1,57 +1,57 @@
-# 开发机迁移指南（Windows → Mac / VS Code）
+# Development Machine Migration Guide (Windows → Mac / VS Code)
 
-把 AI Team OS 的开发环境从 Windows 迁到 Mac。代码本身全跨平台，**没有版本兼容问题**；
-要处理的只是「不随 git 走」的三样东西：未推送的提交、数据库、本机专属配置。
+Moving the AI Team OS development environment from Windows to Mac. The code itself is fully cross-platform, with **no version compatibility issues**;
+what needs handling is only the three things that "do not travel with git": unpushed commits, the database, and machine-specific configuration.
 
-## 跨平台现状（已核实）
+## Cross-platform status (verified)
 
-| 项 | 状态 |
+| Item | Status |
 |---|---|
-| Python | 要求 `>=3.11`（`pyproject.toml`），Mac 装 3.11+ 即可 |
-| Plugin hooks | 全用 `${CLAUDE_PLUGIN_ROOT}` + `python`，完全可移植 |
-| API 自启动 `_autostart.py` | 已分别处理 win32 / unix（端口探测用 netstat/taskkill ↔ fuser/lsof/kill） |
-| `.mcp.json` 生成 | `install.py` 用 `sys.executable` 写入，Mac 上自动写 Mac 的 python 路径 |
+| Python | Requires `>=3.11` (`pyproject.toml`); installing 3.11+ on the Mac is enough |
+| Plugin hooks | All use `${CLAUDE_PLUGIN_ROOT}` + `python`, fully portable |
+| API autostart `_autostart.py` | Handles win32 / unix separately (port probing uses netstat/taskkill ↔ fuser/lsof/kill) |
+| `.mcp.json` generation | `install.py` writes it with `sys.executable`; on a Mac it automatically writes the Mac python path |
 
-## 不随 git 走、必须手动处理的三样
+## The three things that do not travel with git and must be handled manually
 
-1. **未推送的提交** —— 换机前在旧机 `git push origin master`（否则 Mac clone 缺最新代码）。
-2. **数据库 `aiteam.db`** —— 在 `~/.claude/data/ai-team-os/aiteam.db`（约 76MB，**不在仓库**）。
-   要带现有团队 / 项目 / 任务数据，必须手动拷到 Mac 同路径。
-3. **本机专属配置** —— `.mcp.json` 和 `.claude/settings.json` 都被 `.gitignore`，不随仓库：
-   - `.mcp.json`：`install.py` 在 Mac 会重新生成（正确的 Mac python 路径），无需手动。
-   - `.claude/settings.json`：里面那个 `pwsh + inject-context.ps1` 钩子是 **Windows 专属**，
-     Mac 上要么不用，要么换成 bash/python 等价实现。
+1. **Unpushed commits** — on the old machine, `git push origin master` before switching (otherwise the Mac clone lacks the newest code).
+2. **The database `aiteam.db`** — at `~/.claude/data/ai-team-os/aiteam.db` (about 76MB, **not in the repo**).
+   To keep the existing team / project / task data, it must be copied manually to the same path on the Mac.
+3. **Machine-specific configuration** — both `.mcp.json` and `.claude/settings.json` are `.gitignore`d and do not travel with the repo:
+   - `.mcp.json`: `install.py` regenerates it on the Mac (with the correct Mac python path); no manual work needed.
+   - `.claude/settings.json`: the `pwsh + inject-context.ps1` hook inside it is **Windows-specific**;
+     on a Mac either do not use it, or replace it with a bash/python equivalent implementation.
 
-## Mac 上的步骤
+## Steps on the Mac
 
 ```bash
-# 0)（在旧 Windows 机）先推送，确保 GitHub 有最新代码
+# 0) (On the old Windows machine) push first, ensuring GitHub has the newest code
 git push origin master
 
-# 1)（Mac）克隆并安装 Python 包（需 Python 3.11+）
+# 1) (Mac) clone and install the Python package (Python 3.11+ required)
 git clone https://github.com/CronusL-1141/AI-company.git
-cd AI-company          # 仓库目录
+cd AI-company          # repo directory
 pip install -e .
 
-# 2) 安装前端依赖并构建
+# 2) Install frontend dependencies and build
 cd dashboard && npm install && npm run build && cd ..
 
-# 3) 注册 MCP + hooks（自动生成 Mac 版 .mcp.json）
+# 3) Register MCP + hooks (automatically generates the Mac version of .mcp.json)
 python install.py
 
-# 4)（可选，要保留现有数据）从旧机拷数据库到 Mac
-#    旧机文件： ~/.claude/data/ai-team-os/aiteam.db
+# 4) (Optional, to keep existing data) copy the database from the old machine to the Mac
+#    Old machine file: ~/.claude/data/ai-team-os/aiteam.db
 mkdir -p ~/.claude/data/ai-team-os
 cp /path/to/aiteam.db ~/.claude/data/ai-team-os/aiteam.db
 
-# 5)（可选，要用 Playwright 截图/E2E）
+# 5) (Optional, to use Playwright screenshots/E2E)
 pip install playwright && playwright install
 ```
 
-VS Code：装 Python 扩展即可，无其它特殊要求。
+VS Code: installing the Python extension is enough; there are no other special requirements.
 
-## 注意
+## Notes
 
-- **换行符**：仓库走 autocrlf，Mac 用 LF，无功能影响。
-- **`dashboard/dist`**：构建产物，Mac 上需重新 `npm run build`（`.gitignore` 已忽略其 JS/CSS）。
-- **数据隔离**：不拷 `aiteam.db` 的话，Mac 是一套全新空库（团队/项目/任务从零开始）。
+- **Line endings**: the repo uses autocrlf; the Mac uses LF, with no functional impact.
+- **`dashboard/dist`**: a build artifact; on the Mac it must be rebuilt with `npm run build` (`.gitignore` already ignores its JS/CSS).
+- **Data isolation**: if you do not copy `aiteam.db`, the Mac is a brand-new empty database (teams/projects/tasks start from zero).

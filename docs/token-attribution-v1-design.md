@@ -1,31 +1,31 @@
-# token 用量归因 v1 设计
+# Token Usage Attribution v1 — Design
 
-**状态**：Proposed（设计先行，过审后另起实施）
-**任务**：b1a1df19-36ff-44ef-bb71-6f92abd3ea06
-**代码基线**：master@2b651f8
-**取证时间**：2026-07-29（生产库全程只读 `mode=ro`，未做任何写入）
+**Status**: Proposed (design first; implementation starts separately after approval)
+**Task**: b1a1df19-36ff-44ef-bb71-6f92abd3ea06
+**Code baseline**: master@2b651f8
+**Forensics date**: 2026-07-29 (the production database was opened read-only throughout with `mode=ro`; no writes of any kind)
 
 ---
 
-## 0. 摘要与三条不可协商前提
+## 0. Summary and three non-negotiable premises
 
-### 0.1 一句话
+### 0.1 In one sentence
 
-把"哪一段工作烧了多少 token"从**文件真相**（transcript）算出来，按 project / session / workflow / agent 逐级归因；**归因覆盖率与口径标签是数据本身的一部分**，不是页面上的一行小字。
+Compute "how many tokens a given piece of work burned" from the **file truth** (the transcripts), attribute it level by level along project / session / workflow / agent; **attribution coverage and metric labels are part of the data itself**, not a footnote on a page.
 
-### 0.2 本设计与既有认知的最大差异（请先读这一节）
+### 0.2 The biggest difference between this design and existing beliefs (read this section first)
 
-立项时引用的核心数字——"1.862 亿 token 已经躺在库里，只差展示层"——**口径是错的**。
+The headline number cited when this project was chartered — "186 million tokens already sit in the database; only the display layer is missing" — **uses the wrong metric**.
 
-`workflow_agents.tokens` 不是计费口径。真相源在 `src/aiteam/api/workflow_ingest.py:220` 的 `_last_assistant_ctx_tokens`，其注释写得很清楚：
+`workflow_agents.tokens` is not a billing metric. The truth source is `_last_assistant_ctx_tokens` at `src/aiteam/api/workflow_ingest.py:220`, whose comment says it very clearly:
 
-> D1 裁决口径：input + cache_creation_input + cache_read_input + output 四字段和（与 wf_\<id\>.json 终态 per-agent tokens 直接对账：error agent 精确相等，done agent 仅偏高 3~12%）。**否决跨轮累加（cache_read 重复计入膨胀 ~445 倍）**。
+> The D1-ruled metric: the four-field sum of input + cache_creation_input + cache_read_input + output (reconciled directly against the wf_\<id\>.json terminal per-agent tokens: error agents match exactly, done agents are only 3~12% higher). **Cross-round accumulation is rejected (cache_read counted repeatedly inflates ~445x)**.
 
-也就是说它取的是**最后一条 assistant 消息的四字段和 = 一个瞬时上下文水位快照**，不是这个 agent 一共消耗了多少。而 `src/aiteam/services/token_attribution.py` 的 `parse_transcript_usage` 走的是**跨 requestId 累加**，是真正的用量口径。两者语义正交。
+That is, it takes the **four-field sum of the last assistant message = a snapshot of the instantaneous context level**, not how much that agent consumed in total. Whereas `src/aiteam/services/token_attribution.py`'s `parse_transcript_usage` does **accumulation across requestIds**, which is the real usage metric. The two metrics are semantically orthogonal.
 
-同一批 agent 的实测对照（6 个既有 `workflow_agents.tokens` 又已被 D1 采到五列的行）：
+A measured comparison on the same batch of agents (6 rows that already had `workflow_agents.tokens` and were also collected by D1 into the five columns):
 
-| agent | `workflow_agents.tokens`（水位快照） | 四层累加（用量口径） | 倍数 |
+| agent | `workflow_agents.tokens` (level snapshot) | Four-layer accumulation (usage metric) | Multiple |
 |---|---:|---:|---:|
 | wf-abc2a662bb | 117,800 | 632,504 | 5.4x |
 | wf-a707a925bc | 133,177 | 1,471,825 | 11.1x |
@@ -34,530 +34,531 @@
 | wf-af2d08f9a2 | 152,050 | 3,445,696 | 22.7x |
 | wf-ad1bd33148 | 127,089 | 3,236,088 | 25.5x |
 
-**结论**：两个口径差 5~25 倍（11 行合计层面 42 倍）。把它们相加、并列、或放进同一个"总 token"，就是本仓刚刚在时间戳上栽过的同类事故——混口径。本设计因此把「口径」提为与「覆盖率」并列的一等维度：**任何一个 token 数值，脱离口径标签就没有意义**。
+**Conclusion**: the two metrics differ by 5~25x (at the level of the 11-row total, 42x). Adding them together, placing them side by side, or putting them into a single "total tokens" is the same class of incident this repo just had with timestamps — mixing metrics. This design therefore elevates "metric" to a first-class dimension alongside "coverage": **any token number, stripped of its metric label, is meaningless**.
 
-### 0.3 三条不可协商前提
+### 0.3 Three non-negotiable premises
 
-| # | 前提 | 落法 | 来源 |
+| # | Premise | How it lands | Source |
 |---|---|---|---|
-| P1 | **命名纪律**：一切呈现只以 token 用量表达，不做任何跨量纲换算 | 用**量纲白名单机检**（§4.4）而非人工自觉 | 会议决议 |
-| P2 | **覆盖率一等公民**：未归因部分必须如实呈现，禁止局部冒充全貌 | 落在**类型层**（§2.5），页面物理上拿不到孤立总量 | 会议决议 + 纪律① no-data≠zero |
-| P3 | **无定时器/后台守护** | 全部按需触发：hook 事件点 + 显式工具调用 + 惰性翻滚 | 刻意决策 |
+| P1 | **Naming discipline**: everything is presented only as token usage, with no cross-dimension conversion of any kind | A **dimension allowlist machine check** (§4.4), not human vigilance | Meeting resolution |
+| P2 | **Coverage as a first-class citizen**: the unattributed part must be presented honestly; a part must never pose as the whole | Lands at the **type layer** (§2.5); a page physically cannot obtain an isolated total | Meeting resolution + discipline ① no-data≠zero |
+| P3 | **No timers / background daemons** | Everything triggered on demand: hook event points + explicit tool calls + lazy evaluation | Deliberate decision |
 
-补充两条从取证中长出来的前提：
+Two more premises grown out of the forensics:
 
-| # | 前提 | 理由 |
+| # | Premise | Reason |
 |---|---|---|
-| P4 | **不新建表** | I10 机检"ORM 声明但库中缺失 = FAIL"，而 `create_all` 只在启动时跑、生产实例不能为建表重启。`request_ledger.py` 已确立此先例：用 events 承载聚合、用扩列承载事实 |
-| P5 | **不写死型号，只观测回填** | 2026-07-07 刻意决策。别名解析只在读侧兜底，绝不回写 `model` 列（`MODEL_ALIAS_LEDGER` 已按此实现） |
+| P4 | **Create no new tables** | The I10 machine check "declared in the ORM but missing in the DB = FAIL", and `create_all` only runs at startup while the production instance cannot be restarted just to create a table. `request_ledger.py` has already established this precedent: carry aggregates in events, carry facts in extra columns |
+| P5 | **Never hard-code model names; observe and backfill** | A deliberate decision from 2026-07-07. Alias resolution is only a read-side fallback and must never write back to the `model` column (`MODEL_ALIAS_LEDGER` is already implemented this way) |
 
 ---
 
-## 1. 术语与口径定义（本设计的地基）
+## 1. Terminology and metric definitions (the foundation of this design)
 
-### 1.1 两个正交口径
+### 1.1 Two orthogonal metrics
 
-| 口径 id | 名称 | 定义 | 现有产出者 | 用途 |
+| Metric id | Name | Definition | Existing producer | Purpose |
 |---|---|---|---|---|
-| `usage_sum` | 用量累加 | 一份 transcript 内，按 `requestId` 分组、每组取**最后一条** usage 快照、再跨组累加的四层 token | `token_attribution.parse_transcript_usage` | 回答"这段工作一共用掉多少" |
-| `ctx_last` | 末轮上下文水位 | 最后一条 assistant 消息的 `input + cache_creation + cache_read + output` | `workflow_ingest._last_assistant_ctx_tokens` → `workflow_agents.tokens` | 回答"这个 agent 结束时上下文有多满" |
+| `usage_sum` | Usage accumulation | Within one transcript, grouped by `requestId`, taking the **last** usage snapshot per group, then summed across groups, over four layers of tokens | `token_attribution.parse_transcript_usage` | Answers "how much did this piece of work use in total" |
+| `ctx_last` | Last-round context level | The last assistant message's `input + cache_creation + cache_read + output` | `workflow_ingest._last_assistant_ctx_tokens` → `workflow_agents.tokens` | Answers "how full was this agent's context when it ended" |
 
-另有一个已存在但不参与本设计的第三口径：`agents.ctx_tokens / ctx_pct`（上下文水位百分比，`agent_context.measure` 产出），用于 agent 复用治理，与用量归因无关。**三者互不相加。**
+There is a third existing metric that does not participate in this design: `agents.ctx_tokens / ctx_pct` (context level percentage, produced by `agent_context.measure`), used for agent reuse governance and unrelated to usage attribution. **None of the three is ever added to another.**
 
-### 1.2 四层分列是硬要求，不是可选项
+### 1.2 Four-layer separation is a hard requirement, not an option
 
-`usage_sum` 的四层在实测中极不均衡（11 行已采样本）：
+The four layers of `usage_sum` are extremely unbalanced in measurement (11 already-collected sample rows):
 
-| 层 | 量 | 占比 |
+| Layer | Amount | Share |
 |---|---:|---:|
 | `cache_read_tokens` | 78,866,965 | **95.6%** |
 | `cache_creation_tokens` | 3,019,782 | 3.7% |
 | `output_tokens` | 605,669 | 0.7% |
 | `input_tokens` | 1,717 | 0.0% |
 
-非缓存部分（input + output）只占 **0.74%**。
+The non-cache part (input + output) is only **0.74%**.
 
-含义：任何"总量"数字实际上是"缓存读取量"的同义词。若只呈现总量，跨模型、跨派工路径、跨阶段的比较全部被缓存读主导，结论会系统性失真。**因此四层必须始终可分列，"总量"不得作为唯一呈现，也不得作为默认排序键。**
+Implication: any "total" number is in effect a synonym for "cache read volume". If only the total is presented, comparisons across models, dispatch paths and stages are all dominated by cache reads, and conclusions are systematically distorted. **Therefore the four layers must always be separable for display, and "total" must never be the only presentation, nor the default sort key.**
 
-### 1.3 一处待修缺陷
+### 1.3 A defect to fix
 
-`parse_transcript_usage` 取 model 时不过滤 compact 合成行。实测对一份 35.1 MB 的主会话 transcript 解析，返回的 `model` 是 `<synthetic>`。而 `session_probe.read_session_model` 是正确的——它显式跳过 `SYNTHETIC_MODEL`。
+`parse_transcript_usage`, when taking the model, does not filter out compact synthetic rows. Measured against a 35.1 MB main-session transcript, the returned `model` was `<synthetic>`. Whereas `session_probe.read_session_model` is correct — it explicitly skips `SYNTHETIC_MODEL`.
 
-子 agent transcript 一般不含合成行，所以 D1 的既有路径没被咬到；但主会话采集（§3.3）一上就会踩。**修法**：`parse_transcript_usage` 复用 `session_probe` 的同一常量与跳过逻辑，不再各写一份。
+Subagent transcripts generally contain no synthetic rows, so D1's existing path was never bitten; but as soon as main-session collection (§3.3) goes live it will be. **Fix**: `parse_transcript_usage` reuses `session_probe`'s same constant and skipping logic instead of each writing its own copy.
 
 ---
 
-## 2. 数据模型与归因链
+## 2. Data model and the attribution chain
 
-### 2.1 归因链的真实形状
+### 2.1 The real shape of the attribution chain
 
 ```
                     ┌──────────────────────────────────────────┐
-                    │  transcript 文件（唯一权威用量来源）       │
+                    │  transcript file (sole authoritative usage source) │
                     │  ~/.claude/projects/<slug>/<session_id>/  │
                     │       subagents/[workflows/<wf_id>/]      │
                     │            agent-<cc_id>.jsonl            │
                     └────────────────────┬─────────────────────┘
-                                         │ 解析（路径 + 内容）
+                                         │ parse (path + content)
              ┌───────────────┬───────────┼───────────┬──────────────┐
              ▼               ▼           ▼           ▼              ▼
-        project_id      session_id     wf_id     agent 行      四层 token
+        project_id      session_id     wf_id     agent row      four-layer tokens
              │               │           │           │              │
-             │               │           │           │              └─ 落 agents 五列
-             │               │           │           └─ agents.id（cc_tool_use_id 匹配）
+             │               │           │           │              └─ lands in the agents five columns
+             │               │           │           └─ agents.id (cc_tool_use_id match)
              │               │           └─ workflow_runs.wf_id → workflow_agents
-             │               └─ 会话容器队 teams.config.owner_session_id
-             └─ projects.root_path（slug 反查仅作校验）
+             │               └─ session container teams.config.owner_session_id
+             └─ projects.root_path (slug reverse lookup only as verification)
 
-                                    ┆ 弱边（当前几乎无数据，见 §2.4）
+                                    ┆ weak edge (currently almost no data, see §2.4)
                                     ▼
                                   task
 ```
 
-**关键洞察：链路的前四段不需要新增任何采集，它们全部编码在 `transcript_path` 里。**
+**Key insight: the first four segments of the chain need no new collection at all; they are all encoded in `transcript_path`.**
 
-实测路径样本：
+Measured path samples:
 
 ```
 ~/.claude/projects/<project-slug>/80d0cc5e-.../subagents/agent-a672b51d.jsonl
 ~/.claude/projects/<project-slug>/80d0cc5e-.../subagents/workflows/wf_8cd4fced-95a/agent-af2d08f9.jsonl
 ```
 
-对生产库中 1,922 个已登记 `transcript_path` 做正则解析，**成功率 100%**（其中 94.5% 带 `wf_id`，覆盖 12 个 session、6 个 project slug）。这与 `hook_translator._extract_workflow_run_id` 已在用的招式同源——那里只提了 `wf_id`，本设计把同一条信息用满。
+Running regex parsing over the 1,922 registered `transcript_path` values in the production database gives a **100% success rate** (of which 94.5% carry a `wf_id`, covering 12 sessions and 6 project slugs). This is the same trick `hook_translator._extract_workflow_run_id` already uses — that code only extracted `wf_id`; this design uses the same information in full.
 
-### 2.2 现有实体的边与实测覆盖（这是排优先级的依据）
+### 2.2 Existing entity edges and measured coverage (the basis for prioritization)
 
-| 边 | 承载字段 | 实测覆盖 | 判定 |
+| Edge | Carrying field | Measured coverage | Verdict |
 |---|---|---|---|
-| agent → team | `agents.team_id` | 2,450 / 2,450 = **100%** | 可用 |
-| agent → project | `agents.project_id` | 2,404 / 2,450 = **98.1%** | 可用 |
-| agent → session | `agents.session_id` | **1 / 2,567** | **形同虚设**，改由路径派生 |
-| agent → workflow | `workflow_agents.os_agent_id` | 2,331 / 2,450 = 95.1% | 可用 |
-| agent → transcript | `agents.transcript_path` | 1,922 / 2,450 = **78.4%** | 可用（且抽样 150/150 文件仍在磁盘） |
-| team → task | `tasks.team_id` | **1 / 161** | **不可用** |
-| agent → task | `agents.current_task` | **0 / 2,567** | 死字段 |
-| agent ↔ task（证据） | `task_memos.author` × `task_id` | 306 对；但只有 19 个 agent 行名字能匹配、12 个唯一对应 | 弱 |
+| agent → team | `agents.team_id` | 2,450 / 2,450 = **100%** | Usable |
+| agent → project | `agents.project_id` | 2,404 / 2,450 = **98.1%** | Usable |
+| agent → session | `agents.session_id` | **1 / 2,567** | **Effectively nonexistent**; derive from paths instead |
+| agent → workflow | `workflow_agents.os_agent_id` | 2,331 / 2,450 = 95.1% | Usable |
+| agent → transcript | `agents.transcript_path` | 1,922 / 2,450 = **78.4%** | Usable (and 150/150 sampled files still on disk) |
+| team → task | `tasks.team_id` | **1 / 161** | **Unusable** |
+| agent → task | `agents.current_task` | **0 / 2,567** | Dead field |
+| agent ↔ task (evidence) | `task_memos.author` × `task_id` | 306 pairs; but only 19 agent rows match by name, 12 uniquely | Weak |
 
-两条必须说破的事实：
+Two facts that must be stated plainly:
 
-* **`agents.session_id` 是空的。** 全表 2,567 行仅 1 行非空，117 个 Leader 行全部为 NULL。`hook_translator.py:1904` 的注释也承认存在"session_id was cleared/never set"的行。所以决议里写的 `session → agent` 这一跳，**在 DB 里当前不存在**。
-* **`task` 边基本不存在。** 248 个 team 里只有 1 个挂了 task；落在"有 task 的 team"上的子 agent 行数是 **0**。`tasks.assigned_to` 存的是 agent **名字符串**（`'tagger-fix'` / `'leader'`）而非 id，且只有 28/161 行有值。
+* **`agents.session_id` is empty.** Of the table's 2,567 rows only 1 is non-empty, and all 117 Leader rows are NULL. The comment at `hook_translator.py:1904` also acknowledges the existence of rows where "session_id was cleared/never set". So the `session → agent` hop written in the resolution **does not currently exist in the DB**.
+* **The `task` edge basically does not exist.** Of 248 teams only 1 has a task attached; the number of subagent rows landing on "teams with a task" is **0**. `tasks.assigned_to` stores an agent **name string** (`'tagger-fix'` / `'leader'`) rather than an id, and only 28/161 rows have a value.
 
-### 2.3 派工时刻拿不到 task 绑定（为什么不能靠"加一列"解决）
+### 2.3 At dispatch time the task binding is unavailable (why "add a column" cannot fix it)
 
-`SubagentStart` 的 payload 里只有 `agent_id` / `agent_type` / `session_id` / `cc_team_name`（见 `hook_translator._on_subagent_start`），**没有 prompt、没有任何任务标识**。也就是说：
+The `SubagentStart` payload contains only `agent_id` / `agent_type` / `session_id` / `cc_team_name` (see `hook_translator._on_subagent_start`) — **no prompt, no task identifier of any kind**. That is:
 
-> 在 agent 出生的那一刻，OS 无从得知它是为哪个 task 干活的。
+> At the moment an agent is born, the OS has no way of knowing which task it is working for.
 
-因此"给 `agents` 加一个 `task_id` 列"这个直觉方案是错的：**这一列采不到值，会长期为 NULL，而 NULL 在归因语境里极易被读成"这段工作没花 token"**——正好是 no-data≠zero 纪律点名要防的形态。加一个填不上的列，比不加更糟。
+Therefore the intuitive fix of "add a `task_id` column to `agents`" is wrong: **that column could never collect a value and would stay NULL forever, and in an attribution context NULL is extremely liable to be read as "this work spent no tokens"** — exactly the form that the no-data≠zero discipline names as the thing to guard against. Adding a column that cannot be filled is worse than not adding one.
 
-### 2.4 task 边的正确解法：寄生在既有记账行为上
+### 2.4 The correct solution for the task edge: piggyback on existing bookkeeping behavior
 
-约束很硬：内部数据显示 22 天内 `task_memo_add` 被调 711 次、`task_memo_read` 240 次、`task_update` 179 次，而"任何需要人主动多调一次工具的设计都很难存活"已被反复验证。所以**不能新增一个"绑定 agent 与 task"的动作**。
+The constraint is hard: internal data shows that in 22 days `task_memo_add` was called 711 times, `task_memo_read` 240 times, `task_update` 179 times, and "any design that requires a human to proactively call one extra tool struggles to survive" has been verified repeatedly. So **we cannot add a new "bind agent to task" action**.
 
-方案：**在已经必然发生的记账行为里顺手把边写下来。**
+Plan: **write the edge down incidentally inside bookkeeping behavior that is bound to happen anyway.**
 
-* 触发点：`task_memo_add` / `task_update` / `report_save` —— 这三个工具的调用参数里**天然同时带着 `task_id` 与 `author`（agent 名）**。
-* 动作：MCP/API 服务端在处理这三个调用时，若能把 author 解析到一个 agent 行，就写一条 `agent --worked_on--> task` 的边。
-* 存储：复用**已存在**的 `knowledge_links` 表（`from_kind/from_id/to_kind/to_id/link_type` + 五元组 UNIQUE 去重 + append-only），新增 `from_kind='agent'`、`link_type='worked_on'`。**不新建表**（满足 P4），也不改任何 schema。
-* 语义诚实：这条边是"这个 agent 在这个 task 上留过账"，不是"这个 agent 的全部 token 都属于这个 task"。一个 agent 跨多个 task 时按边的时间序切分区间；切不开的部分**如实计为"task 级未归因"**，不做平均分摊——分摊会造出无法证伪的数字。
+* Trigger points: `task_memo_add` / `task_update` / `report_save` — the call parameters of these three tools **naturally carry both `task_id` and `author` (the agent name)**.
+* Action: when the MCP/API server handles these three calls, if it can resolve the author to an agent row, it writes an `agent --worked_on--> task` edge.
+* Storage: reuse the **already existing** `knowledge_links` table (`from_kind/from_id/to_kind/to_id/link_type` + a five-tuple UNIQUE dedupe + append-only), adding `from_kind='agent'`, `link_type='worked_on'`. **No new table** (satisfies P4), and no schema changes.
+* Honest semantics: this edge means "this agent left bookkeeping on this task", not "all of this agent's tokens belong to this task". When one agent spans multiple tasks, split intervals by the edges' time order; the parts that cannot be split are **honestly counted as "task-level unattributed"**, with no averaging or apportionment — apportionment would manufacture unfalsifiable numbers.
 
-**v1 对 task 级归因的承诺必须收窄到**：提供 task 级归因的**数据结构与推导器**，并如实报出其覆盖率（当前基线接近 0，见 §4.3）。这与"差异化表述降级为『数据结构已就位』"的会议裁决一致。
+**v1's promise for task-level attribution must be narrowed to**: providing the **data structure and derivers** for task-level attribution, and honestly reporting its coverage (the current baseline is close to 0, see §4.3). This agrees with the meeting ruling that "the differentiated wording is downgraded to 'the data structure is in place'".
 
-### 2.5 类型层护栏：让"拿到孤立总量"在物理上不可能
+### 2.5 Type-layer guardrail: making "obtaining an isolated total" physically impossible
 
-这是本设计里唯一一条**必须落在类型层、不接受落在视图层**的约束。理由已在会议上被确认：页面标注是软约束，三个月后的自己会忽略它。
+This is the one constraint in this design that **must land at the type layer and is not accepted at the view layer**. The reason was confirmed at the meeting: a page annotation is a soft constraint, and one's future self three months from now will ignore it.
 
-storage 层只暴露一个返回结构，**不提供任何返回裸 total 的接口**：
+The storage layer exposes only one return structure, and **provides no interface that returns a bare total**:
 
 ```python
 @dataclass(frozen=True)
 class TokenAttribution:
-    """一次归因查询的完整答案 —— 数值与其分母、口径同生共死。
+    """The complete answer to one attribution query — the value and its denominator and metric live and die together.
 
-    没有 `total` 这个字段，也没有任何方法返回它。调用方要渲染数值，
-    就必须同时拿到 dispatches_total 与 metric —— 分母和口径是数据的
-    一部分，不是可选的装饰。
+    There is no `total` field, and no method returns one. A caller wanting to render a value
+    must simultaneously obtain dispatches_total and metric — the denominator and the metric are
+    part of the data, not optional decoration.
     """
     scope: AttributionScope        # project / session / workflow_run / agent / task
     scope_id: str
-    metric: TokenMetric            # usage_sum | ctx_last —— 强制标注，无默认值
-    input_tokens: int              # 四层分列，不提供合计字段
+    metric: TokenMetric            # usage_sum | ctx_last — mandatory label, no default
+    input_tokens: int              # the four layers in separate columns; no combined field is provided
     output_tokens: int
     cache_creation_tokens: int
     cache_read_tokens: int
-    dispatches_attributed: int     # 分子：本 scope 内已测到用量的派工数
-    dispatches_total: int          # 分母：本 scope 内的派工总数
-    unattributed_reasons: dict[str, int]   # 未归因派工按原因分类计数（§3.4）
+    dispatches_attributed: int     # numerator: dispatches in this scope whose usage has been measured
+    dispatches_total: int          # denominator: total dispatches in this scope
+    unattributed_reasons: dict[str, int]   # unattributed dispatches counted by reason (§3.4)
     measured_window: tuple[datetime, datetime] | None
     method: AttributionMethod      # transcript_parse | self_report | alias_fallback
 ```
 
-配套契约测试（属于验收条件，不是可选）：
+Companion contract tests (part of the acceptance conditions, not optional):
 
-1. `TokenAttribution` **不存在** `total` / `total_tokens` 字段或属性；
-2. 任何 API 响应体中，token 数值字段必与 `dispatches_total`、`metric` 同层出现，缺一即测试失败；
-3. `metric` 无默认值——不标注口径就构造不出对象。
+1. `TokenAttribution` has **no** `total` / `total_tokens` field or property;
+2. In any API response body, token value fields must appear at the same level as `dispatches_total` and `metric`; missing any one fails the test;
+3. `metric` has no default — without labeling the metric, the object cannot be constructed.
 
-### 2.6 schema 变更清单（极小）
+### 2.6 Schema change list (minimal)
 
-| 变更 | 表 | 说明 | 铁律 |
+| Change | Table | Notes | Iron rule |
 |---|---|---|---|
-| 回填（非加列） | `agents.session_id` | 由 `transcript_path` 派生补齐，历史行一次性回填 + 新行在 SubagentStop 顺手写 | — |
-| 回填（非加列） | `agents.transcript_path`（Leader 行） | 当前 0/117，由 `session_probe` 按 slug + session_id 反查补齐 | — |
-| **加 1 列** | `agents.tokens_source` `VARCHAR(20)` | 取值 `transcript` / `alias_fallback`；用于审计"这行的数是怎么来的"。NULL = 未采集 | **必须同步 `COLUMNS_TO_ENSURE`**（ORM 加字段必须同步迁移，项目铁律） |
-| 复用（非建表） | `knowledge_links` | 新增 `from_kind='agent'` + `link_type='worked_on'` 边 | 无 schema 变更 |
-| **不动** | `workflow_agents.tokens` | 它是 `ctx_last` 口径，保持原样。回采得到的 `usage_sum` **绝不写进这一列** | 见 §6 |
-| **不加** | `agents.task_id` | 采不到，见 §2.3 | — |
-| **不建** | 任何新表 | P4 | — |
+| Backfill (not a new column) | `agents.session_id` | Derived and filled from `transcript_path`; historical rows backfilled once + new rows written incidentally at SubagentStop | — |
+| Backfill (not a new column) | `agents.transcript_path` (Leader rows) | Currently 0/117; filled by reverse lookup via `session_probe` on slug + session_id | — |
+| **Add 1 column** | `agents.tokens_source` `VARCHAR(20)` | Values `transcript` / `alias_fallback`; used to audit "where this row's numbers came from". NULL = not collected | **Must sync `COLUMNS_TO_ENSURE`** (any ORM field addition must sync the migration — a project iron rule) |
+| Reuse (not a new table) | `knowledge_links` | Add `from_kind='agent'` + `link_type='worked_on'` edges | No schema change |
+| **Do not touch** | `workflow_agents.tokens` | It is the `ctx_last` metric; keep it as-is. A back-collected `usage_sum` **must never be written into this column** | See §6 |
+| **Do not add** | `agents.task_id` | Cannot be collected, see §2.3 | — |
+| **Do not create** | Any new table | P4 | — |
 
-`tokens_source` 是本设计新增的唯一一列。加它的理由：`method` 要能被审计（"这个数是从 transcript 定真的，还是别名兜底推的"），而这个事实必须随行持久化，不能每次查询重算。加列的代价是一条 `COLUMNS_TO_ENSURE` 条目 + ORM + types + 双向转换四处同步——D1 的五列已经演示过完整招式，照抄即可。
+`tokens_source` is the only new column in this design. The reason for adding it: `method` must be auditable ("was this number settled from a transcript, or inferred by alias fallback"), and that fact must persist with the row rather than be recomputed on every query. The cost of adding a column is one `COLUMNS_TO_ENSURE` entry + ORM + types + bidirectional conversions, four places to sync — D1's five columns already demonstrated the full routine; copy it.
 
 ---
 
-## 3. 采集缺口分析
+## 3. Collection gap analysis
 
-### 3.1 当前采集面全景
+### 3.1 Panorama of the current collection surface
 
-| 采集面 | 承载 | 口径 | 实测覆盖 | 缺口性质 |
+| Collection surface | Carrier | Metric | Measured coverage | Nature of the gap |
 |---|---|---|---|---|
-| 子 agent（SubagentStop） | `agents` 五列 | `usage_sum` | **11 / 2,450 = 0.4%** | D1 于 2026-07-28 16:26 上线，只覆盖此后新派工 |
-| workflow agent（wf JSON / journal） | `workflow_agents.tokens` | `ctx_last` | 2,909 / 3,182 = 91.4% | 口径不同，不可与上一行相加 |
-| workflow run | `workflow_runs.total_tokens / live_tokens` | `ctx_last` 聚合 | 226 / 228 | 同上 |
-| Leader 主会话 | **无** | — | **0 / 117** | 完全空白，见 §3.3 |
-| agent 工具活动 | `agent_activities` | **无 token 字段** | 0 / 52,119 | 结构性缺失，见 §3.2 |
+| Subagents (SubagentStop) | `agents` five columns | `usage_sum` | **11 / 2,450 = 0.4%** | D1 went live 2026-07-28 16:26; only covers dispatches after that |
+| Workflow agents (wf JSON / journal) | `workflow_agents.tokens` | `ctx_last` | 2,909 / 3,182 = 91.4% | Different metric; cannot be added to the row above |
+| Workflow runs | `workflow_runs.total_tokens / live_tokens` | `ctx_last` aggregate | 226 / 228 | Same as above |
+| Leader main sessions | **None** | — | **0 / 117** | Completely blank, see §3.3 |
+| Agent tool activity | `agent_activities` | **No token field** | 0 / 52,119 | Structural absence, see §3.2 |
 
-### 3.2 `agent_activities` 无 token：**建议不补**
+### 3.2 `agent_activities` has no tokens: **recommendation: do not add them**
 
-52,119 条活动记录一条 token 都没有，看起来是最大的窟窿。但从架构上讲，**这个洞不该在这里补**：
+52,119 activity records without a single token looks like the biggest hole. But architecturally, **this hole should not be plugged here**:
 
-* `agent_activities` 是**逐工具调用**粒度，而 token 计费是**逐 API 请求**粒度，两者不是一一对应（一次工具调用可能横跨多个请求，一个请求也可能不含工具调用）；
-* hook payload 里不带 token，要按活动归因就得对每条活动去反查 transcript，写放大巨大且必然引入估算；
-* agent 级的用量已由 `agents` 五列覆盖，而"这个 agent 花在哪个工具上"这个问题，用 `duration_ms` 已经能回答八成。
+* `agent_activities` is at **per-tool-call** granularity, while token billing is at **per-API-request** granularity; the two are not in one-to-one correspondence (one tool call can span several requests, and a request may contain no tool call);
+* Hook payloads carry no tokens; attributing per activity would mean reverse-looking-up the transcript for every activity — enormous write amplification and inevitably introducing estimation;
+* Agent-level usage is already covered by the `agents` five columns, and the question "which tool did this agent spend time on" can be answered 80% by `duration_ms`.
 
-**结论**：`agent_activities` 保持无 token 字段，在覆盖率呈现里明确标注"工具调用级用量：设计上不采集"。这是一个**主动选择**，不是遗漏——写进文档以免半年后有人当成 bug 来"修"。
+**Conclusion**: `agent_activities` keeps no token field, and the coverage presentation explicitly labels it "tool-call-level usage: not collected by design". This is a **deliberate choice**, not an omission — written into the doc so that half a year from now nobody "fixes" it as a bug.
 
-### 3.3 Leader 主会话：最大的真实缺口，且可解
+### 3.3 Leader main sessions: the biggest real gap, and solvable
 
-**现状**：117 个 Leader 行，token 五列全空，`transcript_path` 也全空。
+**Status quo**: 117 Leader rows, all five token columns empty, `transcript_path` also empty.
 
-**可行性实测**（本次直接跑了）：
+**Feasibility, measured** (run directly this time):
 
-* 现有 `parse_transcript_usage` **无需修改**即可解析主会话 transcript；
-* 一份 35.1 MB 的主会话 transcript，**全量解析耗时 158 ms**，得到 2,012 次 API 调用、累计 852,524,309 token（其中 `cache_read` 811,684,198）；
-* 主会话 transcript 由 `session_probe` 按 `<project-slug>/<session_id>.jsonl` 定位，机制已存在（`session_last_active` 就是这么做的）；`SessionStart` 与 `Stop` 的 payload 都带 `transcript_path`。
+* The existing `parse_transcript_usage` can parse a main-session transcript **with no modification**;
+* One 35.1 MB main-session transcript took **158 ms** for a full parse, yielding 2,012 API calls and a cumulative 852,524,309 tokens (of which `cache_read` 811,684,198);
+* Main-session transcripts are located by `session_probe` at `<project-slug>/<session_id>.jsonl`; the mechanism already exists (`session_last_active` works exactly this way); both `SessionStart` and `Stop` payloads carry `transcript_path`.
 
-**三个必须写进实现的陷阱**：
+**Three traps that must be written into the implementation**:
 
-1. **必须覆写，不能累加。** 主会话 transcript 是累计文件，每次解析得到的是"从会话开始到此刻"的总量。落库语义必须是 **snapshot 覆写**。若照抄子 agent 那种"stop 时写一次"的心智做成累加，一个会话有多少个 turn 就会多算多少倍。
-2. **必须节流。** `Stop` 每轮对话都触发。158 ms × 每轮 是可感知的开销，且随会话增长线性上升。建议：`Stop` 时只在（a）距上次测量超过 N 分钟，或（b）文件 mtime 变化超过阈值 时才解析；`SessionEnd` 与 `PostCompact` 各强制测一次（后者尤其重要——compact 之后 transcript 会被重写，不在 compact 点定格就会丢失该段）。
-3. **必须过滤合成行**（§1.3），否则 Leader 的 `model` 会被写成 `<synthetic>`。
+1. **Must overwrite, never accumulate.** A main-session transcript is a cumulative file; each parse yields the total "from session start to now". The persistence semantics must be **snapshot overwrite**. If one copies the subagent "write once at stop" mindset and makes it an accumulation, a session is overcounted by as many multiples as it has turns.
+2. **Must throttle.** `Stop` fires on every conversation turn. 158 ms × every turn is perceptible overhead, growing linearly with the session. Recommendation: at `Stop`, parse only when (a) more than N minutes have passed since the last measurement, or (b) the file's mtime has changed beyond a threshold; `SessionEnd` and `PostCompact` each force one measurement (the latter especially important — after a compact the transcript is rewritten, and without freezing a value at the compact point that segment is lost).
+3. **Must filter synthetic rows** (§1.3), otherwise the Leader's `model` will be written as `<synthetic>`.
 
-**呈现上的强制要求**：Leader 主会话的量级（单会话 8.5 亿）远超全部子 agent 之和。若把二者混在一个排行榜里，子 agent 的归因结果会被彻底淹没。因此**主会话与子 agent 必须分列呈现，且默认不合并**。
+**A mandatory presentation requirement**: the magnitude of Leader main sessions (850 million in a single session) far exceeds the sum of all subagents. If the two are mixed in one ranking, subagent attribution results would be completely submerged. Therefore **main sessions and subagents must be presented in separate columns and not merged by default**.
 
-### 3.4 未归因原因分类（供覆盖率呈现使用）
+### 3.4 Unattributed reason classification (for coverage presentation)
 
-未归因不是一种状态，是四种，处置方式各不相同：
+"Unattributed" is not one state but four, each handled differently:
 
-| 原因码 | 含义 | 当前量级 | 可否补救 |
+| Reason code | Meaning | Current magnitude | Remediable? |
 |---|---|---|---|
-| `no_transcript_path` | agent 行从未登记 transcript 路径 | 528 / 2,450 | 否（历史行），新行已覆盖 |
-| `transcript_gone` | 路径有但文件已不在 | 抽样 0 / 150 | 否，且**随时间只增不减** |
-| `not_yet_measured` | 路径在、文件在，只是还没跑过采集 | ~1,911 | **是**，见 §6 |
-| `by_design` | 设计上不采集（如工具调用级） | 52,119 条活动 | 不适用 |
+| `no_transcript_path` | The agent row never registered a transcript path | 528 / 2,450 | No (historical rows); new rows are covered |
+| `transcript_gone` | The path exists but the file is gone | Sampled 0 / 150 | No, and it **only grows over time** |
+| `not_yet_measured` | The path exists, the file exists, collection just has not run yet | ~1,911 | **Yes**, see §6 |
+| `by_design` | Not collected by design (e.g. tool-call level) | 52,119 activity rows | Not applicable |
 
-这张表是"未归因"抽屉的内容物。任何呈现面在报出覆盖率时，必须能下钻到这张表——否则"未归因 22%"是一句无法行动的话。
-
----
-
-## 4. 覆盖率：定义、测量与闸值
-
-### 4.1 覆盖率是向量，不是标量
-
-链路有多跳，每跳各有覆盖率，端到端覆盖率是各跳的乘积。用一个标量表达会掩盖真正的瓶颈。定义如下：
-
-```
-C_measure(scope)  = 已测到用量的派工数 / 该 scope 内派工总数
-C_hop(edge)       = 该边可解析的行数 / 需要该边的行数
-C_e2e(scope)      = 能归到该 scope 的已测用量 / 全部已测用量
-```
-
-**分母的定义必须写死在代码里并有单测**，因为分母是唯一能被悄悄做假的地方：
-
-* `C_measure` 的分母 = `agents` 表中 `role != 'leader'` 的行数（= 派工数），**含**那些没有 transcript 的行。不得以"没路径所以不算"为由剔除——那正是让局部冒充全貌。
-* Leader 主会话单独统计，分母 = `role = 'leader'` 的行数。
-* 分母永远按 `created_at` 落在查询窗口内计算，**不按 `tokens_measured_at`**（否则未测量的行会从分母里消失，覆盖率恒等于 100%）。
-
-### 4.2 测量方法
-
-按需触发，不设任何周期任务（P3）：
-
-* **入口**：一个只读聚合查询 + 一个 MCP 工具 + 一个 API 端点，三者共用同一 storage 方法，返回 `TokenAttribution`；
-* **触发时机**：Dashboard 打开该页时、MCP 工具被调用时、`os_health_check` 顺带输出一行摘要；
-* **一致性自检**：同一份 transcript 重复解析两次结果必须逐字段相等（解析器是纯函数，这条可以做成单测而非运行时检查）。
-
-### 4.3 基线（今天的真实数字）
-
-| 指标 | 口径 | 实测 |
-|---|---|---|
-| `C_measure`（子 agent） | `usage_sum` | **11 / 2,450 = 0.4%** |
-| `C_measure`（子 agent，回采后预估） | `usage_sum` | 1,922 / 2,450 = **78.4%** |
-| `C_measure`（Leader 主会话） | `usage_sum` | **0 / 117 = 0%** |
-| `C_measure`（workflow 自报） | `ctx_last` | 2,909 / 3,182 = 91.4% |
-| `C_hop`（agent→session，路径派生） | — | 1,922 / 1,922 = **100%** |
-| `C_hop`（agent→project） | — | 2,404 / 2,450 = 98.1% |
-| `C_hop`（agent→workflow） | — | 2,331 / 2,450 = 95.1% |
-| `C_hop`（agent→task） | — | 19 / 2,450 = **0.8%** |
-| `C_e2e`（task 级归因） | `usage_sum` | ≈ **0.8%**（受 task 边限制） |
-
-一眼可见：**瓶颈不在 token 采集，在 task 这条边。**即使把所有 transcript 回采完，task 级归因仍然接近于零。这就是 §2.4 那个"寄生在记账行为上"的方案存在的理由，也是为什么 v1 不能把"按任务归因"当成已具备的能力对外讲。
-
-### 4.4 闸值建议（含对既有提法的一处更正）
-
-会议裁决的三闸结构保留，但**闸 2 的门槛按字面不可满足，必须更正**。
-
-原提法是"自报 vs transcript 实测偏差 <10%"。按 §0.2 的实测，自报值是 `ctx_last`、transcript 实测是 `usage_sum`，二者天然差 5~25 倍——这个闸不是难通过，是**永远不可能通过**，因为它在比较两个不同的量。更正后：
-
-| 闸 | 用途 | 门槛（更正后） |
-|---|---|---|
-| **闸 1** | 内部可见 | 无数值门槛；但必须满足：① 每个数值带 `metric` 标签；② 分子分母同结构返回；③ 覆盖率在第一屏第一块；④ 未归因可下钻到 §3.4 四类 |
-| **闸 2** | 可进入对外材料 | ① **同口径**对账：抽样 ≥30 个 agent，`usage_sum` 由两条独立路径（解析器 / 手工核 transcript）计算，逐字段偏差 **= 0**（纯函数，容差为零而非 10%）；② `ctx_last` 侧另行对账：`workflow_agents.tokens` 与重算的 `ctx_last` 偏差 **<10%**（这才是原门槛该落的地方）；③ `C_measure`（子 agent）≥ 95%；④ `C_hop` 各边 ≥ 95%，**task 边除外且必须单独标注其真实值** |
-| **闸 3** | 可用于派工前判定 | 闸 2 全绿，且 `C_measure` ≥ 95% 持续两个版本。判定只能是派工前的一次性检查（`PreToolUse`），**禁止常驻监控**（P3） |
-
-**一条额外的红线（建议进机检）**：
-
-> 任何呈现面上的 token 数值，若其所在 scope 的 `C_measure < 100%`，必须在同屏同级显示未归因部分。缺失即视为红线违规。
-
-以及 P1 的机检形态——用**量纲白名单**而非禁用词表，因为白名单是封闭集合、可穷举、不会漏：
-
-> 用量相关的呈现面（API schema 字段名 + 前端展示单位）只允许四种量纲：**token（四层分列）、次数、时长毫秒、百分比**。出现任何第四类之外的量纲即失败。
-
-白名单优于黑名单的理由：黑名单要穷举所有越界写法（多语言、符号、缩写、俚语）才能生效，漏一个就破防；白名单只需确认四个合法值，新增量纲必须显式过审。
+This table is the contents of the "unattributed" drawer. Any presentation surface that reports coverage must be able to drill down to this table — otherwise "22% unattributed" is a sentence nobody can act on.
 
 ---
 
-## 5. Dashboard 呈现草案
+## 4. Coverage: definition, measurement and gates
 
-### 5.1 落点：新增 `/usage` 一页
+### 4.1 Coverage is a vector, not a scalar
 
-* **不**塞进 `/analytics`：那里是团队产出效率，与用量归因是两种读者心智，混在一起会让覆盖率标注被稀释。
-* **不**占用侧边栏靠前位置：这是一个内部诊断页，不是首屏叙事材料。
-* 新增路由会改变 `App.tsx` 的路由计数，**必须同批同步双语 README 的页面数**（I6 机检硬等式）。这是"加页面比想象中贵"的具体形态，估点时算进去。
+The chain has multiple hops, each hop has its own coverage, and end-to-end coverage is the product of the hops. Expressing it as one scalar would mask the real bottleneck. Definitions:
 
-### 5.2 页面结构（自上而下，顺序即优先级）
+```
+C_measure(scope)  = dispatches with measured usage / total dispatches in that scope
+C_hop(edge)       = rows where the edge resolves / rows needing that edge
+C_e2e(scope)      = measured usage attributable to that scope / all measured usage
+```
 
-**① 覆盖率矩阵（第一屏第一块，不可折叠、不可关闭）**
+**The denominator definitions must be pinned down in code and covered by unit tests**, because the denominator is the only place that can be quietly faked:
 
-这是页面的主体，不是页眉。表格形如：
+* The denominator of `C_measure` = rows in the `agents` table with `role != 'leader'` (= the number of dispatches), **including** rows with no transcript. They must not be excluded on the grounds of "no path, so not counted" — that is exactly letting a part pose as the whole.
+* Leader main sessions are counted separately, with denominator = rows with `role = 'leader'`.
+* Denominators are always computed by `created_at` falling in the query window, **never by `tokens_measured_at`** (otherwise unmeasured rows vanish from the denominator and coverage is permanently 100%).
 
-| 派工路径 | 派工数 | 已测量 | 覆盖率 | 口径 |
+
+### 4.2 Measurement method
+
+Triggered on demand, with no periodic task of any kind (P3):
+
+* **Entry points**: one read-only aggregate query + one MCP tool + one API endpoint, all three sharing the same storage method and returning `TokenAttribution`;
+* **Trigger moments**: when the Dashboard opens the page, when the MCP tool is called, and `os_health_check` incidentally outputs a one-line summary;
+* **Consistency self-check**: parsing the same transcript twice must give field-for-field identical results (the parser is a pure function, so this can be a unit test rather than a runtime check).
+
+### 4.3 Baseline (today's real numbers)
+
+| Metric | Metric id | Measured |
+|---|---|---|
+| `C_measure` (subagents) | `usage_sum` | **11 / 2,450 = 0.4%** |
+| `C_measure` (subagents, estimated after back-collection) | `usage_sum` | 1,922 / 2,450 = **78.4%** |
+| `C_measure` (Leader main sessions) | `usage_sum` | **0 / 117 = 0%** |
+| `C_measure` (workflow self-report) | `ctx_last` | 2,909 / 3,182 = 91.4% |
+| `C_hop` (agent→session, path-derived) | — | 1,922 / 1,922 = **100%** |
+| `C_hop` (agent→project) | — | 2,404 / 2,450 = 98.1% |
+| `C_hop` (agent→workflow) | — | 2,331 / 2,450 = 95.1% |
+| `C_hop` (agent→task) | — | 19 / 2,450 = **0.8%** |
+| `C_e2e` (task-level attribution) | `usage_sum` | ≈ **0.8%** (limited by the task edge) |
+
+Visible at a glance: **the bottleneck is not token collection; it is the task edge.** Even if every transcript is back-collected, task-level attribution remains close to zero. That is the reason the §2.4 "piggyback on bookkeeping behavior" plan exists, and why v1 must not speak of "attribution by task" as a capability it already has.
+
+### 4.4 Gate recommendations (including one correction to the existing formulation)
+
+The meeting-ruled three-gate structure is kept, but **gate 2's threshold as literally stated is unsatisfiable and must be corrected**.
+
+The original formulation was "self-reported vs transcript-measured deviation <10%". Per §0.2's measurements, the self-reported value is `ctx_last` and the transcript measurement is `usage_sum`; the two naturally differ by 5~25x — this gate is not hard to pass, it is **impossible to pass**, because it compares two different quantities. Corrected:
+
+| Gate | Purpose | Threshold (corrected) |
+|---|---|---|
+| **Gate 1** | Internally visible | No numeric threshold; but must satisfy: ① every number carries a `metric` label; ② numerator and denominator returned in the same structure; ③ coverage is in the first block of the first screen; ④ the unattributed part can drill down to §3.4's four categories |
+| **Gate 2** | May enter external materials | ① **Same-metric** reconciliation: sample ≥30 agents, `usage_sum` computed via two independent paths (parser / manual transcript check), field-by-field deviation **= 0** (a pure function; zero tolerance rather than 10%); ② on the `ctx_last` side, reconcile separately: the deviation between `workflow_agents.tokens` and a recomputed `ctx_last` is **<10%** (this is where the original threshold belongs); ③ `C_measure` (subagents) ≥ 95%; ④ every `C_hop` edge ≥ 95%, **except the task edge, which must be separately labeled with its true value** |
+| **Gate 3** | May be used for pre-dispatch judgments | Gate 2 all green, and `C_measure` ≥ 95% sustained across two versions. A judgment may only be a one-time check at dispatch time (`PreToolUse`); **resident monitoring is prohibited** (P3) |
+
+**One additional red line (recommended for machine checking)**:
+
+> Any token number on any presentation surface whose scope's `C_measure < 100%` must display the unattributed part at the same level on the same screen. Its absence counts as a red-line violation.
+
+And P1's machine-check form — a **dimension allowlist** rather than a banned-word list, because an allowlist is a closed, enumerable set that cannot leak:
+
+> Usage-related presentation surfaces (API schema field names + frontend display units) allow exactly four dimensions: **tokens (four layers in separate columns), counts, duration in milliseconds, percentages**. The appearance of any dimension outside these four fails the check.
+
+Why an allowlist beats a blocklist: a blocklist must enumerate every out-of-bounds spelling (multiple languages, symbols, abbreviations, slang) to take effect, and one leak breaks it; an allowlist only needs to confirm four legal values, and adding a new dimension must explicitly pass review.
+
+---
+
+## 5. Dashboard presentation draft
+
+### 5.1 Landing point: a new `/usage` page
+
+* **Not** crammed into `/analytics`: that page is about team output efficiency, and usage attribution is a different reader mindset; mixing them would dilute the coverage labeling.
+* **Not** given a prominent sidebar position: this is an internal diagnostics page, not first-screen narrative material.
+* Adding a route changes the route count in `App.tsx`, and **the page counts in the bilingual README must be synced in the same batch** (the I6 machine check is a hard equality). This is the concrete form of "adding a page is more expensive than it looks"; count it in the estimates.
+
+### 5.2 Page structure (top to bottom; order is priority)
+
+**① Coverage matrix (first block of the first screen, cannot be folded or closed)**
+
+This is the page's main body, not its header. The table looks like:
+
+| Dispatch path | Dispatches | Measured | Coverage | Metric |
 |---|---:|---:|---:|---|
-| 子 agent（直派） | 119 | n | n% | `usage_sum` |
-| 子 agent（workflow） | 2,331 | n | n% | `usage_sum` |
-| Leader 主会话 | 117 | n | n% | `usage_sum` |
-| workflow 自报（历史） | 3,182 | 2,909 | 91.4% | `ctx_last` |
-| 工具调用级 | 52,119 | — | 设计上不采集 | — |
+| Subagents (direct dispatch) | 119 | n | n% | `usage_sum` |
+| Subagents (workflow) | 2,331 | n | n% | `usage_sum` |
+| Leader main sessions | 117 | n | n% | `usage_sum` |
+| Workflow self-report (historical) | 3,182 | 2,909 | 91.4% | `ctx_last` |
+| Tool-call level | 52,119 | — | Not collected by design | — |
 
-设计要点：
-* 每行都带口径列——`ctx_last` 行与 `usage_sum` 行在视觉上必须区分（不同底色 + 口径徽标），**并且这张表不提供"合计"行**；
-* "设计上不采集"是一个正式取值，不是空白——空白会被读成 bug。
+Design points:
+* Every row carries a metric column — `ctx_last` rows and `usage_sum` rows must be visually distinguishable (different background + metric badge), **and this table offers no "total" row**;
+* "Not collected by design" is a formal value, not a blank — a blank would be read as a bug.
 
-**② 未归因抽屉（紧贴矩阵，默认展开）**
+**② Unattributed drawer (directly beneath the matrix, expanded by default)**
 
-按 §3.4 的四个原因码分列计数，每类可点开看样例行。这块的存在是为了让"覆盖率 78%"变成一句可行动的话——用户看完应当知道剩下 22% 能不能救、怎么救。
+Counts split by §3.4's four reason codes, each expandable to sample rows. This block exists to turn "78% coverage" into an actionable sentence — after reading it, the user should know whether the remaining 22% can be rescued and how.
 
-**③ 已归因明细（可下钻）**
+**③ Attributed details (drill-down)**
 
-层级：`project → session → workflow_run → agent`。每一级都是一张 `TokenAttribution` 卡片，四层 token 分列显示，**不显示合计**。默认排序键是 `output_tokens`（唯一与"干了多少活"强相关的一层），不是四层之和——理由见 §1.2。
+Hierarchy: `project → session → workflow_run → agent`. Each level is a `TokenAttribution` card, the four token layers shown in separate columns, **with no combined total shown**. The default sort key is `output_tokens` (the only layer strongly correlated with "how much work was done"), not the sum of the four layers — see §1.2 for the reason.
 
-task 级作为**旁支**呈现，独立卡片，标题明确写"task 级归因（覆盖率 n%，其余为 task 级未归因）"。
+Task level is presented as a **side branch**, a standalone card whose title explicitly reads "Task-level attribution (coverage n%; the rest is task-level unattributed)".
 
-**④ 单次实测卡（对外样例专用通道）**
+**④ Single-measurement card (a dedicated channel for external examples)**
 
-一张可复制的卡片：某一次真实派工的输入摘要、产出摘要、四层 token、耗时、模型（观测得来）。
+A copyable card: one real dispatch's input summary, output summary, four-layer tokens, duration, and model (obtained by observation).
 
-这张卡**显式豁免于覆盖率闸**——它是单次实测定真，不是全量台账，两条链解耦。卡片上必须固定印一行：**"单次实测，非全量台账"**。这个豁免是会议明确裁决的，但豁免的**代价**必须落实：卡片数据只能来自单次 transcript 解析，禁止从聚合视图取数（否则豁免就成了绕过闸门的后门）。
+This card is **explicitly exempt from the coverage gates** — it is a single measurement settled as truth, not a full ledger, and the two chains are decoupled. A fixed line must be printed on the card: **"Single measurement, not a full ledger"**. This exemption was explicitly ruled at the meeting, but its **cost** must be honored: card data may only come from parsing a single transcript, never from an aggregate view (otherwise the exemption becomes a backdoor around the gates).
 
-**⑤ 口径说明（页脚常驻）**
+**⑤ Metric explanation (permanent page footer)**
 
-一段固定文字，解释 `usage_sum` 与 `ctx_last` 的区别以及为什么二者不相加。写在页面里而不是文档里，因为看数字的人不会去翻文档。
+A fixed paragraph explaining the difference between `usage_sum` and `ctx_last` and why the two are not added together. Written into the page rather than a doc, because people looking at the numbers will not go read the doc.
 
-### 5.3 其余触点
+### 5.3 Other touchpoints
 
-* **MCP 工具**：新增一个只读工具返回 `TokenAttribution`。注意加工具会同时触发 I6（README 工具数硬等式）与 I9（参数 description 机检），双语 README 必须同批改。
-* **`os_health_check`**：顺带输出一行覆盖率摘要——按需触发，零新增守护。
-* **既有页面不动**：`WorkflowsPage` / `AgentLivePage` 现在展示的 tokens 是 `ctx_last` 口径，v1 只做一件事——**给它们加口径徽标**，不改数据也不改算法。
+* **MCP tool**: add one read-only tool returning `TokenAttribution`. Note that adding a tool simultaneously triggers I6 (the README tool-count hard equality) and I9 (the parameter-description machine check); the bilingual README must change in the same batch.
+* **`os_health_check`**: incidentally outputs a one-line coverage summary — on-demand triggered, zero new daemons.
+* **Existing pages untouched**: the tokens `WorkflowsPage` / `AgentLivePage` currently display are the `ctx_last` metric; v1 does only one thing to them — **adds a metric badge**, changing neither the data nor the algorithm.
 
 ---
 
-## 6. 历史回采是否并入 v1
+## 6. Whether historical back-collection joins v1
 
-### 6.1 事实基线
+### 6.1 Fact baseline
 
-回采的对象比"170 行 opus 别名"要大得多：
+The back-collection target is much larger than "170 opus-alias rows":
 
-| 群体 | 行数 | 有 `transcript_path` | 可回采率 |
+| Group | Rows | With `transcript_path` | Back-collectable rate |
 |---|---:|---:|---:|
-| `workflow_agents` 中 `model='opus'` 且 tokens=0 | 170 | 138 | 81.2% |
-| `workflow_agents` 中 `model='claude-fable-5'` 且 tokens=0 | 85 | 44 | 51.8% |
-| `workflow_agents` 其余零 token 行 | 18 | 0 | 0% |
-| **零 token 小计** | **273** | **182** | **66.7%** |
-| `agents` 表全部子 agent 行 | 2,450 | 1,922 | 78.4% |
+| `workflow_agents` with `model='opus'` and tokens=0 | 170 | 138 | 81.2% |
+| `workflow_agents` with `model='claude-fable-5'` and tokens=0 | 85 | 44 | 51.8% |
+| `workflow_agents` remaining zero-token rows | 18 | 0 | 0% |
+| **Zero-token subtotal** | **273** | **182** | **66.7%** |
+| All subagent rows in the `agents` table | 2,450 | 1,922 | 78.4% |
 
-抽样 150 个已登记路径，**150 个文件全部仍在磁盘**。对 `model='opus'` 的 138 条路径逐个 `os.path.exists`，**138/138 存活**。
+Sampling 150 registered paths, **all 150 files are still on disk**. Checking `os.path.exists` one by one for the 138 paths of `model='opus'`, **138/138 survive**.
 
-### 6.2 利
+### 6.2 Pros
 
-1. **这是覆盖率从 0.4% 提到 78.4% 的唯一一步。** 不回采，v1 上线时页面上是一片"未归因"，闸 2 永远够不着，整个方向会被判为空转。
-2. **窗口在关闭。** CC 默认会清理较早的本地会话历史，`transcript_gone` 这一类只增不减。今天 150/150 存活，三个月后不是。**回采的代价随时间单调上升，收益单调下降。**
-3. **技术风险极低。** 只写"从未被填过的列"（`agents` 五列 + `tokens_source`），天然幂等、可 dry-run、可重跑、失败可丢弃。子 agent transcript 中位仅 97 KB、最大 10.9 MB，1,922 份全量解析是分钟级作业。
-4. **它顺带解决别名问题，且不违反刻意决策。** 138 条 opus 别名行的真实型号可从 transcript 的 `message.model` 直接读到（transcript 里永远是完整型号）——这是**观测回填**，正是"模型默认值留空、由观测回填"这条决策想要的样子，与"禁止写死型号"不冲突。剩下 32 条无 transcript 的行走 `MODEL_ALIAS_LEDGER` 读侧兜底，窗口外返回 None 不瞎猜。
+1. **This is the only step that lifts coverage from 0.4% to 78.4%.** Without back-collection, the v1 page at launch is a sea of "unattributed", gate 2 is never reachable, and the whole direction is judged as spinning in place.
+2. **The window is closing.** CC by default cleans up older local session history, and the `transcript_gone` category only grows. Today it is 150/150 surviving; three months from now it may not be. **The cost of back-collection rises monotonically with time; its benefit falls monotonically.**
+3. **Extremely low technical risk.** It only writes "columns that were never filled" (the `agents` five columns + `tokens_source`): naturally idempotent, dry-runnable, re-runnable, discardable on failure. Subagent transcripts have a median of only 97 KB and a maximum of 10.9 MB; a full parse of all 1,922 is a minutes-scale job.
+4. **It also solves the alias problem, without violating the deliberate decision.** The true model names of the 138 opus-alias rows can be read directly from the transcript's `message.model` (transcripts always carry the full model name) — this is **observational backfill**, exactly what the "leave the model default empty, backfill by observation" decision wanted, and it does not conflict with "never hard-code model names". The remaining 32 rows without transcripts go through the `MODEL_ALIAS_LEDGER` read-side fallback, returning None outside the window rather than guessing.
 
-### 6.3 弊
+### 6.3 Cons
 
-1. **口径污染风险（最大的一条）。** 回采产出的是 `usage_sum`，而 `workflow_agents.tokens` 是 `ctx_last`。若图省事把回采值写进那一列，就会把 5~25 倍的混口径**永久固化进历史数据**，且事后无法区分哪些行是哪个口径。这比不回采糟糕得多。
-2. **覆盖率会"虚涨"，掩盖真正的健康指标。** 回采后总覆盖率跳到 78%，但"新派工的采集率"是另一回事——后者才是判断采集链路健不健康的指标。一个数字掩盖另一个数字。
-3. **口径不齐的历史窗口。** 回采只能覆盖 transcript 尚存的行，早期行永远缺失，因此**任何跨越回采边界的时间序列图都是失真的**。
-4. **它会顺手改动 2,000 行生产数据。** 即使幂等，也需要备份与 dry-run 门禁。
+1. **Metric contamination risk (the biggest one).** Back-collection produces `usage_sum`, while `workflow_agents.tokens` is `ctx_last`. If for convenience the back-collected value were written into that column, the 5~25x metric mixing would be **permanently solidified into historical data**, and afterwards it would be impossible to tell which rows are which metric. That is much worse than not back-collecting.
+2. **Coverage will "inflate", masking the real health metric.** After back-collection, total coverage jumps to 78%, but "the collection rate of new dispatches" is a different matter — the latter is the metric that judges whether the collection chain is healthy. One number masks the other.
+3. **A historically uneven window.** Back-collection can only cover rows whose transcripts still exist; early rows are missing forever, so **any time-series chart crossing the back-collection boundary is distorted**.
+4. **It incidentally modifies 2,000 rows of production data.** Even though idempotent, it needs backup and dry-run gates.
 
-### 6.4 建议：**并入 v1，但带三条硬约束**
+### 6.4 Recommendation: **join v1, but with three hard constraints**
 
-**建议做，理由是 6.2-2（窗口在关闭）压倒一切**——这是本设计里唯一一件"晚做就永远做不了"的事，其余各项晚做只是晚做。
+**Recommendation: do it, because 6.2-2 (the window is closing) overrides everything** — this is the only item in this design where "doing it late means never being able to do it"; everything else done late is just done late.
 
-三条硬约束：
+Three hard constraints:
 
-1. **只写 `agents` 表五列 + `tokens_source`，绝不触碰 `workflow_agents.tokens`。** 该列保持 `ctx_last` 口径不变。读侧要展示 workflow agent 的 `usage_sum` 时，通过 `os_agent_id` 关联到 `agents` 行取数——**用关联解决，不用覆写解决**。
-2. **覆盖率必须按 `tokens_measured_at` 分窗呈现**，把"历史回采"与"增量采集"拆成两个数。回采不得让增量采集率变得不可见（对策 6.3-2）。
-3. **回采脚本按需触发、dry-run 先行、可重跑零变更。** 落法照 UTC 平移脚本的先例：先 dry-run 出报告，人审后再 `--apply`；带幂等标记，重跑不产生任何变更。
+1. **Write only the `agents` table's five columns + `tokens_source`; never touch `workflow_agents.tokens`.** That column keeps the `ctx_last` metric unchanged. When the read side needs to display a workflow agent's `usage_sum`, it joins via `os_agent_id` to the `agents` row to fetch it — **solved by joining, not by overwriting**.
+2. **Coverage must be presented windowed by `tokens_measured_at`**, splitting "historical backfill" and "incremental collection" into two numbers. Back-collection must not make the incremental collection rate invisible (countermeasure to 6.3-2).
+3. **The backfill script is on-demand triggered, dry-run first, re-runnable with zero changes.** Implementation follows the UTC shift script's precedent: dry-run produces a report first, a human reviews it, then `--apply`; with an idempotency marker, re-running produces no changes.
 
-**不做的部分**：不为回采去改 agent 模板的 frontmatter（`model: opus` 是 2026-07-10 裁定固化的层级别名），不把别名解析结果写回任何 `model` 列。
-
----
-
-## 7. 实施拆分（每阶段可独立验收）
-
-顺序有依赖，但每一阶段单独可交付、可回滚、可验收。
-
-### 阶段 0 — 口径正名与机检（S）
-
-* `parse_transcript_usage` 复用 `session_probe` 的合成行过滤（§1.3）；
-* 定义 `TokenMetric` 枚举与两种口径的常量，给 `workflow_agents.tokens` 的读侧标注 `ctx_last`；
-* 落两条机检：量纲白名单（§4.4）、覆盖率同屏红线；故意改错一处验证机检真红。
-
-**验收**：机检可复现地红、修回后绿；单测覆盖合成行过滤。
-
-### 阶段 1 — 链路派生器（S–M）
-
-* 实现 `transcript_path → (project_slug, session_id, wf_id, cc_agent_id)` 的解析器（正则 + 单测，含无 wf、含 worktree 路径、含非 ASCII slug 三类样本）；
-* 回填 `agents.session_id`（历史 1,922 行 + 新行在 SubagentStop 顺手写）；
-* 回填 Leader 行的 `transcript_path`（经 `session_probe` 反查）。
-
-**验收**：1,922 行解析成功率 100%；随机抽 30 行人工核对 session 归属正确；非 ASCII slug 不误判 project（以 `agents.project_id` 为准，slug 仅作交叉校验）。
-
-### 阶段 2 — 覆盖率与类型层（M）
-
-* `TokenAttribution` / `AttributionScope` / `AttributionMethod` 定义；
-* storage 层聚合方法 + 只读 API + MCP 工具；
-* 契约测试：不存在裸 total、`metric` 无默认值、分子分母同层。
-
-**验收**：契约测试全绿；API 在任何参数组合下都无法返回孤立总量；覆盖率基线数字与 §4.3 一致。
-
-### 阶段 3 — 历史回采（M）
-
-* 幂等回采脚本，dry-run 先行，人审后 `--apply`；
-* 只写 `agents` 五列 + `tokens_source`。
-
-**验收**：dry-run 报告与实际写入逐行一致；`--apply` 后重跑零变更；`workflow_agents.tokens` 逐行未变（校验和比对）；覆盖率按窗分列可见。
-
-### 阶段 4 — Leader 主会话采集（M）
-
-* `Stop` 节流测量 + `SessionEnd` / `PostCompact` 强制测量；
-* snapshot 覆写语义 + 三个陷阱的针对性单测。
-
-**验收**：一次真实会话结束后 Leader 行有值；**重复触发 10 次数值不变**（防累加）；compact 前后各有一次定格；单轮 `Stop` 的额外开销可测且在节流窗内为零。
-
-### 阶段 5 — `/usage` 页面（M）
-
-* 五块结构（§5.2）+ 口径徽标 + 未归因下钻；
-* 同批同步双语 README 页面数（I6）与工具数（若阶段 2 新增了 MCP 工具）。
-
-**验收**：覆盖率在第一屏第一块；未归因四类可点开；`ctx_last` 与 `usage_sum` 视觉可区分且无合计行；I6 机检绿。
-
-### 阶段 6 — 不在 v1
-
-派工前的用量判定闸（原 A4）。前置条件：闸 3 全绿且持续两个版本。形态只能是 `PreToolUse` 的一次性判定，**禁止常驻监控**。
-
-### 依赖与并行度
-
-```
-阶段0 ──┬─→ 阶段1 ──→ 阶段2 ──┬─→ 阶段3
-        │                      └─→ 阶段5
-        └─→ 阶段4（可与 1/2 并行，只依赖阶段0 的合成行修复）
-```
-
-阶段 3 与阶段 5 可并行。阶段 4 只依赖阶段 0，可最早启动，但它的**呈现**依赖阶段 5。
+**Parts not to do**: do not change agent templates' frontmatter for the backfill (`model: opus` is a tier-level alias frozen by the 2026-07-10 ruling), and do not write alias-resolution results back into any `model` column.
 
 ---
 
-## 8. 风险与未决问题
+## 7. Implementation split (each stage independently acceptable)
 
-| # | 风险 | 影响 | 缓解 |
+The order has dependencies, but each stage is separately deliverable, rollback-able, and acceptable.
+
+### Stage 0 — Metric naming and machine checks (S)
+
+* `parse_transcript_usage` reuses `session_probe`'s synthetic-row filtering (§1.3);
+* Define the `TokenMetric` enum and the two metrics' constants; label the read side of `workflow_agents.tokens` as `ctx_last`;
+* Land two machine checks: the dimension allowlist (§4.4) and the coverage same-screen red line; deliberately break one place to verify the machine checks really go red.
+
+**Acceptance**: the machine checks are reproducibly red, and green after fixing; unit tests cover synthetic-row filtering.
+
+### Stage 1 — Chain deriver (S–M)
+
+* Implement the `transcript_path → (project_slug, session_id, wf_id, cc_agent_id)` parser (regex + unit tests, including three sample classes: no wf, worktree paths, non-ASCII slugs);
+* Backfill `agents.session_id` (the historical 1,922 rows + new rows written incidentally at SubagentStop);
+* Backfill Leader rows' `transcript_path` (via `session_probe` reverse lookup).
+
+**Acceptance**: 100% parse success over the 1,922 rows; a random sample of 30 rows manually verified for correct session attribution; non-ASCII slugs do not misjudge the project (with `agents.project_id` authoritative, the slug only a cross-check).
+
+### Stage 2 — Coverage and the type layer (M)
+
+* Definitions of `TokenAttribution` / `AttributionScope` / `AttributionMethod`;
+* A storage-layer aggregation method + a read-only API + an MCP tool;
+* Contract tests: no bare total exists, `metric` has no default, numerator and denominator at the same level.
+
+**Acceptance**: contract tests all green; the API cannot return an isolated total under any parameter combination; the coverage baseline numbers agree with §4.3.
+
+### Stage 3 — Historical back-collection (M)
+
+* An idempotent backfill script, dry-run first, human review, then `--apply`;
+* Writes only the `agents` five columns + `tokens_source`.
+
+**Acceptance**: the dry-run report agrees row by row with the actual writes; re-running after `--apply` produces zero changes; `workflow_agents.tokens` unchanged row by row (checksum comparison); coverage visible split by window.
+
+### Stage 4 — Leader main-session collection (M)
+
+* Throttled measurement at `Stop` + forced measurement at `SessionEnd` / `PostCompact`;
+* Snapshot-overwrite semantics + targeted unit tests for the three traps.
+
+**Acceptance**: after one real session ends, the Leader row has values; **triggering 10 times repeatedly leaves the values unchanged** (guards against accumulation); one freeze each before and after a compact; the extra overhead of a single `Stop` is measurable and zero within the throttle window.
+
+### Stage 5 — The `/usage` page (M)
+
+* The five-block structure (§5.2) + metric badges + unattributed drill-down;
+* Sync the bilingual README page count (I6) and tool count in the same batch (if stage 2 added an MCP tool).
+
+**Acceptance**: coverage is in the first block of the first screen; the four unattributed categories are expandable; `ctx_last` and `usage_sum` are visually distinguishable with no total row; the I6 machine check is green.
+
+### Stage 6 — Not in v1
+
+The pre-dispatch usage judgment gate (the original A4). Precondition: gate 3 all green and sustained across two versions. Its form can only be a one-time `PreToolUse` judgment; **resident monitoring is prohibited**.
+
+### Dependencies and parallelism
+
+```
+Stage 0 ──┬─→ Stage 1 ──→ Stage 2 ──┬─→ Stage 3
+          │                         └─→ Stage 5
+          └─→ Stage 4 (can run in parallel with 1/2; only depends on stage 0's synthetic-row fix)
+```
+
+Stages 3 and 5 can run in parallel. Stage 4 depends only on stage 0 and can start earliest, but its **presentation** depends on stage 5.
+
+---
+
+## 8. Risks and open questions
+
+| # | Risk | Impact | Mitigation |
 |---|---|---|---|
-| R1 | 混口径复发 —— 后来者把两个 token 列相加 | 数字错一个数量级 | 类型层 `metric` 无默认值 + 页脚口径说明 + 本文件 §0.2 |
-| R2 | 覆盖率被"优化"成 100%（把没数据的行移出分母） | 局部冒充全貌，纪律①失守 | 分母定义写死 + 单测钉住 + 同屏红线机检 |
-| R3 | 回采把 `usage_sum` 写进 `ctx_last` 列 | 历史数据永久污染、不可分辨 | 阶段 3 验收含"`workflow_agents.tokens` 逐行未变"的校验和比对 |
-| R4 | Leader 采集做成累加 | 数值随轮次线性虚高 | 阶段 4 验收含"重复触发 10 次数值不变" |
-| R5 | task 级归因被当成"已具备的能力"对外表述 | 可信度风险（表是空的时候宣称已解决） | v1 只承诺"数据结构与推导器已就位"，并强制同屏披露 0.8% 的真实覆盖率 |
-| R6 | `transcript_gone` 随时间扩大 | 回采窗口关闭 | 阶段 3 优先级前置，不排到 v1 末尾 |
-| R7 | 主会话 transcript 增大导致解析变慢 | `Stop` 路径可感知延迟 | 节流 + 实测基线（35.1 MB / 158 ms）作为回归阈值 |
+| R1 | Metric mixing recurs — a later arrival adds the two token columns together | Numbers off by an order of magnitude | The type layer's `metric` has no default + the page-footer metric explanation + this file's §0.2 |
+| R2 | Coverage gets "optimized" to 100% (rows without data moved out of the denominator) | A part posing as the whole; discipline ① breached | Denominator definitions pinned down + unit tests + the same-screen red-line machine check |
+| R3 | Back-collection writes `usage_sum` into the `ctx_last` column | Historical data permanently contaminated, indistinguishable | Stage 3 acceptance includes a row-by-row checksum comparison that `workflow_agents.tokens` is unchanged |
+| R4 | Leader collection implemented as accumulation | Values inflate linearly with turns | Stage 4 acceptance includes "triggering 10 times repeatedly leaves the values unchanged" |
+| R5 | Task-level attribution spoken of externally as "a capability we already have" | Credibility risk (claiming solved while the table is empty) | v1 only promises "the data structure and derivers are in place", and mandates same-screen disclosure of the true 0.8% coverage |
+| R6 | `transcript_gone` grows over time | The back-collection window closes | Stage 3 is prioritized early, not scheduled at the end of v1 |
+| R7 | Main-session transcripts growing makes parsing slower | Perceptible latency on the `Stop` path | Throttling + the measured baseline (35.1 MB / 158 ms) as a regression threshold |
 
-**未决问题（需要在实施前确认，但不阻塞本设计过审）**：
+**Open questions (to confirm before implementation, but not blocking this design's approval)**:
 
-1. **`agents.session_id` 为何全表为空**——是从未写入，还是某处被清掉？`hook_translator.py:1904` 的注释暗示两种情况都存在。阶段 1 的回填能绕过这个问题，但根因值得顺手查清，否则新写入的值可能再次被同一个机制清掉。
-2. **compact 之后 transcript 的重写行为**——`PostCompact` 之后原 transcript 是被截断、被替换还是被归档？这直接决定阶段 4 的"强制定格"是否真的能保住 compact 前那一段用量。需要一次实测。
-3. **`workflow_agents.tokens` 与 wf JSON 自报值的关系**——D1 注释称二者"error agent 精确相等、done agent 偏高 3~12%"。这个 3~12% 的偏差本身是否需要在闸 2 的 `ctx_last` 对账里扣除，需要一次抽样确认。
+1. **Why is `agents.session_id` empty across the whole table** — was it never written, or cleared somewhere? The comment at `hook_translator.py:1904` implies both situations exist. Stage 1's backfill can bypass the question, but the root cause is worth investigating in passing, or newly written values might be cleared again by the same mechanism.
+2. **The transcript rewrite behavior after a compact** — after `PostCompact`, is the original transcript truncated, replaced, or archived? This directly decides whether stage 4's "forced freeze" really preserves the pre-compact segment's usage. Needs one measurement.
+3. **The relationship between `workflow_agents.tokens` and the wf JSON self-reported values** — D1's comment says the two are "exactly equal for error agents, 3~12% higher for done agents". Whether that 3~12% deviation itself needs deducting in gate 2's `ctx_last` reconciliation needs one sampling confirmation.
 
 ---
 
-## 附录 A：取证方法与原始数字
+## Appendix A: Forensics method and raw numbers
 
-**方法**：生产库以 `sqlite3` 只读 URI（`mode=ro`）打开，全程未执行任何写语句、未创建快照副本以外的文件；transcript 文件仅读取。代码侧对照 `master@2b651f8`。
+**Method**: the production database was opened via a `sqlite3` read-only URI (`mode=ro`); no write statement of any kind was executed and no files other than snapshot copies were created; transcript files were only read. Code-side comparison against `master@2b651f8`.
 
-**关键原始数字**（2026-07-29）：
+**Key raw numbers** (2026-07-29):
 
 ```
-events                     247,469 行   2026-07-06 02:05 → 2026-07-29 02:14（库龄 = 观测窗口 = 23 天）
-agents                       2,567 行   非 leader 2,450 / leader 117
-  transcript_path 非空       1,922 行   抽样 150/150 文件仍存在（中位 97 KB，最大 10.9 MB）
-  tokens_measured_at 非空       11 行   D1 于 2026-07-28 16:26 上线
-  session_id 非空                1 行
-  project_id 非空（非leader）  2,404 行
-workflow_agents              3,182 行   tokens>0: 2,909   合计 186,995,224（ctx_last 口径）
-  model='opus' 且 tokens=0     170 行   其中 138 行有 transcript 且文件全部存活
-  model='claude-fable-5' 且 0   85 行   其中 44 行有 transcript
-agent_activities            52,119 行   无 token 字段
-tasks                          161 行   team_id 非空 1 行；assigned_to 非空 28 行（存的是 agent 名）
-teams                          248 行   挂有 task 的 team：1 个
-knowledge_links                        已有 from_kind ∈ {task_memo, report}，to_kind ∈ {commit, run, task, memory}
-主会话 transcript                7 份   最大 42.8 MB / 次大 35.1 MB / 合计 82.5 MB
-  35.1 MB 解析实测            158 ms   2,012 次 API 调用，四层合计 852,524,309
+events                     247,469 rows   2026-07-06 02:05 → 2026-07-29 02:14 (DB age = observation window = 23 days)
+agents                       2,567 rows   non-leader 2,450 / leader 117
+  transcript_path non-empty    1,922 rows   sampled 150/150 files still exist (median 97 KB, max 10.9 MB)
+  tokens_measured_at non-empty    11 rows   D1 went live 2026-07-28 16:26
+  session_id non-empty               1 row
+  project_id non-empty (non-leader) 2,404 rows
+workflow_agents              3,182 rows   tokens>0: 2,909   total 186,995,224 (ctx_last metric)
+  model='opus' and tokens=0     170 rows   of which 138 have transcripts and all files survive
+  model='claude-fable-5' and 0   85 rows   of which 44 have transcripts
+agent_activities            52,119 rows   no token field
+tasks                          161 rows   team_id non-empty 1 row; assigned_to non-empty 28 rows (stores agent names)
+teams                          248 rows   teams with a task attached: 1
+knowledge_links                        existing from_kind ∈ {task_memo, report}, to_kind ∈ {commit, run, task, memory}
+Main-session transcripts               7   largest 42.8 MB / second largest 35.1 MB / total 82.5 MB
+  35.1 MB parse measurement        158 ms   2,012 API calls, four-layer total 852,524,309
 ```
 
-**两口径对照原始行**见 §0.2 表格。
+**The raw two-metric comparison rows** are in §0.2's table.
 
-**路径解析验证**：正则 `/projects/(?P<slug>[^/]+)/(?P<sid>[0-9a-f-]{36})/subagents/(?:workflows/(?P<wf>wf_[^/]+)/)?` 对 1,922 条路径全部命中，其中 1,817 条带 `wf_id`。
+**Path parsing validation**: the regex `/projects/(?P<slug>[^/]+)/(?P<sid>[0-9a-f-]{36})/subagents/(?:workflows/(?P<wf>wf_[^/]+)/)?` matched all 1,922 paths, of which 1,817 carry a `wf_id`.
 
-## 附录 B：代码触点索引
+## Appendix B: Code touchpoint index
 
-| 文件 | 现有职责 | 本设计涉及 |
+| File | Existing responsibility | Involved in this design |
 |---|---|---|
-| `src/aiteam/services/token_attribution.py` | `usage_sum` 解析 + 别名台账 | 阶段 0 修合成行过滤；阶段 1 新增路径解析器（或另起模块） |
-| `src/aiteam/api/workflow_ingest.py:220` | `ctx_last` 计算 | 不改，只在读侧标注口径 |
-| `src/aiteam/api/hook_translator.py:661` | `SubagentStop` 回填五列 | 阶段 1 顺手写 `session_id`；阶段 0 的 `tokens_source` |
-| `src/aiteam/api/hook_translator.py:1710/1929` | `SessionStart` / `Stop` | 阶段 4 主会话采集挂载点 |
-| `src/aiteam/api/session_probe.py` | 主会话定位 + 合成行过滤 | 阶段 0 复用；阶段 1 反查 Leader transcript |
-| `src/aiteam/api/request_ledger.py` | 请求级账本 | 不改；作为"按需触发 + 事件聚合 + 不建表"的范式参考 |
-| `src/aiteam/storage/models.py` | ORM | 阶段 0 加 `tokens_source` 列 |
-| `src/aiteam/storage/connection.py` | `COLUMNS_TO_ENSURE` | **加列必须同步此处**（项目铁律） |
-| `scripts/check_invariants.sh` | 红线机检 | 阶段 0 新增两条 |
-| `dashboard/src/App.tsx` | 路由 | 阶段 5 新增 `/usage`，同步 I6 页面数 |
+| `src/aiteam/services/token_attribution.py` | `usage_sum` parsing + alias ledger | Stage 0 fixes synthetic-row filtering; stage 1 adds the path parser (or a separate module) |
+| `src/aiteam/api/workflow_ingest.py:220` | `ctx_last` computation | Unchanged; only label the metric on the read side |
+| `src/aiteam/api/hook_translator.py:661` | `SubagentStop` backfills the five columns | Stage 1 writes `session_id` incidentally; stage 0's `tokens_source` |
+| `src/aiteam/api/hook_translator.py:1710/1929` | `SessionStart` / `Stop` | Stage 4's main-session collection mount points |
+| `src/aiteam/api/session_probe.py` | Main-session location + synthetic-row filtering | Stage 0 reuses it; stage 1 reverse-looks-up Leader transcripts |
+| `src/aiteam/api/request_ledger.py` | Request-level ledger | Unchanged; a paradigm reference for "on-demand triggering + event aggregation + no new tables" |
+| `src/aiteam/storage/models.py` | ORM | Stage 0 adds the `tokens_source` column |
+| `src/aiteam/storage/connection.py` | `COLUMNS_TO_ENSURE` | **Adding a column must sync here** (project iron rule) |
+| `scripts/check_invariants.sh` | Red-line machine checks | Stage 0 adds two |
+| `dashboard/src/App.tsx` | Routing | Stage 5 adds `/usage`, syncing the I6 page count |

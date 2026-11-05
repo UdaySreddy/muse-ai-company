@@ -1,35 +1,35 @@
-# AI Team OS 生态集成配方
+# AI Team OS Ecosystem Integration Recipes
 
-> AI Team OS 定位为"编排其他 Plugin/MCP 的元 Plugin"。本文档提供与主流开发工具的集成配方，帮助你快速构建适合自己团队的工作环境。
+> AI Team OS positions itself as a "meta Plugin that orchestrates other Plugins/MCPs". This document provides integration recipes with mainstream development tools, helping you quickly build a working environment suited to your own team.
 >
-> **原则**: 不写代码集成，而是组合现有 MCP server —— AI Team OS 负责编排，第三方 MCP 负责执行。
+> **Principle**: integrate by combining existing MCP servers rather than writing code — AI Team OS handles orchestration, third-party MCPs handle execution.
 
 ---
 
-## 目录
+## Table of Contents
 
-- [配方 1: GitHub 集成](#配方-1-github-集成)
-- [配方 2: Slack 集成](#配方-2-slack-集成)
-- [配方 3: Linear 集成](#配方-3-linear-集成)
-- [配方 4: 全栈开发团队模板](#配方-4-全栈开发团队模板)
-- [配方组合矩阵](#配方组合矩阵)
-- [故障排查](#故障排查)
+- [Recipe 1: GitHub integration](#recipe-1-github-integration)
+- [Recipe 2: Slack integration](#recipe-2-slack-integration)
+- [Recipe 3: Linear integration](#recipe-3-linear-integration)
+- [Recipe 4: Full-stack development team template](#recipe-4-full-stack-development-team-template)
+- [Recipe combination matrix](#recipe-combination-matrix)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
-## 配方 1: GitHub 集成
+## Recipe 1: GitHub Integration
 
-将 GitHub 与 AI Team OS 结合，实现代码管理、PR 审查、Issue 追踪的自动化编排。
+Combine GitHub with AI Team OS to automate the orchestration of code management, PR review and Issue tracking.
 
-### 推荐 MCP
+### Recommended MCP
 
-| MCP Server | 来源 | 说明 |
+| MCP Server | Source | Notes |
 |-----------|------|------|
-| `github` | [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers/tree/main/src/github) | 官方 GitHub MCP server，提供完整的 GitHub API 能力 |
+| `github` | [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers/tree/main/src/github) | The official GitHub MCP server, providing complete GitHub API capabilities |
 
-### 安装配置
+### Installation configuration
 
-在 `.mcp.json` 中添加 GitHub MCP server：
+Add the GitHub MCP server to `.mcp.json`:
 
 ```json
 {
@@ -45,72 +45,72 @@
 }
 ```
 
-**Token 获取**: GitHub Settings > Developer Settings > Personal access tokens > 创建 token，勾选 `repo`、`issues`、`pull_requests` 权限。
+**Getting a token**: GitHub Settings > Developer Settings > Personal access tokens > create a token, checking the `repo`, `issues` and `pull_requests` permissions.
 
-### 与 AI Team OS 配合方式
+### How it works with AI Team OS
 
-#### 场景 A: 交付阶段自动提交 + 创建 PR
-
-```
-工作流:
-  1. Agent 完成代码编写
-  2. Leader 用 task_update 把任务推进到交付状态
-  3. Agent 直接用 Bash 跑 git add/commit（agent 手里本来就有 Bash）
-  4. GitHub MCP 创建 Pull Request 并推送到 GitHub
-```
-
-OS 工具链:
-- `task_update` — 推进任务状态，交付节点在任务墙上可见
-- `task_list_project` — 查看本项目待交付项
-> Git 三件套（`git_auto_commit` / `git_create_pr` / `git_status_check`）已于 v1.10.3
-> 退役——包了三层的 git 壳只会把 CC 自带的 Bash 能力削窄，提交与开 PR 直接交给
-> Bash + GitHub MCP。
-
-#### 场景 B: Code Review 双重审查
+#### Scenario A: Automatic commit + PR creation at the delivery stage
 
 ```
-工作流:
-  1. 开发 Agent 提交代码
-  2. AI Team OS debate_code_review 发起内部代码审查
-  3. 审查通过后，创建 GitHub PR
-  4. GitHub MCP 读取 PR 评论，补充外部审查反馈
-  5. 最终合并决策由 Leader 统筹
+Workflow:
+  1. An Agent finishes writing the code
+  2. The Leader uses task_update to advance the task to the delivery state
+  3. The Agent directly runs git add/commit with Bash (the agent has Bash in hand anyway)
+  4. The GitHub MCP creates a Pull Request and pushes it to GitHub
 ```
 
-OS 工具链:
-- `debate_code_review` — AI 内部代码审查（多视角辩论）
-- `task_memo_add` — 记录审查结论
+OS toolchain:
+- `task_update` — advances task state; the delivery node is visible on the task wall
+- `task_list_project` — view this project's items awaiting delivery
+> The git trio (`git_auto_commit` / `git_create_pr` / `git_status_check`) was retired in v1.10.3
+> — a three-layer git wrapper only narrows CC's built-in Bash capability; commits and PR opening go directly to
+> Bash + the GitHub MCP.
 
-#### 场景 C: Issue 与任务墙双向映射
+#### Scenario B: Code Review double review
 
 ```
-映射规则:
-  GitHub Issue (open)      ↔  AI Team OS 任务 (todo/in_progress)
-  GitHub Issue (closed)    ↔  AI Team OS 任务 (completed)
-  GitHub Issue label       ↔  AI Team OS 任务 priority/tags
+Workflow:
+  1. A development Agent submits code
+  2. AI Team OS debate_code_review initiates an internal code review
+  3. After the review passes, a GitHub PR is created
+  4. The GitHub MCP reads the PR comments, supplementing external review feedback
+  5. The final merge decision is coordinated by the Leader
+```
+
+OS toolchain:
+- `debate_code_review` — AI internal code review (multi-perspective debate)
+- `task_memo_add` — record the review conclusion
+
+#### Scenario C: Bidirectional mapping between Issues and the task wall
+
+```
+Mapping rules:
+  GitHub Issue (open)      ↔  AI Team OS task (todo/in_progress)
+  GitHub Issue (closed)    ↔  AI Team OS task (completed)
+  GitHub Issue label       ↔  AI Team OS task priority/tags
   GitHub Issue assignee    ↔  AI Team OS Agent assignee
 ```
 
-实践建议:
-- 每次 sprint 开始时，Leader 从 GitHub Issues 同步任务到任务墙
-- Agent 完成任务后，由 Leader 关闭对应 GitHub Issue
-- 使用 `task_memo_add` 在任务中记录 GitHub Issue 链接
+Practical advice:
+- At the start of each sprint, the Leader syncs tasks from GitHub Issues to the task wall
+- After an Agent completes a task, the Leader closes the corresponding GitHub Issue
+- Use `task_memo_add` to record the GitHub Issue link in the task
 
 ---
 
-## 配方 2: Slack 集成
+## Recipe 2: Slack Integration
 
-将 Slack 与 AI Team OS 结合，实现团队通知、告警和站会摘要的自动推送。
+Combine Slack with AI Team OS to automatically push team notifications, alerts and standup summaries.
 
-### 推荐 MCP
+### Recommended MCP
 
-| MCP Server | 来源 | 说明 |
+| MCP Server | Source | Notes |
 |-----------|------|------|
-| `slack` | [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers/tree/main/src/slack) | 官方 Slack MCP server，支持频道消息读写 |
+| `slack` | [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers/tree/main/src/slack) | The official Slack MCP server, supporting channel message reading and writing |
 
-### 安装配置
+### Installation configuration
 
-在 `.mcp.json` 中添加 Slack MCP server：
+Add the Slack MCP server to `.mcp.json`:
 
 ```json
 {
@@ -127,72 +127,72 @@ OS 工具链:
 }
 ```
 
-**Token 获取**: Slack App 管理页 > 创建 App > OAuth & Permissions > 添加 `chat:write`, `channels:read`, `channels:history` 权限 > 安装到工作区 > 复制 Bot Token。
+**Getting a token**: Slack App admin page > create an App > OAuth & Permissions > add the `chat:write`, `channels:read` and `channels:history` permissions > install to the workspace > copy the Bot Token.
 
-### 与 AI Team OS 配合方式
+### How it works with AI Team OS
 
-#### 场景 A: Leader 简报推送
-
-```
-工作流:
-  1. 一轮工作收尾时，Leader 调用 team_briefing 生成团队简报
-  2. 简报内容通过 Slack MCP 推送到指定频道
-  3. 团队成员在 Slack 中查看项目进展
-```
-
-OS 工具链:
-- `team_briefing` — 生成团队工作简报
-- `briefing_list` — 查看历史简报（支持按项目/标签筛选）
-> 推送本身交给 Slack MCP：OS 内置的 `send_notification` 已于 v1.10.3 退役，它依赖的
-> webhook 配置文件从来没被创建过，调必失败。
-
-#### 场景 B: 任务失败告警
+#### Scenario A: Leader briefing push
 
 ```
-工作流:
-  1. Watchdog 巡检发现 BUSY 超时 agent / 长期 PENDING 任务
-  2. Leader 用 diagnose_task_failure 取根因
-  3. 通过 Slack MCP 向 #ops-alerts 频道发送告警消息
-  4. 包含：失败任务、根因、建议行动
+Workflow:
+  1. At the wrap-up of a round of work, the Leader calls team_briefing to generate a team briefing
+  2. The briefing content is pushed through the Slack MCP to the designated channel
+  3. Team members view the project progress in Slack
 ```
 
-OS 工具链:
-- `diagnose_task_failure` — 单任务失败诊断（只回诊断，不写状态）
-- `failure_analysis` — 提取根因并把抗体写入项目记忆
-- `briefing_add` — 需要你拍板时入决策队列（带 tags 便于筛选）
-> SRE 错误预算模型（`error_budget_*`）与 `os_report_issue` 已于 v1.10.3 退役：
-> 前者的数据目录终其一生没有过一个文件，后者史上 0 条 issue。
+OS toolchain:
+- `team_briefing` — generate a team work briefing
+- `briefing_list` — view historical briefings (supports filtering by project/tag)
+> The push itself goes to the Slack MCP: the OS's built-in `send_notification` was retired in v1.10.3; the
+> webhook configuration file it depended on was never created, so calling it was guaranteed to fail.
 
-#### 场景 C: 每日站会摘要
+#### Scenario B: Task failure alerts
 
 ```
-工作流:
-  1. Leader 调用 task_list_project 获取任务墙状态
-  2. 汇总：昨日完成 / 今日计划 / 阻塞项
-  3. 格式化为站会摘要，推送到 #standup 频道
-  4. 可结合 meeting_conclude 的会议纪要一起发送
+Workflow:
+  1. A Watchdog inspection finds a BUSY-timed-out agent / a long-PENDING task
+  2. The Leader uses diagnose_task_failure to get the root cause
+  3. An alert message is sent through the Slack MCP to the #ops-alerts channel
+  4. Including: the failed task, the root cause, and a suggested action
 ```
 
-OS 工具链:
-- `task_list_project` — 查看任务墙全局视图（传 team_id 即单队视图）
-- `meeting_conclude` — 生成会议纪要
-- `task_status` — 查看单个任务的当前状态
+OS toolchain:
+- `diagnose_task_failure` — single-task failure diagnosis (returns a diagnosis only, writes no state)
+- `failure_analysis` — extract the root cause and write the antibody into project memory
+- `briefing_add` — enter the decision queue when your ruling is needed (with tags for easy filtering)
+> The SRE error-budget model (`error_budget_*`) and `os_report_issue` were retired in v1.10.3:
+> the former's data directory never had a single file in its whole life; the latter historically had 0 issues.
+
+#### Scenario C: Daily standup summary
+
+```
+Workflow:
+  1. The Leader calls task_list_project to get the task wall's state
+  2. Summarize: completed yesterday / planned today / blockers
+  3. Format as a standup summary and push to the #standup channel
+  4. Can be sent together with the meeting minutes from meeting_conclude
+```
+
+OS toolchain:
+- `task_list_project` — view the task wall's global view (passing team_id gives a single-team view)
+- `meeting_conclude` — generate meeting minutes
+- `task_status` — view a single task's current state
 
 ---
 
-## 配方 3: Linear 集成
+## Recipe 3: Linear Integration
 
-将 Linear 与 AI Team OS 结合，实现项目管理工具之间的任务同步。
+Combine Linear with AI Team OS to sync tasks between project management tools.
 
-### 推荐 MCP
+### Recommended MCP
 
-| MCP Server | 来源 | 说明 |
+| MCP Server | Source | Notes |
 |-----------|------|------|
-| `linear` | [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers/tree/main/src/linear) | Linear MCP server，支持 Issue 和 Project 操作 |
+| `linear` | [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers/tree/main/src/linear) | The Linear MCP server, supporting Issue and Project operations |
 
-### 安装配置
+### Installation configuration
 
-在 `.mcp.json` 中添加 Linear MCP server：
+Add the Linear MCP server to `.mcp.json`:
 
 ```json
 {
@@ -208,14 +208,14 @@ OS 工具链:
 }
 ```
 
-**API Key 获取**: Linear Settings > API > Personal API keys > 创建新 key。
+**Getting an API Key**: Linear Settings > API > Personal API keys > create a new key.
 
-### 与 AI Team OS 配合方式
+### How it works with AI Team OS
 
-#### 场景 A: Linear Issue 与 AI Team OS 任务同步
+#### Scenario A: Syncing Linear Issues with AI Team OS tasks
 
 ```
-映射规则:
+Mapping rules:
   Linear Issue          ↔  AI Team OS task_create
   Linear Issue status   ↔  task_update status
   Linear assignee       ↔  Agent assignee
@@ -223,56 +223,56 @@ OS 工具链:
   Linear label/project  ↔  task tags
 ```
 
-实践建议:
-- Sprint 开始时从 Linear 同步 Issue 到 AI Team OS 任务墙
-- Agent 完成任务后更新 Linear Issue 状态
-- 使用 task_memo 记录 Linear Issue ID 建立关联
+Practical advice:
+- At sprint start, sync Issues from Linear to the AI Team OS task wall
+- After an Agent completes a task, update the Linear Issue's status
+- Use task_memo to record the Linear Issue ID and establish the association
 
-#### 场景 B: Sprint 与任务墙映射
+#### Scenario B: Mapping Sprints to the task wall
 
 ```
-Linear Sprint 阶段      →  AI Team OS 任务状态
+Linear Sprint stage     →  AI Team OS task state
   Backlog               →  pending
   In Progress           →  running
-  In Review             →  running（评审中，用 tags 标注）
+  In Review             →  running (in review; marked with tags)
   Done                  →  completed
 ```
 
-OS 工具链:
-- `task_create` / `task_update` — 建任务与推进状态
-- `task_list_project` — 按项目查看整墙进度
-> Pipeline 子系统（`pipeline_create` / `pipeline_advance` / `pipeline_status`）已于
-> v1.10.3 整域退役，阶段编排改由 CC 原生 Workflow 承担，OS 侧用 `workflow_list` /
-> `workflow_get` 做持久化观测。
+OS toolchain:
+- `task_create` / `task_update` — create tasks and advance state
+- `task_list_project` — view whole-wall progress by project
+> The Pipeline subsystem (`pipeline_create` / `pipeline_advance` / `pipeline_status`) was retired
+> as a whole domain in v1.10.3; stage orchestration is now borne by CC's native Workflow, with the OS side using `workflow_list` /
+> `workflow_get` for persistent observation.
 
-#### 场景 C: 状态双向同步
+#### Scenario C: Bidirectional state sync
 
 ```
-工作流:
-  1. Linear 中创建新 Issue → Leader 在 OS 中 task_create 对应任务
-  2. OS 中任务状态变更 → Leader 通过 Linear MCP 更新 Issue 状态
-  3. OS 中任务完成 → Leader 关闭 Linear Issue 并记录完成摘要
+Workflow:
+  1. A new Issue is created in Linear → the Leader task_creates the corresponding task in the OS
+  2. A task's state changes in the OS → the Leader updates the Issue's state through the Linear MCP
+  3. A task completes in the OS → the Leader closes the Linear Issue and records a completion summary
 ```
 
 ---
 
-## 配方 4: 全栈开发团队模板
+## Recipe 4: Full-Stack Development Team Template
 
-一个完整的全栈开发团队配置，组合 AI Team OS + GitHub + Slack，预设前端、后端、测试、DevOps 角色。
+A complete full-stack development team configuration, combining AI Team OS + GitHub + Slack, with preset frontend, backend, test and DevOps roles.
 
-### 推荐组合
+### Recommended combination
 
-| 组件 | 用途 |
+| Component | Use |
 |------|------|
-| AI Team OS | 团队编排、任务管理、循环驱动 |
-| GitHub MCP | 代码管理、PR、Issue |
-| Slack MCP | 团队通知、告警、站会 |
-| Superpowers Skill | 强制 TDD + Git 工作流纪律 |
-| VibeSec Skill | 代码安全审查 |
+| AI Team OS | Team orchestration, task management, loop driving |
+| GitHub MCP | Code management, PRs, Issues |
+| Slack MCP | Team notifications, alerts, standups |
+| Superpowers Skill | Enforced TDD + git workflow discipline |
+| VibeSec Skill | Code security review |
 
-### MCP 配置
+### MCP configuration
 
-`.mcp.json` 完整示例：
+A complete `.mcp.json` example:
 
 ```json
 {
@@ -303,122 +303,122 @@ OS 工具链:
 }
 ```
 
-### 预设团队配置
+### Preset team configuration
 
-使用 AI Team OS 创建全栈团队:
+Create a full-stack team using AI Team OS:
 
 ```
-# Step 1: 创建项目（唯一需要你显式做的一步）
+# Step 1: Create the project (the only step you need to do explicitly)
 project_create(name="my-fullstack-app", root_path="/path/to/project")
 
-# Step 2: 直接派 agent —— 队和成员行由 hook 链自动建立
-#   本会话的容器队在第一个 agent 出生时自动收编，无需手工建队/注册。
+# Step 2: Dispatch agents directly — team and member rows are built automatically by the hook chain
+#   This session's container team is automatically taken in when the first agent is born; no manual team creation/registration.
 Agent(subagent_type="frontend-developer", name="frontend-dev", model="opus",
-      prompt="开发 UI 组件……")
+      prompt="Develop the UI components…")
 Agent(subagent_type="backend-architect",  name="backend-dev",  model="opus",
-      prompt="开发 API 端点……")
+      prompt="Develop the API endpoints…")
 Agent(subagent_type="testing-qa-engineer", name="qa-engineer", model="opus",
-      prompt="补 E2E 覆盖……")
+      prompt="Fill in E2E coverage…")
 Agent(subagent_type="engineering-devops-automator", name="devops", model="opus",
-      prompt="打镜像与 CI……")
+      prompt="Build images and CI…")
 
-# Step 3: 看看都有谁（可选）
+# Step 3: See who is there (optional)
 agent_list()
 agent_template_recommend(task_type="fullstack")
 ```
 
-> `team_create` 与 `agent_register` 已于 v1.10.3 退役：前者造出的队没有 CC 侧目录，
-> 建一个下一轮就被回收；后者会造出没有进程的空壳行（全库 `source='api'` 的 agent
-> 是 0 个）。收编由 SubagentStart hook 全自动完成。
+> `team_create` and `agent_register` were retired in v1.10.3: a team created by the former has no CC-side directory and
+> is reaped the next round after being built; the latter creates empty-shell rows with no process behind them (agents with
+> `source='api'` in the whole database number 0). Take-in is completed fully automatically by the SubagentStart hook.
 
-### 典型工作流
+### A typical workflow
 
 ```
-Sprint 开始
+Sprint start
   │
-  ├── Leader: 从 GitHub Issues / Linear 同步任务到任务墙
-  ├── Leader: task_list_project 按优先级取下一件事
+  ├── Leader: sync tasks from GitHub Issues / Linear to the task wall
+  ├── Leader: task_list_project takes the next item by priority
   │
-  ├── 开发阶段
-  │   ├── frontend-dev: 开发 UI 组件 (配合 Frontend-Design Skill)
-  │   ├── backend-dev: 开发 API 端点 (配合 Superpowers TDD)
-  │   ├── VibeSec: 代码安全扫描
-  │   └── Leader: 通过 task_list_project 监控进度
+  ├── Development stage
+  │   ├── frontend-dev: develop UI components (with the Frontend-Design Skill)
+  │   ├── backend-dev: develop API endpoints (with Superpowers TDD)
+  │   ├── VibeSec: code security scan
+  │   └── Leader: monitor progress through task_list_project
   │
-  ├── 审查阶段
-  │   ├── debate_code_review: AI 内部代码审查
-  │   ├── GitHub MCP: 创建 GitHub PR
-  │   └── qa-engineer: 运行 E2E 测试
+  ├── Review stage
+  │   ├── debate_code_review: AI internal code review
+  │   ├── GitHub MCP: create a GitHub PR
+  │   └── qa-engineer: run E2E tests
   │
-  ├── 部署阶段
-  │   ├── devops: 构建 Docker 镜像
-  │   ├── Bash: git commit 提交最终代码
-  │   └── Leader: task_update 推进到交付完成
+  ├── Deployment stage
+  │   ├── devops: build Docker images
+  │   ├── Bash: git commit the final code
+  │   └── Leader: task_update advances it to delivery complete
   │
-  └── 回顾
-      ├── meeting_create: 开复盘会
-      ├── team_briefing: 生成简报 → Slack 推送
-      └── meeting_conclude: 记录会议纪要
+  └── Retrospective
+      ├── meeting_create: hold a retrospective meeting
+      ├── team_briefing: generate a briefing → push to Slack
+      └── meeting_conclude: record the meeting minutes
 ```
 
 ---
 
-## 配方组合矩阵
+## Recipe Combination Matrix
 
-不同团队规模和场景的推荐组合：
+Recommended combinations for different team sizes and scenarios:
 
-| 场景 | 必需 | 推荐 | 可选 |
+| Scenario | Required | Recommended | Optional |
 |------|------|------|------|
-| 个人开发者 | AI Team OS | GitHub MCP | Superpowers |
-| 小团队 (2-5人) | AI Team OS + GitHub | Slack MCP | Linear, VibeSec |
-| 全栈团队 | AI Team OS + GitHub + Slack | Superpowers + VibeSec | Linear, Frontend-Design |
-| 开源项目 | AI Team OS + GitHub | code-review Skill | Slack MCP |
-| 数据科学团队 | AI Team OS | Jupyter MCP | claude-mem |
+| Individual developer | AI Team OS | GitHub MCP | Superpowers |
+| Small team (2-5 people) | AI Team OS + GitHub | Slack MCP | Linear, VibeSec |
+| Full-stack team | AI Team OS + GitHub + Slack | Superpowers + VibeSec | Linear, Frontend-Design |
+| Open-source project | AI Team OS + GitHub | code-review Skill | Slack MCP |
+| Data science team | AI Team OS | Jupyter MCP | claude-mem |
 
 ---
 
-## 故障排查
+## Troubleshooting
 
-### Q: MCP server 启动失败
+### Q: An MCP server fails to start
 
-**A**: 确认依赖已安装:
+**A**: Confirm the dependencies are installed:
 ```bash
-# GitHub/Slack/Linear MCP 都需要 Node.js
-node --version  # 需要 >= 18
+# The GitHub/Slack/Linear MCPs all need Node.js
+node --version  # needs >= 18
 
-# 检查 npx 是否可用
+# Check npx is available
 npx --version
 ```
 
-### Q: GitHub Token 权限不足
+### Q: Insufficient GitHub Token permissions
 
-**A**: 确认 token 包含以下 scope:
-- `repo` — 仓库访问
-- `read:org` — 组织信息（如需要）
-- `workflow` — GitHub Actions（如需要）
+**A**: Confirm the token contains the following scopes:
+- `repo` — repository access
+- `read:org` — organization information (if needed)
+- `workflow` — GitHub Actions (if needed)
 
-### Q: Slack 消息发送失败
+### Q: Slack message sending fails
 
-**A**: 检查以下几点:
-1. Bot Token 是否有 `chat:write` 权限
-2. Bot 是否已被邀请到目标频道（`/invite @your-bot`）
-3. `SLACK_TEAM_ID` 是否正确（在 Slack 管理面板查看）
+**A**: Check the following points:
+1. Whether the Bot Token has the `chat:write` permission
+2. Whether the Bot has been invited to the target channel (`/invite @your-bot`)
+3. Whether `SLACK_TEAM_ID` is correct (check it in the Slack admin panel)
 
-### Q: 多个 MCP server 的 context 消耗过大
+### Q: Multiple MCP servers consume too much context
 
-**A**: AI Team OS 的建议是**按需启用**:
-- 不要同时启用所有 MCP server
-- 只在需要时在 `.mcp.json` 中添加对应 server
-- 如果 context 接近上限，优先保留 AI Team OS 核心功能
+**A**: AI Team OS's advice is to **enable on demand**:
+- Do not enable all MCP servers at the same time
+- Only add the corresponding server to `.mcp.json` when needed
+- If the context approaches its cap, prioritize keeping AI Team OS's core functions
 
-### Q: 如何查看可用的集成配方
+### Q: How to view the available integration recipes
 
-**A**: 使用 AI Team OS 内置工具:
+**A**: Use AI Team OS's built-in tools:
 ```
-find_skill(level=2, category="integration")              # 查看所有配方
-find_skill(level=3, skill_id="github-integration")       # 查看特定配方
-find_skill(level=3, skill_id="fullstack-team")           # 查看全栈团队模板
+find_skill(level=2, category="integration")              # View all recipes
+find_skill(level=3, skill_id="github-integration")       # View a specific recipe
+find_skill(level=3, skill_id="fullstack-team")           # View the full-stack team template
 ```
 
-> 配方已于 2026-07-27 并入 `find_skill` 的 `integration` 分类（原 `ecosystem_recipes`
-> 工具退役）——"生态里有什么、怎么装"本来就是同一件事，不再各占一个工具名。
+> The recipes were merged into `find_skill`'s `integration` category on 2026-07-27 (the original `ecosystem_recipes`
+> tool was retired) — "what is in the ecosystem and how to install it" is one and the same thing, and no longer occupies a tool name each.
