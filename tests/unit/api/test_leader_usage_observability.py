@@ -1,22 +1,27 @@
-"""Leader 主会话采集的**失败可观测性** —— 2026-08-03 排查事故立的规。
+"""**Failure observability** of Leader main-session capture — the rule established by the 2026-08-03 accident
+investigation.
 
-事故实录:三个活会话的 Leader 行 ``tokens_measured_at`` 长期为 NULL,其中一个
-会话当日刚发生过 ``PostCompact``(hook 成功返回、``session.compact_completed``
-事件也落库了),按设计那一趟是 ``force=True`` 强制定格,必须写库。排查花了两小时
-仍**无法判定断在哪一环**,原因不是链条复杂,而是它整条不可证伪:
+Accident record: the Leader rows of three live sessions had ``tokens_measured_at`` long stuck at NULL, while one
+session had a ``PostCompact`` that very day (the hook returned successfully and the ``session.compact_completed``
+event was also stored), so by design that trip was a ``force=True`` forced freeze that had to write to the database. The
+investigation took two hours
+yet still **could not determine which link broke**, not because the chain is complex, but because it is entirely
+unfalsifiable:
 
-``_capture_leader_usage`` 把五种截然不同的结局全部塌缩成同一个 ``None`` ——
-没有 session_id / 找不到 Leader 行 / 定位不到 transcript / 被节流挡下 /
-中途抛异常;唯一的异常分支还是 ``logger.debug`` + ``except BLE001``,而生产
-从不开 DEBUG。于是"采集跑了但没数据"和"采集抛异常了"在库里、日志里、回执里
-**三处都长得一模一样**。
+``_capture_leader_usage`` collapses five entirely different outcomes into the same ``None`` —
+No session_id / no Leader row found / transcript not locatable / blocked by throttling /
+``_capture_leader_usage`` collapses five entirely different outcomes into the same ``None`` —
+never enables DEBUG. So "collection ran but produced no data" and "collection threw an exception" look, in the database,
+the logs, and the receipts,
+**exactly the same in all three places**.
 
-所以这份测试钉的不是"采集能成功"(那由 test_leader_usage_capture.py 负责),
-而是"采集失败时能被看见":
+So what this test pins is not 'capture can succeed' (that is test_leader_usage_capture.py's job),
+but 'when capture fails, it can be seen':
 
-1. 强制定格失手 -> WARNING 级日志,带上具体原因(不是 DEBUG,不是静默);
-2. 抛异常 -> 落一条事件,事后一条 SQL 能查到(日志会随进程重启被截断,事件不会);
-3. 每一种跳过都有**自己的名字**回执里带出来,不再是一个万能的 None。
+1. A forced freeze that misses -> a WARNING-level log, with the concrete reason (not DEBUG, not silence);
+2. It raises -> an event is recorded, retrievable afterwards with a single SQL query (logs are truncated on process
+restart; events are not);
+3. Every kind of skip has **its own name**, carried out in the receipt, no longer one all-purpose None.
 """
 
 from __future__ import annotations
@@ -77,7 +82,7 @@ def _translator(repo) -> HookTranslator:
 
 
 # ============================================================
-# 1. 强制定格失手必须是 WARNING,且说得出原因
+# 1. A forced freeze that misses must be a WARNING, and state its reason
 # ============================================================
 
 
@@ -86,7 +91,8 @@ class TestForcedMissIsLoud:
     async def test_post_compact_that_cannot_locate_the_transcript_warns(
         self, db_repository, tmp_path: Path, caplog
     ):
-        """PostCompact 定位不到 transcript = 这一刻的水位永久丢失,不该只留个 DEBUG。"""
+        """PostCompact cannot locate the transcript = this moment's watermark is permanently lost; it should not
+        leave only a DEBUG."""
         repo = db_repository
         await _make_leader(repo, "sess-miss")
         with caplog.at_level(logging.WARNING, logger="aiteam.api.hook_translator"):
@@ -99,13 +105,14 @@ class TestForcedMissIsLoud:
                 }
             )
         warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
-        assert warnings, "强制定格没落到库,日志里却一个字都没有"
+        assert warnings, "A forced freeze missed and was stored nowhere, yet the log does not say a single word"
         blob = " ".join(r.getMessage() for r in warnings)
-        assert "no-transcript" in blob, f"原因没写进日志: {blob}"
+        assert "no-transcript" in blob, f"The reason was not written into the log: {blob}"
 
     @pytest.mark.asyncio
     async def test_throttled_stop_stays_quiet(self, db_repository, tmp_path: Path, caplog):
-        """节流是**正常**结局 —— 不许因为上一条就把每轮 Stop 也喊成 WARNING。"""
+        """Throttling is a **normal** outcome — it must not, because of the previous case, shout every round of Stop
+        as a WARNING as well."""
         repo = db_repository
         await _make_leader(repo, "sess-quiet")
         t = _transcript(tmp_path)
@@ -115,14 +122,14 @@ class TestForcedMissIsLoud:
             "session_id": "sess-quiet",
             "transcript_path": str(t),
         }
-        await translator.handle_event(payload)  # 首测建立基线
+        await translator.handle_event(payload)  # The first measurement establishes the baseline
         with caplog.at_level(logging.WARNING, logger="aiteam.api.hook_translator"):
-            await translator.handle_event(payload)  # 窗口内,被节流
+            await translator.handle_event(payload)  # Within the window, throttled
         assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
 # ============================================================
-# 2. 抛异常必须留下**耐久**痕迹(日志会被截断,事件不会)
+# 2. Raising an exception must leave a **durable** trace (logs get truncated; events do not)
 # ============================================================
 
 
@@ -147,12 +154,12 @@ class TestFailureLeavesADurableTrace:
                 "trigger": "manual",
             }
         )
-        # 主流程绝不被采集拖垮 —— 回执照常返回
+        # The main flow must never be dragged down by capture — the receipt is returned as usual
         assert result["status"] == "recorded"
 
         events = await repo.list_events(limit=200)
         failures = [e for e in events if e.type == CAPTURE_FAILED_EVENT]
-        assert failures, "采集抛异常却没留下任何可查痕迹"
+        assert failures, "A capture exception left no trace that can be looked up"
         data = failures[0].data
         assert data["session_id"] == "sess-boom"
         assert data["forced"] is True
@@ -162,7 +169,8 @@ class TestFailureLeavesADurableTrace:
     async def test_ordinary_throttle_does_not_pollute_the_events_table(
         self, db_repository, tmp_path: Path
     ):
-        """本批刚把 events 写入砍掉四成 —— 失败事件只许在真失败时出现。"""
+        """This batch just cut events writes by forty percent — failure events are only allowed to appear on real
+        failures."""
         repo = db_repository
         await _make_leader(repo, "sess-noevent")
         t = _transcript(tmp_path)
@@ -179,7 +187,7 @@ class TestFailureLeavesADurableTrace:
 
 
 # ============================================================
-# 3. 每种跳过都有自己的名字,回执带得出来
+# 3. Every kind of skip has its own name, and the receipt can carry it out
 # ============================================================
 
 
@@ -232,7 +240,8 @@ class TestSkipReasonsAreNamed:
 
     @pytest.mark.asyncio
     async def test_throttled_stop_is_named(self, db_repository, tmp_path: Path):
-        """"None" 曾经同时表示成功无数据/被节流/出错 —— 现在节流有自己的名字。"""
+        """"None" once simultaneously meant success with no data / throttled / errored — now throttling has its own
+        name."""
         repo = db_repository
         await _make_leader(repo, "sess-thrname")
         t = _transcript(tmp_path)
@@ -250,7 +259,7 @@ class TestSkipReasonsAreNamed:
 
     @pytest.mark.asyncio
     async def test_transcript_without_usage_rows_is_named(self, db_repository, tmp_path: Path):
-        """no-data ≠ zero:一列都不写,但要说得出"是没数据,不是没跑"。"""
+        """no-data ≠ zero: write no column at all, but be able to state 'it is no data, not that it did not run'."""
         repo = db_repository
         leader = await _make_leader(repo, "sess-empty")
         empty = tmp_path / "empty.jsonl"
@@ -268,11 +277,11 @@ class TestSkipReasonsAreNamed:
         )
         assert result["leader_usage_skip"] == "no-usage-rows"
         fetched = await repo.get_agent(leader.id)
-        assert fetched.tokens_measured_at is None  # 依旧一列都不写
+        assert fetched.tokens_measured_at is None  # Still writes no column at all
 
     @pytest.mark.asyncio
     async def test_meter_reports_the_same_names(self, tmp_path: Path):
-        """采集器自己也要说得出原因,不能只有调用侧靠猜。"""
+        """The collector itself must also be able to state the reason; it cannot be left to the caller to guess."""
         meter = leader_usage.SessionUsageMeter()
         t = _transcript(tmp_path)
         snap, reason = meter.capture_or_reason("s1", t, force=True)
@@ -287,25 +296,27 @@ class TestSkipReasonsAreNamed:
 
 
 # ============================================================
-# 4. 兜底路径的前提条件必须真的到得了服务端
+# 4. The premises of the fallback path must really be able to reach the server side
 # ============================================================
 
 
 class TestSlugFallbackPrerequisite:
     def test_stripped_payload_still_carries_cwd(self):
-        """``locate_main_transcript`` 的 slug 兜底要 cwd + session_id 才成立。
+        """``locate_main_transcript``'s slug fallback requires cwd + session_id to hold.
 
-        它的 docstring 写明兜的就是"超大载荷被整体剥离到必留字段"那一档,可
-        ``send_event.ESSENTIAL_FIELDS`` 里偏偏没有 ``cwd`` —— 剥离一发生,兜底
-        的前提就跟着一起没了,于是这条唯一的退路在**它专为之而生的场景里**必然
-        失效。这是自相矛盾,不是取舍。
+        Its docstring states it covers exactly the tier of 'an oversized payload stripped down to the must-keep fields',
+        yet
+        ``send_event.ESSENTIAL_FIELDS`` happens to have no ``cwd`` — once stripping happens, the fallback's
+        premises go with it, so this sole retreat **necessarily fails in the very scenario it was born for**.
+        This is a self-contradiction, not a trade-off.
         """
         from aiteam.hooks import send_event
 
         assert "cwd" in send_event.ESSENTIAL_FIELDS
 
     def test_fallback_locates_transcript_from_cwd_alone(self, tmp_path: Path, monkeypatch):
-        """剥离后只剩 session_id + cwd 时,定位仍须成立(路径字段已不可用)。"""
+        """After stripping, with only session_id + cwd remaining, positioning must still hold (the path fields are
+        unusable)."""
         cwd = "/Users/x/Desktop/proj"
         projects = tmp_path / "projects"
         (projects / session_probe.project_slug(cwd)).mkdir(parents=True)

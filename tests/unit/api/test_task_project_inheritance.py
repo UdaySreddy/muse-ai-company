@@ -71,7 +71,7 @@ def test_task_run_inherits_team_project(app_client):
 
     resp = app_client.post(
         f"/api/teams/{team['id']}/tasks/run",
-        json={"description": "批 8.5 归属补账", "title": "归属补账"},
+        json={"description": "Batch 8.5 ownership backfill", "title": "Ownership backfill"},
     )
     assert resp.status_code == 200
     task_id = resp.json()["data"]["id"]
@@ -104,11 +104,11 @@ def test_decompose_parent_and_subtasks_inherit(app_client):
     resp = app_client.post(
         f"/api/teams/{team['id']}/tasks/decompose",
         json={
-            "title": "拆解任务",
-            "description": "父任务",
+            "title": "Breakdown task",
+            "description": "Parent task",
             "subtasks": [
-                {"title": "子一", "description": "a"},
-                {"title": "子二", "description": "b"},
+                {"title": "Child one", "description": "a"},
+                {"title": "Child two", "description": "b"},
             ],
         },
     )
@@ -124,7 +124,7 @@ def test_issue_report_inherits_team_project(app_client):
 
     resp = app_client.post(
         f"/api/teams/{team['id']}/issues",
-        json={"title": "坏了", "description": "复现步骤", "category": "bug"},
+        json={"title": "Broken", "description": "Reproduction steps", "category": "bug"},
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["project_id"] == proj["id"]

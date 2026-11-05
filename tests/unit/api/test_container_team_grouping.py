@@ -1,18 +1,22 @@
-"""同一个 CC 进程的多支容器队要能在展示层归成一组。
+"""Multiple container teams from the same CC process must be able to be grouped together at the display layer.
 
-CC 的队目录在建队那一刻盖下 ``leadSessionId`` 后**永不更新**，而同一个进程换会话
-（结束后重开、resume）时只有 ``~/.claude/sessions/<pid>.json`` 跟着改 ``sessionId``。
-于是一个活进程在 OS 侧会留下多支容器队：老的 completed、新的 active。用户裁定
-（2026-07-27）归属逻辑一律不动，只在展示层把它们合成一组。
+CC's team directory stamps ``leadSessionId`` at the moment the team is created and **never updates it**, while the same
+process changing sessions
+(ending and reopening, resuming) only updates ``sessionId`` in ``~/.claude/sessions/<pid>.json``.
+So one live process leaves multiple container teams on the OS side: the old completed ones, the new active ones. User
+ruling
+(2026-07-27): the ownership logic is not touched at all; they are only merged into one group at the display layer.
 
-合并只认**能证明的**关系，绝不认亲：
-- 档① 建队时从注册表按 session_id 精确匹配盖下的 ``config.cc_pid``；
-- 档② 现读注册表，owner_session_id 恰是某进程的当前会话；
-- 都不成立 → 不知道，独立成行。
+Merging only recognizes **provable** relationships, never claimed kinship:
+- Tier (1): at team creation, ``config.cc_pid`` stamped from the registry by an exact session_id match;
+- Tier (2): read the registry live; owner_session_id happens to be some process's current session;
+- If neither holds → unknown, a row of its own.
 
-刻意不做 cwd + 启动时间窗匹配：本机实测 pid 32147 与 32220 在**同一个 cwd** 下
-相隔 1.0 秒启动，队目录 createdAt 正好落在两者之间，近似匹配在真实数据上就是
-二义的。
+Deliberately no cwd + startup-time-window matching: local measurements show pid 32147 and 32220 starting under **the
+same cwd**
+1.0 seconds apart, with the team directory's createdAt falling right between the two; approximate matching on real data
+is simply
+ambiguous.
 """
 
 from __future__ import annotations
@@ -90,7 +94,8 @@ def client():
 
 
 class TestBirthStamp:
-    """建容器队时把当时的 pid 记下来——注册表只答得出当前会话，事后再问就晚了。"""
+    """When creating a container team, record the pid at that moment — the registry can only answer for the current
+    session; asking afterwards is too late."""
 
     @pytest.mark.asyncio
     async def test_container_team_records_the_owning_process(
@@ -108,7 +113,8 @@ class TestBirthStamp:
     async def test_unregistered_session_is_left_blank_never_guessed(
         self, db_repository, tmp_path, monkeypatch
     ):
-        """注册表里没有这条会话（老会话/测试/workflow 注入）就留空，不许猜。"""
+        """If the session is not in the registry (an old session / a test / a workflow injection), leave it empty;
+        guessing is not allowed."""
         _write_registry(tmp_path, monkeypatch, [_record(LIVE_PID, SESSION_NOW)])
         translator = HookTranslator(repo=db_repository, event_bus=EventBus(repo=db_repository))
 
@@ -135,7 +141,8 @@ class TestBirthStamp:
 class TestListResolution:
     def test_stamped_pid_is_reported(self, client, tmp_path, monkeypatch):
         client, repo = client
-        _write_registry(tmp_path, monkeypatch, [])  # 注册表已无此进程，靠盖的章
+        _write_registry(tmp_path, monkeypatch, [])  # The registry no longer has this process; rely on the stamp that
+        # was made
         asyncio.get_event_loop().run_until_complete(
             repo.create_team(
                 name="session-0def8f84",
@@ -151,7 +158,8 @@ class TestListResolution:
     def test_live_session_resolves_through_the_registry(
         self, client, tmp_path, monkeypatch
     ):
-        """存量队没盖过章，但它的会话正是某进程的当前会话——这条也算证据。"""
+        """A legacy team was never stamped, but its session is exactly some process's current session — that also
+        counts as evidence."""
         client, repo = client
         _write_registry(tmp_path, monkeypatch, [_record(LIVE_PID, SESSION_NOW)])
         asyncio.get_event_loop().run_until_complete(
@@ -169,7 +177,7 @@ class TestListResolution:
     def test_two_containers_of_one_process_share_a_pid(
         self, client, tmp_path, monkeypatch
     ):
-        """正是要修的现象：一个活进程，两支容器队，合并后同组。"""
+        """Exactly the phenomenon to fix: one live process, two container teams, merged into the same group."""
         client, repo = client
         _write_registry(tmp_path, monkeypatch, [_record(LIVE_PID, SESSION_NOW)])
         loop = asyncio.get_event_loop()
@@ -195,7 +203,8 @@ class TestListResolution:
     def test_unprovable_container_stands_alone(
         self, client, tmp_path, monkeypatch
     ):
-        """历史会话在注册表里查不到（进程换会话时原地改写，旧值不留痕）——留空。"""
+        """A historical session cannot be found in the registry (when a process changes session it is rewritten in
+        place, the old value leaves no trace) — leave it empty."""
         client, repo = client
         _write_registry(tmp_path, monkeypatch, [_record(LIVE_PID, SESSION_NOW)])
         asyncio.get_event_loop().run_until_complete(
@@ -213,7 +222,7 @@ class TestListResolution:
     def test_non_container_teams_are_not_resolved(
         self, client, tmp_path, monkeypatch
     ):
-        """workflow 队每运行一支，自有合集，不参与进程合并。"""
+        """Each workflow team forms its own collection per run and does not participate in process merging."""
         client, repo = client
         _write_registry(tmp_path, monkeypatch, [_record(LIVE_PID, SESSION_NOW)])
         asyncio.get_event_loop().run_until_complete(

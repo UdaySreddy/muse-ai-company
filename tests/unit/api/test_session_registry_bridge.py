@@ -1,11 +1,13 @@
-"""CC 会话注册表桥接 + 存活判据双轨观察（C13）。
+"""CC session registry bridging + dual-track observation of the liveness criterion (C13).
 
-``~/.claude/sessions/<pid>.json`` 是 CC 自己维护的进程级会话登记，比 OS 现有
-的两路信号都更直接：带真实 pid 与 idle/busy 状态，且同一进程换会话时只有它
-跟着改 sessionId（队目录的 leadSessionId 在建队那刻盖章后不再变）。
+``~/.claude/sessions/<pid>.json`` is a process-level session registry maintained by CC itself, more direct than both of
+the OS's existing
+signal paths: it carries the real pid and idle/busy state, and when the same process changes sessions only it
+updates its sessionId (the team directory's leadSessionId is stamped at team creation and never changes afterwards).
 
-本批只把它接进来**并行观察**，不参与任何下线决策——切换主判据是另一个需要
-证据支撑的决定。这些用例把"只观察"这条纪律钉死。
+This batch only brings it in for **parallel observation**; it takes no part in any offline decision — switching the
+primary criterion is another decision that needs
+evidential support. These cases pin down the 'observe only' discipline.
 """
 
 from __future__ import annotations

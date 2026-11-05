@@ -66,7 +66,7 @@ def test_tags_column_is_in_migration_list():
 
 
 def test_create_and_read_back_tags(client):
-    created = _add(client, title="带标签", tags=["release", "governance"])
+    created = _add(client, title="With tags", tags=["release", "governance"])
     assert created["tags"] == ["release", "governance"]
 
     items = client.get("/api/leader-briefings").json()["items"]
@@ -74,26 +74,26 @@ def test_create_and_read_back_tags(client):
 
 
 def test_tags_default_to_empty_list(client):
-    created = _add(client, title="无标签")
+    created = _add(client, title="Without tags")
     assert created["tags"] == []
 
 
 def test_list_response_carries_project_id_and_tags(client):
-    _add(client, title="有归属", project_id="proj-a", tags=["ci"])
+    _add(client, title="With ownership", project_id="proj-a", tags=["ci"])
     item = client.get("/api/leader-briefings").json()["items"][0]
     assert item["project_id"] == "proj-a"
     assert item["tags"] == ["ci"]
 
 
 def test_filter_by_tag(client):
-    _add(client, title="发布相关", tags=["release"])
-    _add(client, title="治理相关", tags=["governance"])
-    _add(client, title="两者", tags=["release", "governance"])
+    _add(client, title="Release-related", tags=["release"])
+    _add(client, title="Governance-related", tags=["governance"])
+    _add(client, title="Both", tags=["release", "governance"])
 
     titles = [
         i["title"] for i in client.get("/api/leader-briefings?tag=release").json()["items"]
     ]
-    assert sorted(titles) == ["两者", "发布相关"]
+    assert sorted(titles) == ["Both", "Release-related"]
 
 
 def test_filter_by_project_and_tag_together(client):
@@ -109,10 +109,10 @@ def test_filter_by_project_and_tag_together(client):
 
 def test_tag_filter_does_not_match_substrings(client):
     """A tag filter matches whole tags, not JSON text fragments."""
-    _add(client, title="精确", tags=["release"])
-    _add(client, title="不该命中", tags=["release-candidate"])
+    _add(client, title="Exact", tags=["release"])
+    _add(client, title="Should not match", tags=["release-candidate"])
 
     titles = [
         i["title"] for i in client.get("/api/leader-briefings?tag=release").json()["items"]
     ]
-    assert titles == ["精确"]
+    assert titles == ["Exact"]

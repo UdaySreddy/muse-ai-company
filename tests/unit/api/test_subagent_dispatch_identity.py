@@ -1,23 +1,29 @@
-"""行身份 = 派工身份 —— SubagentStart 的同名复用不得改写已挂账的旧行。
+"""Row identity = dispatch identity — SubagentStart's same-name reuse must not rewrite an old row that already has
+accounts posted.
 
-生命周期审计 A-06 的实锤面：``_on_subagent_start`` 的四级去重梯子里，第 2/3 级按
-**名字**在队内取 ``matches[0]``（``list_agents`` 按 created_at 升序 → 取最早那行），
-第 2b 级走 ``repository.find_agent_by_session``（``limit(1)`` 且**无 ORDER BY**）。
-命中即把新派工就地绑到旧行；随后 ``_on_subagent_stop`` 按 transcript **覆写**四层
-token 与 ``tokens_measured_at``。两段合起来 = 一次新派工把旧派工的账抹掉，且旧值
-不可恢复（transcript 早晚会被清，账没了就再也算不回来）。
+The hard evidence from lifecycle audit A-06: in ``_on_subagent_start``'s four-tier dedup ladder, tiers 2/3 take
+**name** matches within the team, taking ``matches[0]`` (``list_agents`` in ascending created_at order → the earliest
+row),
+tier 2b goes through ``repository.find_agent_by_session`` (``limit(1)`` and **no ORDER BY**).
+On a hit, the new dispatch is bound in place to the old row; afterwards ``_on_subagent_stop`` **overwrites** the four
+token layers
+and ``tokens_measured_at`` by transcript. The two segments together = one new dispatch erases an old dispatch's account,
+and the old value
+is unrecoverable (transcripts are cleared sooner or later; once the account is gone it can never be computed again).
 
-同一件事在 workflow 路径上早就判过了：``_register_workflow_subagent`` 的 docstring
-写着「按 cc_agent_id 去重而非名字，否则 16 个 agent 的一次 run 会被折叠成一行」。
-正路径缺的正是这一条。
+The same matter was already adjudicated on the workflow path: ``_register_workflow_subagent``'s docstring
+says 'dedupe by cc_agent_id rather than by name, otherwise one run of 16 agents would be folded into a single row'.
+The positive path is missing exactly this rule.
 
-计账单位就是 transcript 文件，而 transcript 文件名就是 ``agent-<cc_agent_id>.jsonl``
-—— 所以「一行 = 一次派工 = 一份 transcript」是同一句话。判据据此钉死：
+The accounting unit is the transcript file, and the transcript file name is ``agent-<cc_agent_id>.jsonl``
+— so 'one row = one dispatch = one transcript' is the same sentence. The criteria are pinned accordingly:
 
-1. cc_tool_use_id 相同 → 同一次派工，复用（重复 SubagentStart / 续跑）；
-2. 候选行从未绑过任何派工（cc_tool_use_id 为空）且**没有账** → 复用（MCP 预注册）；
-3. 其余一律新建行。「有账」取宽：四层任一非零**或** tokens_measured_at 非空
-   （测得 0 也是测量结果，no-data ≠ zero）。
+1. The same cc_tool_use_id → the same dispatch; reuse (duplicate SubagentStart / resumed run);
+2. The candidate row has never been bound to any dispatch (cc_tool_use_id empty) and **has no accounts** → reuse (MCP
+pre-registration);
+3. Everything else creates a new row. 'Has accounts' is read broadly: any of the four layers non-zero **or**
+tokens_measured_at non-empty
+   (a measured 0 is also a measurement result; no-data ≠ zero).
 """
 
 from __future__ import annotations
@@ -53,7 +59,7 @@ async def translator(repo):
 
 
 def _transcript(tmp_path, cc_id: str, *, input_tokens: int, output_tokens: int) -> str:
-    """一份最小可解析的子 agent transcript（文件名编码 cc_agent_id）。"""
+    """A minimal parseable sub-agent transcript (the file name encodes the cc_agent_id)."""
     p = tmp_path / f"agent-{cc_id}.jsonl"
     row = {
         "type": "assistant",
@@ -93,7 +99,8 @@ def _stop(cc_id: str, tpath: str, name: str = "Explore") -> dict:
 
 
 class TestChargedRowIsNeverOverwritten:
-    """端到端：派工① 跑完记账 → 派工② 同名进来 → 派工① 的账必须原封不动。"""
+    """End-to-end: dispatch (1) runs to completion and posts accounts → dispatch (2) with the same name comes in →
+    dispatch (1)'s account must remain exactly intact."""
 
     @pytest.mark.asyncio
     async def test_second_dispatch_gets_its_own_row_and_first_ledger_survives(
@@ -101,7 +108,7 @@ class TestChargedRowIsNeverOverwritten:
     ):
         team = await repo.create_team(name="crew", mode="coordinate")
 
-        # 派工①：起 → 跑完记账
+        # Dispatch (1): start → run to completion and post the accounts
         r1 = await translator.handle_event(_start("cc-first", cc_team_name="crew"))
         assert r1["status"] == "created"
         first_id = r1["agent_id"]
@@ -112,22 +119,23 @@ class TestChargedRowIsNeverOverwritten:
         assert after_first.input_tokens == 1_000
         assert after_first.tokens_measured_at is not None
 
-        # 派工②：同名、同会话、同队，但是**另一次派工**（另一个 cc id、另一份 transcript）
+        # Dispatch (2): same name, same session, same team, but **another dispatch** (another cc id, another transcript)
         r2 = await translator.handle_event(_start("cc-second", cc_team_name="crew"))
         assert r2["agent_id"] != first_id, (
-            "新派工被绑回了已挂账的旧行 —— 行身份被当成了名字身份"
+            "The new dispatch was bound back to an old row that already "
+                "has accounts — row identity was treated as name identity"
         )
         t2 = _transcript(tmp_path, "cc-second", input_tokens=7_000, output_tokens=900)
         await translator.handle_event(_stop("cc-second", t2))
 
-        # 旧行的账逐字不变
+        # The old row's accounts are unchanged, verbatim
         survivor = await repo.get_agent(first_id)
-        assert survivor.input_tokens == 1_000, "派工①的 token 账被派工②覆盖了"
+        assert survivor.input_tokens == 1_000, "Dispatch (1)'s token account was overwritten by dispatch (2)"
         assert survivor.output_tokens == 200
-        assert survivor.cc_tool_use_id == "cc-first", "旧行的派工身份被改写了"
+        assert survivor.cc_tool_use_id == "cc-first", "The old row's dispatch identity was rewritten"
         assert survivor.tokens_measured_at == after_first.tokens_measured_at
 
-        # 新行独立记自己的账，两份账不互相吞
+        # The new row posts its own accounts independently; the two accounts do not swallow each other
         fresh = await repo.get_agent(r2["agent_id"])
         assert fresh.input_tokens == 7_000
         assert fresh.cc_tool_use_id == "cc-second"
@@ -135,7 +143,8 @@ class TestChargedRowIsNeverOverwritten:
 
     @pytest.mark.asyncio
     async def test_measured_zero_row_is_also_protected(self, repo, translator):
-        """测得 0 也是测量结果：no-data ≠ zero，挂着 0 的行同样不许被改写。"""
+        """A measured 0 is also a measurement result: no-data ≠ zero, and a row carrying 0 must likewise not be
+        rewritten."""
         team = await repo.create_team(name="crew", mode="coordinate")
         old = await repo.create_agent(
             team_id=team.id, name="Explore", role="Explore",
@@ -158,9 +167,9 @@ class TestChargedRowIsNeverOverwritten:
     async def test_legacy_session_name_path_skips_the_charged_row(
         self, repo, translator
     ):
-        """无 cc_team_name 的旁路（find_agent_by_session）同样受判据约束。"""
+        """The bypass without a cc_team_name (find_agent_by_session) is likewise bound by the criteria."""
         team = await repo.create_team(name="crew", mode="coordinate")
-        # Leader 在场，第 3 级才解析得到队；这里刻意让第 2b 级先命中。
+        # The Leader is present, so only tier 3 resolves the team; here tier 2b is deliberately made to hit first.
         leader = await repo.create_agent(
             team_id=team.id, name="Leader", role="leader",
             source="api", session_id=SESSION,
@@ -183,10 +192,11 @@ class TestChargedRowIsNeverOverwritten:
 
 
 class TestLateBindingObeysTheSameRule:
-    """第二个入口：``_resolve_agent`` 的按名迟绑定同样会写 cc_tool_use_id。
+    """Second entry point: ``_resolve_agent``'s by-name late binding also writes cc_tool_use_id.
 
-    迟绑定之后 SubagentStop 就照着那一行覆写 token —— 所以它和登记走同一条判据，
-    否则漏掉 SubagentStart 的那次派工会从这里绕进来抹账。
+    After late binding, SubagentStop overwrites tokens following that row — so it walks the same criteria as
+    registration;
+    otherwise a dispatch whose SubagentStart was missed would sneak in here and erase accounts.
     """
 
     @pytest.mark.asyncio
@@ -206,17 +216,18 @@ class TestLateBindingObeysTheSameRule:
             charged.id, input_tokens=1_234, tokens_measured_at=utc_now()
         )
 
-        # SubagentStart 漏了，直接来一发别的派工的 SubagentStop
+        # SubagentStart was missed; a SubagentStop from another dispatch arrives directly
         t = _transcript(tmp_path, "cc-ghost", input_tokens=99, output_tokens=99)
         await translator.handle_event(_stop("cc-ghost", t))
 
         kept = await repo.get_agent(charged.id)
-        assert kept.input_tokens == 1_234, "迟绑定把别的派工的账写到了这一行上"
+        assert kept.input_tokens == 1_234, "Late binding wrote another dispatch's account onto this row"
         assert kept.cc_tool_use_id == "cc-old"
 
     @pytest.mark.asyncio
     async def test_late_binding_still_adopts_an_unbound_row(self, repo, translator):
-        """竞态的本意要保住：没绑过 cc id、没记过账的行照旧认领。"""
+        """The intent of the race must be preserved: a row never bound to a cc id and with no accounts posted is
+        claimed as before."""
         team = await repo.create_team(name="crew", mode="coordinate")
         leader = await repo.create_agent(
             team_id=team.id, name="Leader", role="leader",
@@ -236,13 +247,13 @@ class TestLateBindingObeysTheSameRule:
 
 
 class TestLegitimateReuseStillWorks:
-    """复用不是要废掉 —— 合法场景必须原样活着，否则这就成了另一个 bug。"""
+    """Reuse is not to be abolished — legitimate scenarios must survive intact, otherwise this becomes another bug."""
 
     @pytest.mark.asyncio
     async def test_same_dispatch_reports_twice_reuses_the_same_row(
         self, repo, translator, tmp_path
     ):
-        """重复 SubagentStart（同一个 cc id）是同一次派工，绝不能长出第二行。"""
+        """A duplicate SubagentStart (the same cc id) is the same dispatch; a second row must never grow."""
         await repo.create_team(name="crew", mode="coordinate")
         first = await translator.handle_event(_start("cc-dup", cc_team_name="crew"))
         t = _transcript(tmp_path, "cc-dup", input_tokens=5, output_tokens=5)
@@ -255,7 +266,7 @@ class TestLegitimateReuseStillWorks:
 
     @pytest.mark.asyncio
     async def test_mcp_preregistered_row_is_still_adopted(self, repo, translator):
-        """MCP 预注册的空行（无 cc id、无账）就是为了被 hook 认领的。"""
+        """An empty MCP pre-registered row (no cc id, no accounts) exists precisely to be claimed by the hook."""
         team = await repo.create_team(name="crew", mode="coordinate")
         pre = await repo.create_agent(
             team_id=team.id, name="Explore", role="Explore", source="api",
@@ -271,7 +282,7 @@ class TestLegitimateReuseStillWorks:
 
 
 class TestReuseVerdict:
-    """判据本身（纯函数，不碰库）—— 每条边界单独钉住。"""
+    """The criteria themselves (pure functions, not touching the database) — each boundary pinned separately."""
 
     @staticmethod
     def _row(agent_id: str, *, cc: str = "", minute: int = 0, **cols) -> Agent:
@@ -297,13 +308,14 @@ class TestReuseVerdict:
         assert not has_token_account(self._row("a"))
 
     def test_same_dispatch_wins_even_when_charged(self):
-        """同一次派工重测自己的账是正确的，不该被账目闸挡住。"""
+        """Re-measuring its own account for the same dispatch is correct and should not be blocked by the account
+        gate."""
         mine = self._row("mine", cc="cc-1", tokens_measured_at=utc_now(), minute=1)
         blank = self._row("blank", minute=9)
         assert pick_reusable_row([blank, mine], "cc-1").id == "mine"
 
     def test_row_bound_to_another_dispatch_is_never_reused(self):
-        """即使那一行还没记上账 —— 它已经是**另一次**派工的身份证。"""
+        """Even if that row has no accounts posted yet — it is already **another** dispatch's identity card."""
         other = self._row("other", cc="cc-other")
         assert pick_reusable_row([other], "cc-mine") is None
 
@@ -314,7 +326,8 @@ class TestReuseVerdict:
         assert pick_reusable_row([new, old], "cc-1").id == "new"
 
     def test_unknown_cc_id_keeps_only_the_ledger_gate(self):
-        """payload 没带 agent_id 时判不出派工身份，只保账目闸，不凭空造行。"""
+        """When the payload carries no agent_id, the dispatch identity cannot be determined; only the account gate is
+        kept, and no row is conjured up."""
         bound = self._row("bound", cc="cc-x")
         assert pick_reusable_row([bound], "").id == "bound"
         charged = self._row("charged", cc="cc-y", input_tokens=5, minute=9)
@@ -322,7 +335,8 @@ class TestReuseVerdict:
 
 
 class TestDeterministicCandidateOrder:
-    """多行同名时取哪行必须是确定的 —— 无 ORDER BY 的 limit(1) 是靠运气。"""
+    """Which row is taken among multiple same-name rows must be deterministic — a limit(1) with no ORDER BY relies on
+    luck."""
 
     @pytest.mark.asyncio
     async def test_find_agent_by_session_returns_newest(self, repo):
@@ -335,17 +349,17 @@ class TestDeterministicCandidateOrder:
             team_id=team.id, name="Explore", role="Explore",
             source="hook", session_id=SESSION,
         )
-        # created_at 同秒也要稳：id 兜底排序
+        # Even with created_at in the same second it must be stable: the id is the fallback sort
         await repo.update_agent(new.id, last_active_at=utc_now())
 
         got = await repo.find_agent_by_session(SESSION, "Explore")
         assert got is not None
         assert got.id in {old.id, new.id}
-        # 连续多次必须给同一个答案
+        # Repeated calls must give the same answer
         again = await repo.find_agent_by_session(SESSION, "Explore")
         assert again.id == got.id
 
         rows = await repo.find_agents_by_session_and_name(SESSION, "Explore")
         assert [r.id for r in rows] == [rows[0].id, rows[1].id]
         assert len(rows) == 2
-        assert rows[0].id == got.id, "find_agent_by_session 必须与全量候选的第一名一致"
+        assert rows[0].id == got.id, "find_agent_by_session must agree with the first of the full candidate list"

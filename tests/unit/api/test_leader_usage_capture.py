@@ -1,16 +1,20 @@
-"""Leader 主会话 token 用量采集测试（归因 v1 阶段 4）。
+"""Leader main-session token usage capture tests (attribution v1, phase 4).
 
-这份测试的骨架就是设计 §3.3 点名的三个陷阱 —— 每一个都是"代码看着能跑、数字却
-是假的"那一类，所以它们各有一组针对性用例，而不是混在端到端用例里顺带覆盖：
+The skeleton of this test is exactly the three traps named in design §3.3 — each is of the 'code looks runnable, yet the
+numbers
+are fake' kind, so each has its own set of targeted cases rather than being covered incidentally inside end-to-end
+cases:
 
-* 陷阱① **快照覆写**：主会话 transcript 是累计文件，做成累加会随轮次成倍虚高。
-  钉子 = 强制触发 10 次数值不变（设计 R4 的验收原话）+ 文件增长后取新的累计值。
-* 陷阱② **节流**：Stop 每轮都触发，全量解析随会话线性变贵。
-  钉子 = 节流窗内解析次数为 0（不是"少一点"，是 0）。
-* 陷阱③ **合成行**：compact 留下的 ``model="<synthetic>"`` 行会污染 model。
-  钉子 = 任何路径下 Leader 行的 model 都不会变成占位符。
+* Trap (1) **snapshot overwrite**: the main session transcript is a cumulative file; accumulating it would inflate
+multiplicatively with rounds.
+  Pin = force triggering 10 times leaves the values unchanged (design R4's acceptance, verbatim) + after the file grows,
+  take the new cumulative value.
+* Trap (2) **throttling**: Stop triggers on every round; full parsing grows linearly more expensive with the session.
+  Pin = the number of parses within the throttling window is 0 (not 'a little less', it is 0).
+* Trap (3) **synthetic rows**: the ``model="<synthetic>"`` rows left by compact pollute model.
+  Pin = in any path, the Leader row's model never becomes a placeholder.
 
-see docs/token-attribution-v1-design.md §3.3 / §7 阶段 4
+see docs/token-attribution-v1-design.md §3.3 / §7 phase 4
 """
 
 from __future__ import annotations
@@ -64,14 +68,15 @@ def _append_lines(path: Path, rows: list[dict]) -> None:
 
 
 def _main_transcript(tmp_path: Path, name: str = "sess.jsonl") -> Path:
-    """两次 API 调用的主会话 transcript：合计 in=3 / out=600 / cc=2000 / cr=90000。"""
+    """The main-session transcript of two API calls: totals in=3 / out=600 / cc=2000 / cr=90000."""
     path = tmp_path / name
     _write_lines(
         path,
         [
             {"type": "user", "message": {"role": "user", "content": "go"}},
             _assistant("req_a", model="claude-opus-5", inp=1, cache_c=1000, cache_r=40000, out=5),
-            # 同一 requestId 的流式后续行：output 是递增快照而非增量，必须只算最后一条
+            # For streaming follow-up rows with the same requestId: output is an increasing snapshot, not an increment,
+            # so only the last one counts
             _assistant("req_a", model="claude-opus-5", inp=1, cache_c=1000, cache_r=40000, out=100),
             _assistant("req_b", model="claude-opus-5", inp=2, cache_c=1000, cache_r=50000, out=500),
         ],
@@ -88,7 +93,7 @@ EXPECTED = {
 
 
 def _touch(path: Path, *, seconds_ahead: float) -> None:
-    """把 mtime 往前推 —— 模拟"这一轮又写进去了一些内容"。"""
+    """Push the mtime forward — simulating 'some more content was written this round'."""
     ts = path.stat().st_mtime + seconds_ahead
     os.utime(path, (ts, ts))
 
@@ -110,7 +115,7 @@ def _translator(repo) -> HookTranslator:
 
 
 class _ParseCounter:
-    """包一层真解析器，只为数"到底解析了几次"。"""
+    """Push the mtime forward — simulating 'some more content was written in this round'."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -122,14 +127,15 @@ class _ParseCounter:
 
 
 def _count_parses(monkeypatch) -> _ParseCounter:
-    """把解析器换成计数版（monkeypatch 负责还原，断言失败也不会污染后续用例）。"""
+    """Swap the parser for a counting version (monkeypatch handles restoration, so a failed assertion will not
+    pollute later cases)."""
     counter = _ParseCounter()
     monkeypatch.setattr(token_attribution, "parse_transcript_usage", counter)
     return counter
 
 
 # ============================================================
-# 陷阱② 的判据本身：节流决策是纯函数，逐分支钉死
+# The criterion for trap (2) itself: the throttling decision is a pure function, pinned branch by branch
 # ============================================================
 
 
@@ -148,14 +154,15 @@ class TestShouldMeasure:
         meter = self._meter()
         now = utc_now()
         meter._remember("s1", measured_at=now, mtime=now)
-        # 窗口没到、文件也没动 —— 唯一还能通过的理由只有 force
+        # The window has not arrived and the file has not moved — the only remaining reason to pass is force
         assert meter.should_measure("s1", mtime=now, now=now) is False
         assert meter.should_measure("s1", mtime=now, now=now, force=True) is True
 
     def test_unchanged_file_is_never_reparsed(self):
-        """文件一个字节没动 -> 不测，哪怕窗口早就过了。
+        """The file has not moved by a single byte -> do not measure, even if the window passed long ago.
 
-        重复解析同一份文件必然得到同一份快照（解析器是纯函数），这一趟纯属白花。
+        Re-parsing the same file necessarily yields the same snapshot (the parser is a pure function); this trip is pure
+        waste.
         """
         meter = self._meter()
         t0 = utc_now()
@@ -185,7 +192,8 @@ class TestShouldMeasure:
         )
 
     def test_long_turn_escapes_the_window_via_mtime_advance(self):
-        """窗口还没到，但这一轮已经写了 11 分钟 —— 提前测一次比死等窗口更贴近真实。"""
+        """The window has not arrived yet, but this round has already been writing for 11 minutes — measuring once
+        early is closer to reality than waiting dead for the window."""
         meter = self._meter()
         t0 = utc_now()
         meter._remember("s1", measured_at=t0, mtime=t0)
@@ -198,7 +206,7 @@ class TestShouldMeasure:
 
 
 # ============================================================
-# 定位：payload 优先，slug 反查兜底
+# Positioning: payload first, slug reverse lookup as fallback
 # ============================================================
 
 
@@ -210,7 +218,8 @@ class TestLocateMainTranscript:
     def test_falls_back_to_slug_lookup_when_payload_path_unusable(
         self, tmp_path: Path, monkeypatch
     ):
-        """hook 侧会截断超长路径、超限时还会整条剥离 —— 两种情况都得能兜住。"""
+        """The hook side truncates over-long paths and, when over the limit, strips them entirely — both cases must
+        be covered."""
         cwd = "/Users/x/Desktop/proj"
         slug = session_probe.project_slug(cwd)
         projects = tmp_path / "projects"
@@ -230,7 +239,7 @@ class TestLocateMainTranscript:
 
 
 # ============================================================
-# 陷阱③ 合成行过滤
+# Trap (3) synthetic-row filtering
 # ============================================================
 
 
@@ -248,10 +257,12 @@ class TestSyntheticFilter:
         assert leader_usage._resolve_model(SYNTHETIC, t) == "claude-opus-5"
 
     def test_capture_never_reports_the_placeholder_as_model(self, tmp_path: Path):
-        """compact 合成行在主会话里是常态（实测 100% 复现），采集侧必须自己扛住。
+        """Synthetic compact rows are the norm in a main session (measured 100% reproduction), so the capture side must
+        withstand it itself.
 
-        刻意不断言四层数值：合成行的 usage 实测全为 0，阶段 0 修好过滤前后总量都
-        一样，但断言数值会把这份测试绑死在某一侧的实现上。这里只钉 model。
+        Deliberately do not assert the four-layer values: the measured usage of synthetic rows is all 0, and the totals
+        before and after phase 0 fixed the filtering
+        are the same, but asserting values would bind this test to one side's implementation. Here we only pin model.
         """
         t = _main_transcript(tmp_path)
         _append_lines(
@@ -290,7 +301,7 @@ class TestSyntheticFilter:
 
 
 # ============================================================
-# 陷阱① 快照覆写（绝不累加）
+# Trap (1) snapshot overwrite (never accumulate)
 # ============================================================
 
 
@@ -304,17 +315,18 @@ class TestSnapshotOverwrite:
             assert updates[field] == value
         assert updates["transcript_path"] == str(t)
         assert updates["tokens_measured_at"] is not None
-        # 四层分列、无合计 —— "总量"实际上等于"缓存读取量"，单独呈现会失真（§1.2）
+        # The four layers in separate columns, with no total — 'the total' is actually equal to 'the cache read volume',
+        # and presenting it separately would distort (§1.2)
         assert "total_tokens" not in updates
 
     @pytest.mark.asyncio
     async def test_ten_forced_captures_do_not_accumulate(
         self, db_repository, tmp_path: Path, monkeypatch
     ):
-        """设计 R4 的验收原话：重复触发 10 次数值不变。
+        """Design R4's acceptance, verbatim: triggering 10 times repeatedly leaves the values unchanged.
 
-        走 PostCompact（强制路径），确保每一次都真的解析了一遍 —— 如果靠节流把后
-        九次挡掉，这条测试就退化成"什么都没测"。
+        Go through PostCompact (the forced path) to ensure every trigger really parses once — if the last
+        nine were blocked by throttling, the test would degenerate into 'measuring nothing'.
         """
         repo = db_repository
         leader = await _make_leader(repo, "sess-ten")
@@ -332,14 +344,14 @@ class TestSnapshotOverwrite:
             )
             fetched = await repo.get_agent(leader.id)
             for field, value in EXPECTED.items():
-                assert getattr(fetched, field) == value, f"{field} drifted — 累加了？"
-        assert counter.calls == 10  # 10 次全都真解析了，不是被节流糊弄过去的
+                assert getattr(fetched, field) == value, f"{field} drifted — was it accumulated?"
+        assert counter.calls == 10  # All 10 really parsed; they were not fobbed off by throttling
 
     @pytest.mark.asyncio
     async def test_growing_transcript_yields_the_new_cumulative_total(
         self, db_repository, tmp_path: Path
     ):
-        """文件长大后，落库的是**新的累计值**，不是新旧两次之和。"""
+        """After the file grows, what is stored is the **new cumulative value**, not the sum of the old and new."""
         repo = db_repository
         leader = await _make_leader(repo, "sess-grow")
         t = _main_transcript(tmp_path)
@@ -363,7 +375,7 @@ class TestSnapshotOverwrite:
 
 
 # ============================================================
-# 陷阱② 节流（端到端：Stop 路径）
+# Trap (2) throttling (end-to-end: the Stop path)
 # ============================================================
 
 
@@ -383,17 +395,18 @@ class TestStopThrottle:
         }
 
         first = await translator.handle_event(payload)
-        assert first["leader_usage"] is not None  # 首测建立基线
+        assert first["leader_usage"] is not None  # The first measurement establishes the baseline
         after_first = await repo.get_agent(leader.id)
 
         counter = _count_parses(monkeypatch)
         for _ in range(5):
-            # 每轮都让文件"又写了一点"，否则不改 mtime 也会被挡下，测不出窗口本身
+            # Each round, let the file 'write a little more'; otherwise, without changing the mtime, it would be blocked
+            # anyway and the window itself could not be measured
             _touch(t, seconds_ahead=20)
             result = await translator.handle_event(payload)
             assert result["leader_usage"] is None
 
-        assert counter.calls == 0  # 节流窗内一次都没解析
+        assert counter.calls == 0  # Not parsed even once within the throttling window
         again = await repo.get_agent(leader.id)
         assert again.tokens_measured_at == after_first.tokens_measured_at
 
@@ -417,11 +430,11 @@ class TestStopThrottle:
         ended = await translator.handle_event({**base, "hook_event_name": "SessionEnd"})
         assert compacted["leader_usage"] is not None
         assert ended["leader_usage"] is not None
-        assert counter.calls == 2  # 被节流挡下的那次没解析，两次强制定格各解析一次
+        assert counter.calls == 2  # The throttled attempt did not parse; the two forced freezes parsed once each
 
 
 # ============================================================
-# 挂载点与边界
+# Mounting points and boundaries
 # ============================================================
 
 
@@ -430,7 +443,8 @@ class TestMountPoints:
     async def test_session_start_backfills_five_columns_and_path(
         self, db_repository, tmp_path: Path
     ):
-        """Leader 行此前 0/117 有 transcript_path、token 五列全空 —— 首测就把两样都补上。"""
+        """The Leader row previously had a transcript_path in 0/117 cases and all five token columns empty — the
+        first measurement fills in both."""
         repo = db_repository
         leader = await _make_leader(repo, "sess-start")
         t = _main_transcript(tmp_path)
@@ -452,7 +466,8 @@ class TestMountPoints:
     async def test_post_compact_locates_transcript_without_a_payload_path(
         self, db_repository, tmp_path: Path, monkeypatch
     ):
-        """PostCompact 的载荷最容易被裁剪 —— 路径没了也要能按 slug 反查定位。"""
+        """The PostCompact payload is the most easily trimmed — even with the path gone, it must be locatable by a
+        slug reverse lookup."""
         repo = db_repository
         leader = await _make_leader(repo, "sid-9999")
         cwd = "/Users/x/Desktop/proj"
@@ -474,7 +489,7 @@ class TestMountPoints:
 
     @pytest.mark.asyncio
     async def test_missing_transcript_writes_nothing(self, db_repository, tmp_path: Path):
-        """no-data ≠ zero：文件不在就一列都不写，绝不落 0。"""
+        """no-data ≠ zero: if the file is not there, write no column at all; never record 0."""
         repo = db_repository
         leader = await _make_leader(repo, "sess-gone")
         await _translator(repo).handle_event(
@@ -494,10 +509,11 @@ class TestMountPoints:
     async def test_sub_agent_rows_are_never_touched_by_the_leader_path(
         self, db_repository, tmp_path: Path
     ):
-        """会话里没有 Leader 行时，用量绝不能落到同会话的子 agent 头上。
+        """When there is no Leader row in the session, usage must never land on a sub-agent in the same session.
 
-        呈现层要把 Leader 与子 agent 分列（量级差两个数量级），采集层先保证这两类
-        行不会互相串味。
+        The presentation layer must list the Leader and sub-agents in separate columns (they differ by two orders of
+        magnitude); the capture layer first ensures these two kinds of
+        rows never cross-contaminate.
         """
         repo = db_repository
         worker = await repo.create_agent(

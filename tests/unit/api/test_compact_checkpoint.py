@@ -1,10 +1,14 @@
-"""压缩检查点：PreCompact 定格作战态，压缩后的 SessionStart 递回。
+"""Compact checkpoint: PreCompact freezes the operational state; the post-compact SessionStart hands it back.
 
-Q6 裁定 A（2026-07-27）。改造前这个 hook 只往一个全仓没人读的 jsonl 追加时间
-戳；本文件把"检查点真的存了、真的取得回来、内容真的是库里的实况"钉成契约。
+Q6 ruling A (2026-07-27). Before this change, the hook only appended timestamps to a jsonl that nobody in the whole repo
+reads;
+this file pins 'the checkpoint is really stored, can really be retrieved, and its content really is the live situation
+in the database' as a contract.
 
-刻意不存 CC 的 compact_summary 正文：那段摘要压缩后本来就在模型上下文里，
-再存一份既重复、又会把大段对话灌进刚瘦身四成的 events 表。
+Deliberately do not store the body of CC's compact_summary: that summary is already in the model context after compact
+anyway,
+storing another copy would be duplicative and would pour a large amount of conversation into the events table, which
+just slimmed down by forty percent.
 """
 
 from __future__ import annotations
@@ -62,16 +66,16 @@ async def _populate(repo):
     worker = await repo.create_agent(
         team_id=team.id, name="batch9", role="worker", source="hook", session_id=SESSION
     )
-    await repo.update_agent(worker.id, status="busy", current_task="修 cc_task_bridge")
+    await repo.update_agent(worker.id, status="busy", current_task="Fix cc_task_bridge")
     gone = await repo.create_agent(
         team_id=team.id, name="old-worker", role="worker", source="hook", session_id=SESSION
     )
     await repo.update_agent(gone.id, status="offline")
     await repo.create_task(
-        team_id=None, title="在跑的活", project_id=project.id, status="running"
+        team_id=None, title="Work in flight", project_id=project.id, status="running"
     )
-    await repo.create_task(team_id=None, title="待办", project_id=project.id)
-    await repo.create_briefing(title="要不要换存活判据", description="", project_id=project.id)
+    await repo.create_task(team_id=None, title="To-do", project_id=project.id)
+    await repo.create_briefing(title="Should we change the liveness criterion", description="", project_id=project.id)
     return project
 
 
@@ -83,10 +87,10 @@ class TestSnapshot:
 
         assert snap["leader"]["name"] == "Leader"
         assert snap["project_id"] == project.id
-        assert [a["name"] for a in snap["agents"]] == ["batch9"]  # offline 的不算在飞
-        assert snap["agents"][0]["current_task"] == "修 cc_task_bridge"
-        assert {t["title"] for t in snap["open_tasks"]} == {"在跑的活", "待办"}
-        assert [b["title"] for b in snap["pending_briefings"]] == ["要不要换存活判据"]
+        assert [a["name"] for a in snap["agents"]] == ["batch9"]  # Offline ones do not count as in flight
+        assert snap["agents"][0]["current_task"] == "Fix cc_task_bridge"
+        assert {t["title"] for t in snap["open_tasks"]} == {"Work in flight", "To-do"}
+        assert [b["title"] for b in snap["pending_briefings"]] == ["Should we change the liveness criterion"]
 
     @pytest.mark.asyncio
     async def test_unknown_session_yields_an_empty_but_valid_snapshot(self, repo):
@@ -103,16 +107,17 @@ class TestRender:
     def test_rendered_block_names_what_was_in_flight(self):
         text = compact_checkpoint.render(
             {
-                "agents": [{"name": "batch9", "status": "busy", "current_task": "修桥", "ctx_pct": 0.42}],
-                "open_tasks": [{"status": "running", "title": "在跑的活", "assigned_to": "batch9"}],
-                "pending_briefings": [{"id": "abcdef1234", "title": "换判据?", "urgency": "low"}],
+                "agents": [{"name": "batch9", "status": "busy", "current_task": "Fixing the bridge", "ctx_pct": 0.42}],
+                "open_tasks": [{"status": "running", "title": "Work in flight", "assigned_to": "batch9"}],
+                "pending_briefings": [{"id": "abcdef1234", "title": "Change the criterion?", "urgency": "low"}],
             }
         )
-        assert "batch9" in text and "修桥" in text and "42%" in text
-        assert "在跑的活" in text and "@batch9" in text
-        assert "换判据?" in text and "abcdef12" in text
-        # 明确告诉压缩后的 Leader 这是实况而非回忆，并指向现查的工具
-        assert "不是回忆" in text and "task_memo_read" in text
+        assert "batch9" in text and "Fixing the bridge" in text and "42%" in text
+        assert "Work in flight" in text and "@batch9" in text
+        assert "Change the criterion?" in text and "abcdef12" in text
+        # Explicitly tell the post-compact Leader that this is the live situation, not a recollection, and point to the
+        # tool for checking the current state
+        assert "not a recollection" in text and "task_memo_read" in text
 
 
 class TestEndpoints:
@@ -166,6 +171,7 @@ class TestPostCompact:
         events = await repo.list_events(event_type="session.compact_completed", limit=1)
         assert len(events) == 1
         assert events[0].data["summary_chars"] == 4321
-        # 摘要正文不入库：压缩后它本来就在模型上下文里，存一份是重复也是膨胀
+        # The summary body is not stored: after compact it is already in the model context anyway; storing a copy is
+        # both duplication and bloat
         assert "compact_summary" not in events[0].data
         assert "xxxx" not in str(events[0].data)

@@ -1,20 +1,24 @@
-"""CC 任务观测挂载点补齐 — 观测断链闭合批 ②。
+"""Completing the CC task observation mounting points — closing the observability broken chain, batch (2).
 
-取证结论(2026-07-28,对照 CC 官方 hook 文档 + 本机注册面 + 生产账本):
+Forensic conclusions (2026-07-28, cross-checked against the official CC hook documentation + the local registration
+surface + the production ledger):
 
-* CC 与任务/子 agent 相关的 hook 事件**只有 4 个**:SubagentStart / SubagentStop /
-  TaskCreated / TaskCompleted。**中止侧没有任何 hook** —— 不存在 TaskStop、
-  TaskAborted、SubagentAbort 这类事件,Esc 打断也不触发 hook。``TaskStop`` 是一个
-  **工具**而非事件,只能经 PreToolUse/PostToolUse 观测到。
-* 桥(cc_task_bridge.py)只挂在 TaskCompleted 上,而该事件**没有并挂 send_event.py**
-  —— 于是"桥被触发过几次、滤掉了几条"在事件流里零遥测,桥是不是活的都无从判断。
-* TaskCreated 完全未注册。
-* 实测"TaskStop 40 > TaskCreate 14"口径是 cc.tool_use 里的**工具调用**观测,不是
-  hook 事件;且 TaskCreate/TaskUpdate 自 7/7-7/8 后归零,TaskStop 持续在用——新版
-  CC 里后台 subagent 即 task,停 agent 走的就是 TaskStop,中止确实是主路径。
+* Among CC hooks related to tasks/sub-agents, there are **only 4 events**: SubagentStart / SubagentStop /
+  TaskCreated / TaskCompleted. **There is no hook at all on the abort side** — there are no events such as TaskStop,
+  TaskAborted or SubagentAbort; Esc interrupts do not trigger a hook either. ``TaskStop`` is a
+  **tool** rather than an event, and can only be observed via PreToolUse/PostToolUse.
+* The bridge (cc_task_bridge.py) mounts only on TaskCompleted, and that event **does not also mount send_event.py**
+  — so 'how many times the bridge was triggered, how many entries it filtered out' has zero telemetry in the event
+  stream, and there is no way to judge whether the bridge is even alive.
+* TaskCreated was never registered at all.
+* The measured claim 'TaskStop 40 > TaskCreate 14' refers to observations of **tool calls** in cc.tool_use, not
+  hook events; and TaskCreate/TaskUpdate dropped to zero after 7/7-7/8 while TaskStop remained in use — in newer
+  CC versions a background subagent is a task, and stopping an agent goes through TaskStop, so the abort path really is
+  the main path.
 
-本批据此补三处观测,**不动 Q1 的"完成时点记账"裁定**:上墙逻辑仍只由桥负责,
-新增的都是只观测不记账的事件。
+In this batch, three observation points are added accordingly, **without touching Q1's 'accounting at completion time'
+ruling**: the wall-posting logic is still solely the bridge's responsibility;
+all the new additions are events that only observe and do not account.
 """
 
 from __future__ import annotations
@@ -57,7 +61,7 @@ async def translator(repo):
 
 
 class TestBridgeTelemetry:
-    """桥零遥测:TaskCompleted 到底触发过没有,此前查无实据。"""
+    """Zero bridge telemetry: whether TaskCompleted was ever triggered had no factual basis before this."""
 
     @pytest.mark.asyncio()
     async def test_task_completed_lands_observation_event(self, translator):
@@ -67,42 +71,46 @@ class TestBridgeTelemetry:
                 "hook_event_name": "TaskCompleted",
                 "session_id": SESSION,
                 "task_id": "cc-task-77",
-                "task_subject": "修桥",
+                "task_subject": "Fix the bridge",
                 "teammate_name": "d1-worker",
                 "team_name": "workflow-abc",
             }
         )
         (event,) = bus.of("cc.task_completed")
         assert event["cc_task_id"] == "cc-task-77"
-        assert event["subject"] == "修桥"
+        assert event["subject"] == "Fix the bridge"
         assert event["owner"] == "d1-worker"
-        assert result["status"] != "ignored", "TaskCompleted 仍被当成未知事件丢弃"
+        assert result["status"] != "ignored", "TaskCompleted is still being discarded as an unknown event"
 
     @pytest.mark.asyncio()
     async def test_task_created_is_observed_only(self, translator):
-        """TaskCreated 只观测不上墙——Q1 的完成时点记账裁定不动。"""
+        """TaskCreated only observes and does not go on the wall — Q1's accounting-at-completion-time ruling is
+        untouched."""
         tr, bus = translator
         await tr.handle_event(
             {
                 "hook_event_name": "TaskCreated",
                 "session_id": SESSION,
                 "task_id": "cc-task-78",
-                "task_subject": "新任务",
+                "task_subject": "New task",
             }
         )
         (event,) = bus.of("cc.task_created")
         assert event["cc_task_id"] == "cc-task-78"
         assert event["observed_only"] is True
-        # 不得顺手建 OS 任务
+        # An OS task must not be created on the side
         assert bus.of("task.created") == []
 
 
 class TestAbortObservation:
-    """中止侧无 hook 可挂,只能从工具调用面把 TaskStop 拎成一等事件。
+    """There is no hook to mount on the abort side; TaskStop can only be lifted into a first-class event from the
+    tool-call surface.
 
-    挂在 **PreToolUse** 而非 Post:①实测那 40 条中止信号本来就落在 cc.tool_use
-    （Pre）里;②停 agent 这个动作可能把对侧连同回执一起带走,Pre 是唯一保证发得
-    出去的时点。
+    Mounted on **PreToolUse** rather than Post: (1) measurements show those 40 abort signals originally land in
+    cc.tool_use
+    (Pre); (2) the act of stopping an agent may take the other side away together with the receipt, so Pre is the only
+    point guaranteed to get it
+    sent out.
     """
 
     @pytest.mark.asyncio()
@@ -113,23 +121,23 @@ class TestAbortObservation:
                 "hook_event_name": "PreToolUse",
                 "session_id": SESSION,
                 "tool_name": "TaskStop",
-                "tool_input": {"taskId": "cc-task-79", "reason": "缔造者打断"},
+                "tool_input": {"taskId": "cc-task-79", "reason": "Interrupted by the Creator"},
             }
         )
         (event,) = bus.of("cc.task_stopped")
         assert event["cc_task_id"] == "cc-task-79"
-        assert event["reason"] == "缔造者打断"
+        assert event["reason"] == "Interrupted by the Creator"
 
     @pytest.mark.asyncio()
     async def test_not_double_counted_on_post(self, translator):
-        """Post 侧不得重复发——中止是一个事实,不是两个。"""
+        """The Post side must not send it again — an abort is one fact, not two."""
         tr, bus = translator
         await tr.handle_event(
             {
                 "hook_event_name": "PostToolUse",
                 "session_id": SESSION,
                 "tool_name": "TaskStop",
-                "tool_input": {"taskId": "cc-task-79", "reason": "缔造者打断"},
+                "tool_input": {"taskId": "cc-task-79", "reason": "Interrupted by the Creator"},
             }
         )
         assert bus.of("cc.task_stopped") == []
@@ -149,7 +157,8 @@ class TestAbortObservation:
 
 
 class TestRegistrationSurface:
-    """四件套税:两条安装链必须同时认得新挂载点。"""
+    """The four-piece installation tax: both installation chains must recognize the new mounting point at the same
+    time."""
 
     def test_task_events_registered_on_both_chains(self):
         import json
@@ -159,20 +168,21 @@ class TestRegistrationSurface:
         manifest = json.loads((root / "plugin" / "hooks" / "hooks.json").read_text())
         hooks = manifest["hooks"]
 
-        # TaskCompleted 必须并挂 send_event(桥 + 遥测两条腿)
+        # TaskCompleted must also mount send_event (the bridge + telemetry, two legs)
         completed = [
             h["command"] for grp in hooks["TaskCompleted"] for h in grp["hooks"]
         ]
         assert any("cc_task_bridge.py" in c for c in completed)
-        assert any("send_event.py" in c for c in completed), "桥仍零遥测"
+        assert any("send_event.py" in c for c in completed), "The bridge still has zero telemetry"
 
-        # TaskCreated 必须存在且只挂观测
+        # TaskCreated must exist and mount only observation
         created = [h["command"] for grp in hooks["TaskCreated"] for h in grp["hooks"]]
         assert any("send_event.py" in c for c in created)
-        assert not any("cc_task_bridge.py" in c for c in created), "TaskCreated 不该上墙"
+        assert not any("cc_task_bridge.py" in c for c in created), "TaskCreated should not go on the wall"
 
     def test_source_install_surface_matches(self):
-        """install.py 的 HOOK_SURFACE 是源码安装链的唯一真源(I8 机检两链 1:1)。"""
+        """install.py's HOOK_SURFACE is the single source of truth for the source-installation chain (I8
+        machine-checks that the two chains are 1:1)."""
         import importlib.util
         from pathlib import Path
 

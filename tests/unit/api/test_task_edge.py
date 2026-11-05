@@ -1,9 +1,12 @@
-"""agent→task 边的寄生写入单测 —— 归因 v1 §2.4。
+"""Unit tests for the parasitic writing of agent→task edges — attribution v1 §2.4.
 
-本文件的重点全在**解析不到就不写**这条上。`agents.name` 不唯一是实测事实，不是
-理论风险：生产库里 ``Leader`` 一个名字对应 117 行、横跨 79 支队、时间跨度三周。
-一条跨时重名错绑的边写进去照样查得到、照样不报错，只会让 task 级归因悄悄指向另一
-个会话的另一个 agent —— 一个永远不会有人发现的错误。所以宁可少一条边。
+This file's focus is entirely on the rule **if it cannot be resolved, do not write**. That `agents.name` is not unique
+is a measured fact, not
+a theoretical risk: in the production database, one name, ``Leader``, corresponds to 117 rows spanning 79 teams over
+three weeks.
+An edge written with a cross-time same-name mis-binding can still be queried and still raises no error; it would only
+make task-level attribution quietly point to another
+session's another agent — an error nobody would ever discover. So one edge fewer is preferable.
 """
 
 from __future__ import annotations
@@ -89,10 +92,11 @@ class TestAuthorResolutionIsDomainBound:
 
     @pytest.mark.asyncio
     async def test_same_name_in_another_session_is_never_bound(self, repo):
-        """Leader 审查点：防跨时重名错绑。
+        """Leader review point: guard against cross-time same-name mis-binding.
 
-        另一个会话里三周前有个同名 agent，本会话里没有 —— 正确行为是**不写**，
-        不是"找到了一个同名的就用它"。
+        Another session had a same-name agent three weeks ago, and this session does not — the correct behavior is **not
+        to write**,
+        not 'use a same-name one if one is found'.
         """
         await _agent(
             agent_id="stranger",
@@ -105,7 +109,8 @@ class TestAuthorResolutionIsDomainBound:
 
     @pytest.mark.asyncio
     async def test_newer_in_domain_row_wins_over_older_in_domain_row(self, repo):
-        """同一会话里同名行取 ``created_at`` 最新的那一个（agent 可能被重派多次）。"""
+        """Within the same session, take the same-name row with the newest ``created_at`` (an agent may be
+        re-dispatched many times)."""
         await _agent(
             agent_id="old",
             name="worker",
@@ -117,7 +122,8 @@ class TestAuthorResolutionIsDomainBound:
 
     @pytest.mark.asyncio
     async def test_older_in_domain_beats_newer_out_of_domain(self, repo):
-        """域优先于新鲜度 —— 别的会话里刚建的同名行再新也不算数。"""
+        """Domain takes priority over freshness — a same-name row just created in another session does not count,
+        however new."""
         await _agent(
             agent_id="mine-old",
             name="worker",
@@ -135,9 +141,10 @@ class TestAuthorResolutionIsDomainBound:
 
     @pytest.mark.asyncio
     async def test_team_fallback_covers_leader_rows_with_null_session(self, repo):
-        """Leader 行的 ``session_id`` 实测 0/117 全为 NULL（被历史启动清扫抹过）。
+        """The Leader row's ``session_id`` measures 0/117, all NULL (wiped by a historical startup sweep).
 
-        而 Leader 恰好是记账动作最频繁的作者 —— 没有这一档它一条边都建不出来。
+        And the Leader happens to be the most frequent author of accounting actions — without this tier it could not
+        build a single edge.
         """
         await _team(team_id="t-mine", name="session-80d0cc5e", owner_session_id=SESSION)
         await _agent(
@@ -155,14 +162,15 @@ class TestAuthorResolutionIsDomainBound:
 
     @pytest.mark.asyncio
     async def test_author_match_is_case_insensitive(self, repo):
-        """memo 的 author 默认是 ``"leader"``，而 Leader 行的 name 是 ``"Leader"``。"""
+        """A memo's author defaults to ``"leader"``, while the Leader row's name is ``"Leader"``."""
         await _agent(agent_id="l", name="Leader", session_id=SESSION, role="leader")
         assert await resolve_author_agent_id(repo, "LEADER", SESSION) == "l"
         assert await resolve_author_agent_id(repo, "  leader  ", SESSION) == "l"
 
     @pytest.mark.asyncio
     async def test_no_session_means_no_binding(self, repo):
-        """拿不到会话头就不写 —— 否则只能全表按名字找，那必然错绑。"""
+        """Without a session header it is not written — otherwise the whole table would have to be searched by name,
+        which inevitably mis-binds."""
         await _agent(agent_id="mine", name="worker", session_id=SESSION)
         assert await resolve_author_agent_id(repo, "worker", "") is None
 
@@ -196,7 +204,8 @@ class TestEdgeWriting:
 
     @pytest.mark.asyncio
     async def test_edge_feeds_task_scope_attribution(self, repo):
-        """写边 → 归因推导器立刻能按 task 聚合。两侧共用同一份 link 词汇。"""
+        """Once an edge is written → the attribution deriver can immediately aggregate by task. Both sides share the
+        same link vocabulary."""
         await _agent(agent_id="mine", name="w", session_id=SESSION)
         await record_worked_on(repo, task_id="T1", author="w", session_id=SESSION)
         att = await repo.aggregate_token_attribution(
@@ -206,7 +215,8 @@ class TestEdgeWriting:
 
     @pytest.mark.asyncio
     async def test_second_task_makes_the_agent_unsplittable(self, repo):
-        """一个 agent 在两个 task 上留过账 → 两边都如实计未归因，不平均分摊。"""
+        """An agent that left accounts on two tasks → both sides truthfully count as unattributed; no averaging or
+        apportioning."""
         await _agent(agent_id="mine", name="w", session_id=SESSION)
         await record_worked_on(repo, task_id="T1", author="w", session_id=SESSION)
         await record_worked_on(repo, task_id="T2", author="w", session_id=SESSION)
@@ -227,7 +237,8 @@ class TestSessionHeader:
         assert session_id_from_request(None) == ""
 
     def test_mcp_base_sends_it(self):
-        """MCP 侧必须把会话 id 带上，否则服务端永远解析不出域、永远不写边。"""
+        """The MCP side must carry the session id, otherwise the server side can never resolve the domain and never
+        writes an edge."""
         import inspect
 
         from aiteam.mcp import _base

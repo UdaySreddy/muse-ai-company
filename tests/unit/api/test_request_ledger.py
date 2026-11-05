@@ -1,19 +1,25 @@
-"""HTTP 请求级账本 — 观测断链闭合批 ⑤。
+"""HTTP request-level ledger — closing the observability broken chain, batch (5).
 
-为什么需要它:此前"某工具零调用"的判断只有**一个**口径——CC 侧的 MCP 工具调用
-观测。但 MCP 工具内部一律转成 HTTP 打到本地 API,Dashboard、hook、脚本、别的
-会话也都走同一批 HTTP 端点。于是"零调用"实际只等于"这一个采集面没看见",
-既排除不了采集断链,也排除不了口径隔离——正是 Council 纪律①「no-data≠zero」
-点名的成因。补上请求级账本,零调用才有第二个口径可交叉验证。
+Why it is needed: previously, judgments of 'a tool has zero calls' had only **one** basis — the MCP tool-call
+observations on the CC side. But inside MCP tools everything is converted to HTTP calls against the local API, and the
+Dashboard, hooks, scripts and other
+sessions all go through the same batch of HTTP endpoints. So 'zero calls' actually only meant 'this one collection
+surface did not see it',
+which can rule out neither a broken collection chain nor a metric isolation — exactly the cause named by Council
+discipline (1), 'no-data≠zero'.
+Adding the request-level ledger gives zero-call judgments a second basis for cross-validation.
 
-设计约束:
-* **不新建表**。I10 机检 ORM 声明表集合与实库一致,而生产实例不能重启建表;
-  且事件流本就是 append-only 账本,聚合行天然属于它。
-* **不造新噪声**。逐请求落库会把账本淹掉(本机 events 已 5 万+),故按
-  「方法 × 路径模板 × 来源」在内存计数,**按小时**聚合成一条 rollup 事件。
-* **不引定时器**。本仓刻意无后台守护/cron,故用**惰性翻滚**:下一个请求进来时
-  发现跨桶了,才把上一桶落库。
-* 路径用**模板**(/api/tasks/{task_id})而非实际路径,否则 id 会把基数打爆。
+Design constraints:
+* **No new tables**. The I10 machine check keeps the ORM-declared table set consistent with the real database, and
+production instances cannot be restarted to create tables;
+  and the event stream is itself an append-only ledger, so aggregate rows naturally belong to it.
+* **No new noise**. Persisting per request would drown the ledger (this machine's events are already 50K+), so counting
+is done in memory by
+  'method × path template × source', **aggregated hourly** into a single rollup event.
+* **No timers**. This repo deliberately has no background daemons/cron, so it uses **lazy rolling**: when the next
+request comes in
+  and is found to cross a bucket boundary, the previous bucket is persisted.
+* Paths use **templates** (/api/tasks/{task_id}) rather than actual paths, otherwise ids would blow up the cardinality.
 """
 
 from __future__ import annotations
@@ -36,12 +42,12 @@ class _Bus:
 
 @pytest.mark.asyncio()
 async def test_counts_are_aggregated_not_per_request():
-    """一小时内 30 次同类请求 → 落库 1 条 rollup,不是 30 条。"""
+    """30 similar requests within one hour → 1 rollup row persisted, not 30."""
     bus = _Bus()
     ledger = RequestLedger(bus)
     for _ in range(30):
         ledger.record("GET", "/api/tasks/{task_id}", "mcp", bucket="2026-07-28T15")
-    # 跨桶触发惰性翻滚
+    # Crossing a bucket triggers the lazy roll
     await ledger.observe_bucket("2026-07-28T16")
 
     (rollup,) = bus.rollups()
@@ -71,7 +77,7 @@ async def test_dimensions_are_kept_separate():
 
 @pytest.mark.asyncio()
 async def test_no_flush_while_inside_same_bucket():
-    """同桶内不落库——否则又变成逐请求写。"""
+    """Nothing is persisted within the same bucket — otherwise it becomes per-request writing again."""
     bus = _Bus()
     ledger = RequestLedger(bus)
     ledger.record("GET", "/api/health", "hook", bucket="b1")
@@ -81,7 +87,7 @@ async def test_no_flush_while_inside_same_bucket():
 
 @pytest.mark.asyncio()
 async def test_empty_bucket_writes_nothing():
-    """没有请求就不该留下空账页。"""
+    """With no requests, no empty ledger page should be left behind."""
     bus = _Bus()
     ledger = RequestLedger(bus)
     await ledger.observe_bucket("b2")
@@ -90,7 +96,7 @@ async def test_empty_bucket_writes_nothing():
 
 @pytest.mark.asyncio()
 async def test_flush_is_idempotent():
-    """翻滚后旧桶清空,重复翻滚不重复计数。"""
+    """After rolling, the old bucket is cleared; repeated rolling does not double-count."""
     bus = _Bus()
     ledger = RequestLedger(bus)
     ledger.record("GET", "/api/tasks", "mcp", bucket="b1")
@@ -101,7 +107,7 @@ async def test_flush_is_idempotent():
 
 @pytest.mark.asyncio()
 async def test_emit_failure_never_breaks_the_request_path():
-    """账本落库失败绝不能把正在服务的请求带下水。"""
+    """A failure to persist the ledger must never take down the request being served."""
 
     class _Broken:
         async def emit(self, *_a, **_kw):
@@ -109,11 +115,11 @@ async def test_emit_failure_never_breaks_the_request_path():
 
     ledger = RequestLedger(_Broken())
     ledger.record("GET", "/api/tasks", "mcp", bucket="b1")
-    await ledger.observe_bucket("b2")  # 不抛
+    await ledger.observe_bucket("b2")  # Does not raise
 
 
 def test_source_classification():
-    """来源分桶:MCP 工具/hook 都走 urllib,浏览器走 UA;拿不准就 unknown。"""
+    """Source bucketing: MCP tools/hooks all go through urllib, browsers through the UA; when unsure, unknown."""
     from aiteam.api.request_ledger import classify_source
 
     assert classify_source({"x-aiteam-source": "mcp"}, "") == "mcp"

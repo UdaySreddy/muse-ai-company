@@ -1,7 +1,8 @@
-"""Unit tests for the wake actionable predicate (唤醒体系 v2 §7.1/§7.2).
+"""Unit tests for the wake actionable predicate (wake system v2 §7.1/§7.2).
 
-判据逻辑用轻量 FakeRepo 精测每条分支；再用 TestClient 对真实路由做一次冒烟，
-证明接线正确且空库不 500（防御式契约）。
+The predicate logic is precision-tested branch by branch with a lightweight FakeRepo; a TestClient smoke test against
+the real routes then
+proves the wiring is correct and that an empty database does not 500 (a defensive contract).
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ def _run(status, session_id="sid", updated_at=None, wf_id="wf_x"):
 
 
 class FakeRepo:
-    """只实现 compute_actionable 用到的 6 个方法。"""
+    """Implements only the 6 methods used by compute_actionable."""
 
     def __init__(
         self,
@@ -78,22 +79,22 @@ def test_parse_since_variants():
     assert wake_actionable.parse_since(None) is None
     assert wake_actionable.parse_since("") is None
     assert wake_actionable.parse_since("garbage") is None
-    # 不带偏移的串按 UTC 读 —— 与 watermark 的发出口径一致
+    # A string without an offset is read as UTC — consistent with the watermark's emitting convention
     assert wake_actionable.parse_since("2026-07-14T12:00:00") == NOW
-    # 带 Z / 带偏移都归一到 aware-UTC：同一时刻必须解析成同一个值
+    # Both Z and explicit offsets normalize to aware UTC: the same moment must parse to the same value
     assert wake_actionable.parse_since("2026-07-14T12:00:00Z") == NOW
     assert wake_actionable.parse_since("2026-07-14T20:00:00+08:00") == NOW
     assert wake_actionable.parse_since("2026-07-14T12:00:00+08:00").tzinfo is UTC
 
 
-# ---- 判据分支 -------------------------------------------------------------
+# ---- Predicate branches -------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_empty_not_actionable():
     v = await _compute(FakeRepo())
     assert v["actionable"] is False
     assert v["busy_agents"] == 0
     assert v["live_runs"] == 0
-    # 契约字段齐全
+    # All contract fields present
     for k in (
         "reasons", "terminal_runs_since", "finished_agents_since",
         "new_memos_since", "pending_briefings", "watermark", "project_id",
@@ -106,7 +107,7 @@ async def test_busy_agent_in_flight_not_actionable():
     repo = FakeRepo(agents=[_agent(AgentStatus.BUSY, "worker", NOW)])
     v = await _compute(repo)
     assert v["busy_agents"] == 1
-    assert v["actionable"] is False  # busy = 在飞，不是 actionable
+    assert v["actionable"] is False  # busy = in flight, not actionable
 
 
 @pytest.mark.asyncio
@@ -163,7 +164,7 @@ async def test_pending_briefings_do_not_trigger():
     repo = FakeRepo(briefings=2)
     v = await _compute(repo)
     assert v["pending_briefings"] == 2
-    assert v["actionable"] is False  # briefings 仅展示，不触发唤醒
+    assert v["actionable"] is False  # briefings are display only and do not trigger a wake
 
 
 @pytest.mark.asyncio
@@ -176,13 +177,14 @@ async def test_never_throws_on_repo_error():
             raise RuntimeError("boom")
 
     v = await _compute(ExplodingRepo())
-    # 降级为保守值，绝不抛
+    # Degrade to a conservative value; never raise
     assert v["busy_agents"] == 0
     assert v["live_runs"] == 0
     assert v["actionable"] is False
 
 
-# ---- 路由冒烟：真实 app + 空内存库，证明接线且不 500 -----------------------
+# ---- Route smoke test: the real app + an empty in-memory database, proving the wiring and no 500s
+# -----------------------
 def test_route_smoke_empty_db():
     import asyncio
     from contextlib import asynccontextmanager

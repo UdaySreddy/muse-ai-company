@@ -1,20 +1,23 @@
-"""agent → session 这一跳必须活得下来（token 归因 v1 阶段1）。
+"""The agent → session hop must survive (token attribution v1, phase 1).
 
-设计取证时 ``agents.session_id`` 全表 2,568 行只有 2 行非空，于是归因链上
-"session → agent" 这一跳在库里等于不存在。根因是**三处同族**的"把身份当状态清"：
+During design forensics, only 2 of the 2,568 rows in ``agents.session_id`` across the whole table were non-empty, so on
+the attribution chain the
+'session → agent' hop effectively did not exist in the database. The root cause is **three sibling instances** of
+'treating identity as state and clearing it':
 
-1. ``_on_session_end`` 抹 session_id —— 已由 91e07ad 修掉；
-2. ``_on_stop`` mode 2 全局兜底 —— 同一次修掉；
-3. ``deps._startup_reconciliation`` 每次 API 启动把全库 session_id 置 None ——
-   **本文件修掉的这一处**，是三处里最后一处，也是最狠的一处：前两处按会话生效，
-   这一处一次抹全库，且 API 会被活着的 CC 会话反复重启。
+1. ``_on_session_end`` wipes session_id — fixed by 91e07ad;
+2. ``_on_stop`` mode 2 global fallback — fixed in the same pass;
+3. ``deps._startup_reconciliation`` sets the whole database's session_id to None on every API startup —
+   **the instance fixed by this file** is the last of the three, and the harshest: the first two act per session,
+   this one wipes the whole database in a single pass, and the API is restarted repeatedly by live CC sessions.
 
-生产实证：events 里 2026-07-29 01:54:54 一秒内五行 ``agent.updated``，busy 行的
-changes 是 ``["status","current_task","session_id"]``、其余是 ``["session_id"]``，
-与该函数的两种写法逐字对上。
+Production evidence: in events, five ``agent.updated`` rows within one second at 2026-07-29 01:54:54, the busy rows'
+changes were ``["status","current_task","session_id"]`` and the rest were ``["session_id"]``,
+matching the function's two writing styles verbatim.
 
-另一半是写入面：SubagentStop 顺手按 transcript 路径把 session_id 定回去，这样
-即使某一跳漏写，只要 agent 跑完一轮就能自愈。
+The other half is the write surface: SubagentStop opportunistically pins session_id back from the transcript path, so
+that
+even if one hop misses a write, an agent can self-heal after finishing a single round.
 """
 
 from __future__ import annotations
@@ -73,12 +76,12 @@ class TestStartupReconciliationKeepsIdentity:
         after = await repo.get_agent(agent.id)
         assert after.status.value == "waiting"
         assert after.current_task is None
-        # 身份不随进程重启消失
+        # Identity does not disappear across process restarts
         assert after.session_id == SESSION
 
     @pytest.mark.asyncio
     async def test_idle_rows_keep_their_session_too(self, repo):
-        """非 busy 行以前也会被单独抹一次（changes=["session_id"]）。"""
+        """Non-busy rows used to be wiped separately as well (changes=["session_id"])."""
         team = await repo.create_team(name="session-80d0cc5e", mode="coordinate")
         agent = await repo.create_agent(
             team_id=team.id, name="idle-one", role="worker",
@@ -92,7 +95,8 @@ class TestStartupReconciliationKeepsIdentity:
 
     @pytest.mark.asyncio
     async def test_stale_waiting_agent_still_goes_offline_with_identity_intact(self, repo):
-        """状态清理照旧生效——修的是身份列，不是自愈能力。"""
+        """State cleanup still takes effect as before — what is fixed is the identity column, not the self-healing
+        ability."""
         team = await repo.create_team(name="session-80d0cc5e", mode="coordinate")
         agent = await repo.create_agent(
             team_id=team.id, name="stale", role="worker",
@@ -110,7 +114,8 @@ class TestStartupReconciliationKeepsIdentity:
 
     @pytest.mark.asyncio
     async def test_repeated_restarts_never_erode_identity(self, repo):
-        """API 一天可能被重启多次——多跑几次也不该把身份磨掉。"""
+        """The API may be restarted many times a day — running it several more times should not wear the identity
+        away."""
         team = await repo.create_team(name="session-80d0cc5e", mode="coordinate")
         agent = await repo.create_agent(
             team_id=team.id, name="worker", role="worker",
@@ -125,7 +130,8 @@ class TestStartupReconciliationKeepsIdentity:
 
     @pytest.mark.asyncio
     async def test_leader_reuse_survives_a_restart(self, repo, translator):
-        """回归 91e07ad 的知识点：抹了身份，同一会话恢复时会再造一个 Leader。"""
+        """Regression for the 91e07ad lesson: once the identity is wiped, resuming the same session creates another
+        Leader."""
         await repo.create_project(name="AI team OS", root_path="/Users/dev/Desktop/AI team OS")
         await translator.handle_event({
             "hook_event_name": "SessionStart",
@@ -167,7 +173,7 @@ class TestSubagentStopWritesSessionId:
             "hook_event_name": "SubagentStop",
             "agent_id": "a1b2c3",
             "agent_type": "worker",
-            # payload 的 session_id 缺失时，路径仍然定得出来
+            # When the payload's session_id is missing, the path can still be determined
             "session_id": "",
             "agent_transcript_path": _subagent_transcript(SESSION, "a1b2c3"),
         })
@@ -192,7 +198,7 @@ class TestSubagentStopWritesSessionId:
 
     @pytest.mark.asyncio
     async def test_file_truth_beats_a_disagreeing_payload(self, repo, translator):
-        """路径是文件真相，payload 只是转述——冲突时以路径为准。"""
+        """The path is the file truth; the payload is only a retelling — when they conflict, the path wins."""
         agent = await self._registered_agent(repo, "a1b2c3")
 
         await translator.handle_event({
@@ -237,10 +243,12 @@ class TestSubagentStopWritesSessionId:
 
 
 class TestTokensSourceIsStampedOnTheSamePass:
-    """D1 五列写下去的同时必须写清"这数是怎么来的"（阶段0 §2.6）。
+    """As the D1 five columns are written, it must be made clear 'how this number came to be' (phase 0 §2.6).
 
-    ``tokens_source`` 为 NULL 的语义是**尚未采集**。若采到了数却不盖来源章，读侧
-    就分不出"transcript 定真"与"别名兜底推得"，而这两者的可信度差着量级。
+    A NULL ``tokens_source`` means **not yet collected**. If a number is collected without stamping its source, the read
+    side
+    cannot tell 'pinned true by the transcript' from 'derived by alias fallback', and the two differ by orders of
+    magnitude in credibility.
     """
 
     @pytest.mark.asyncio
@@ -282,7 +290,7 @@ class TestTokensSourceIsStampedOnTheSamePass:
 
     @pytest.mark.asyncio
     async def test_unmeasured_row_keeps_a_null_source(self, repo, translator):
-        """采不到就留空 —— NULL 是"还没采"，不是"来源不明的 0"。"""
+        """If nothing can be collected, leave it empty — NULL means 'not yet collected', not 'a 0 of unknown origin'."""
         team = await repo.create_team(name="session-80d0cc5e", mode="coordinate")
         agent = await repo.create_agent(
             team_id=team.id, name="worker", role="worker",

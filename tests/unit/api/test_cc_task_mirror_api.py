@@ -1,9 +1,12 @@
-"""服务端这半边的镜像契约：幂等 + CC 依赖 id 的正确落位。
+"""The server-side half of the mirror contract: idempotency + correct placement of CC-dependent ids.
 
-CC 可能对同一个任务重复报完成（重跑、会话恢复），所以建任务这一端必须按
-``cc_task_id`` 幂等——否则墙上会长出重复行。而 CC 的 ``blockedBy`` 装的是
-**CC 自己的任务 id**，直接塞进 OS 的 ``depends_on`` 会让阻塞判定去查一个根本
-不存在的行，因此只有已镜像过的上游才转成 depends_on，其余原样存证。
+CC may report completion for the same task repeatedly (reruns, session resumes), so the task-creation end must be
+idempotent on
+``cc_task_id`` — otherwise duplicate rows would grow on the wall. And a CC ``blockedBy`` holds
+**CC's own task ids**; stuffing them directly into the OS ``depends_on`` would make the blocking determination look up a
+row that
+does not exist at all, so only upstreams that have already been mirrored are converted into depends_on; the rest are
+preserved as evidence in their original form.
 """
 
 from __future__ import annotations
@@ -57,10 +60,10 @@ class TestIdempotency:
     @pytest.mark.asyncio
     async def test_same_cc_task_never_creates_a_second_row(self, client, project, repo):
         first = _mirror(client, project.id, cc_task_id="20").json()
-        second = _mirror(client, project.id, cc_task_id="20", title="改过的标题").json()
+        second = _mirror(client, project.id, cc_task_id="20", title="Changed title").json()
 
         assert second["data"]["id"] == first["data"]["id"]
-        assert second["data"]["title"] == "t"  # 已存在的行不被覆写
+        assert second["data"]["title"] == "t"  # An existing row is not overwritten
         assert len(await repo.list_tasks_by_project(project.id)) == 1
 
     @pytest.mark.asyncio
@@ -87,7 +90,7 @@ class TestCompletionLedgerFields:
 
     @pytest.mark.asyncio
     async def test_default_creation_is_still_a_pending_task(self, client, project):
-        body = {"title": "普通任务", "description": ""}
+        body = {"title": "Ordinary task", "description": ""}
         data = client.post(f"/api/projects/{project.id}/tasks", json=body).json()["data"]
         assert data["status"] == "pending"
         assert data["completed_at"] is None
@@ -109,7 +112,7 @@ class TestDependencyResolution:
     async def test_unmirrored_upstream_is_kept_as_provenance_not_a_fake_id(
         self, client, project
     ):
-        """CC 的 id 绝不能冒充 OS 任务 id 混进 depends_on。"""
+        """A CC id must never impersonate an OS task id and sneak into depends_on."""
         data = _mirror(
             client, project.id, cc_task_id="20", cc_blocked_by=["19", "18"]
         ).json()["data"]

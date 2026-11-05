@@ -1,14 +1,15 @@
-"""批 3 ⑦：hook_translator 里 decision_log 的两个死分支。
+"""Batch 3 (7): the two dead branches for decision_log in hook_translator.
 
-PreToolUse 载荷的 tool_name 是**客户端全名**（mcp__ai-team-os__meeting_create），
-而分支拿裸名字面量比对：
+The tool_name in a PreToolUse payload is the **client's full name** (mcp__ai-team-os__meeting_create),
+while the branches compare against bare-name literals:
 
-1. ``tool_name == "meeting_start"`` —— 工具根本不叫这个名（真名 meeting_create），
-   名字对了前缀也还差着，双重错位；
-2. ``tool_name == "task_run"`` —— 差一个 mcp__ai-team-os__ 前缀。
+1. ``tool_name == "meeting_start"`` — the tool is not called that at all (its real name is meeting_create),
+   and even if the name were right the prefix would still be off — a double misalignment;
+2. ``tool_name == "task_run"`` — missing the mcp__ai-team-os__ prefix by one.
 
-两个分支从上线起没进过一次，decision.* 决策事件流长期空转。剥前缀用
-always_load.normalize_tool_name（现成的；已删除的 pipeline/tool_classifier 不可引用）。
+Both branches never fired once since launch; the decision.* decision event stream idled for a long time. Prefix
+stripping uses
+always_load.normalize_tool_name (an existing one; the deleted pipeline/tool_classifier must not be referenced).
 """
 
 from __future__ import annotations
@@ -56,11 +57,11 @@ async def test_meeting_create_emits_decision_event(translator):
     captured = await _run(
         translator,
         "mcp__ai-team-os__meeting_create",
-        {"topic": "批 3 收口评审", "participants": ["a", "b"], "purpose": "定方案"},
+        {"topic": "Batch 3 closing review", "participants": ["a", "b"], "purpose": "Settle the plan"},
     )
     decisions = [d for t, d in captured if t == "decision.meeting_started"]
     assert len(decisions) == 1
-    assert decisions[0]["topic"] == "批 3 收口评审"
+    assert decisions[0]["topic"] == "Batch 3 closing review"
     assert decisions[0]["participants"] == ["a", "b"]
 
 
@@ -69,18 +70,18 @@ async def test_task_run_emits_decision_event(translator):
     captured = await _run(
         translator,
         "mcp__ai-team-os__task_run",
-        {"title": "修 decision_log", "agent_name": "fixer", "description": "缘由"},
+        {"title": "Fix decision_log", "agent_name": "fixer", "description": "Rationale"},
     )
     decisions = [d for t, d in captured if t == "decision.task_assigned"]
     assert len(decisions) == 1
-    assert decisions[0]["task_title"] == "修 decision_log"
+    assert decisions[0]["task_title"] == "Fix decision_log"
     assert decisions[0]["assigned_to"] == "fixer"
 
 
 @pytest.mark.asyncio
 async def test_bare_tool_name_still_works(translator):
-    """裸名（无前缀）调用也认——归一化是幂等的。"""
-    captured = await _run(translator, "meeting_create", {"topic": "裸名"})
+    """Calling with a bare name (no prefix) is also recognized — normalization is idempotent."""
+    captured = await _run(translator, "meeting_create", {"topic": "Bare name"})
     assert len([d for t, d in captured if t == "decision.meeting_started"]) == 1
 
 
@@ -92,7 +93,7 @@ async def test_unrelated_tool_emits_no_decision(translator):
 
 @pytest.mark.asyncio
 async def test_retired_meeting_start_name_is_gone(translator):
-    """旧字面量 meeting_start 不是真工具名，不该再有任何分支认它。"""
+    """The old literal meeting_start is not a real tool name; no branch should recognize it any more."""
     import inspect
 
     src = inspect.getsource(HookTranslator._on_pre_tool_use)

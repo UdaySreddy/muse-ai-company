@@ -1,7 +1,8 @@
-"""批 9 项(5)：worktree / 后台任务 / Plan mode / Skill 四处盲区接入观测。
+"""Batch 9 item (5): connecting worktree / background tasks / Plan mode / Skill — four blind spots — to observability.
 
-四类都属于"CC 有、OS 完全看不见"的新形态。本批只做最小集——事件进得来、
-数字看得见——不新建表、不新建页面。
+All four kinds are new forms that 'CC has and the OS cannot see at all'. This batch makes only the minimal set — events
+can come in,
+numbers can be seen — no new tables, no new pages.
 """
 
 from __future__ import annotations
@@ -22,7 +23,8 @@ SESSION = "80d0cc5e-186a-4948-9e99-39ecfcf17730"
 
 
 class _RecordingBus:
-    """与生产同样严格：不认识的事件类型当场炸，stub 不得比生产宽松。"""
+    """As strict as production: an unrecognized event type blows up on the spot; the stub must not be more lenient
+    than production."""
 
     def __init__(self):
         self.events: list[tuple[str, str, dict]] = []
@@ -50,18 +52,19 @@ async def translator(repo):
 
 
 class TestInputSummaries:
-    """48K 条工具事件里，这些工具此前只留下一堵 200 字的 JSON 墙。"""
+    """Among 48K tool events, these tools previously left only a 200-character JSON wall."""
 
     @pytest.mark.parametrize(
         ("tool", "tool_input", "expected"),
         [
             ("Skill", {"skill": "os-workflow", "args": "x"}, "os-workflow"),
-            ("SendMessage", {"to": "main", "summary": "批9 完成", "message": "长正文…"}, "批9 完成"),
-            ("TaskCreate", {"subject": "修桥", "description": "d"}, "修桥"),
-            ("TaskUpdate", {"subject": "修桥", "status": "completed"}, "修桥"),
-            ("TaskStop", {"taskId": "wf_1", "reason": "关机"}, "wf_1"),
-            ("AskUserQuestion", {"question": "要不要换判据?"}, "要不要换判据?"),
-            ("ExitPlanMode", {"plan": "第一步…"}, "第一步…"),
+            ("SendMessage", {"to": "main", "summary": "Batch 9 complete", "message": "Long body text…"},
+                "Batch 9 complete"),
+            ("TaskCreate", {"subject": "Fix the bridge", "description": "d"}, "Fix the bridge"),
+            ("TaskUpdate", {"subject": "Fix the bridge", "status": "completed"}, "Fix the bridge"),
+            ("TaskStop", {"taskId": "wf_1", "reason": "Shutdown"}, "wf_1"),
+            ("AskUserQuestion", {"question": "Should we change the criterion?"}, "Should we change the criterion?"),
+            ("ExitPlanMode", {"plan": "Step one…"}, "Step one…"),
             ("EnterWorktree", {"name": "wt-a"}, "wt-a"),
             ("WebSearch", {"query": "claude hooks"}, "claude hooks"),
         ],
@@ -84,7 +87,7 @@ class TestDecisionMoments:
     @pytest.mark.asyncio
     async def test_plan_text_is_kept_whole_not_truncated(self, translator):
         tr, bus = translator
-        plan = "第一步…" * 300
+        plan = "Step one…" * 300
         await tr.handle_event(
             {
                 "hook_event_name": "PostToolUse",
@@ -94,7 +97,7 @@ class TestDecisionMoments:
             }
         )
         (event,) = bus.of("decision.plan_presented")
-        assert event["plan"] == plan  # 正文完整，不是 200 字摘要
+        assert event["plan"] == plan  # The body is complete, not a 200-character summary
         assert event["plan_chars"] == len(plan)
 
     @pytest.mark.asyncio
@@ -105,14 +108,14 @@ class TestDecisionMoments:
                 "hook_event_name": "PostToolUse",
                 "session_id": SESSION,
                 "tool_name": "AskUserQuestion",
-                "tool_input": {"question": "停心跳写入?", "options": ["停", "不停"]},
-                "tool_response": "停",
+                "tool_input": {"question": "Stop heartbeat writes?", "options": ["Stop", "Do not stop"]},
+                "tool_response": "Stop",
             }
         )
         (event,) = bus.of("decision.user_asked")
-        assert event["question"] == "停心跳写入?"
-        assert event["options"] == ["停", "不停"]
-        assert event["answer"] == "停"
+        assert event["question"] == "Stop heartbeat writes?"
+        assert event["options"] == ["Stop", "Do not stop"]
+        assert event["answer"] == "Stop"
 
     @pytest.mark.asyncio
     async def test_empty_plan_records_nothing(self, translator):
@@ -146,7 +149,7 @@ class TestWorktreeEvents:
     @pytest.mark.asyncio
     async def test_create_and_remove_record_their_own_fields(self, translator):
         tr, bus = translator
-        # CC 的两个载荷字段不对称：create 只给 name，remove 只给 worktree_path。
+        # CC's two payload fields are asymmetric: create gives only name, remove gives only worktree_path.
         await tr.handle_event(
             {"hook_event_name": "WorktreeCreate", "session_id": SESSION, "name": "wt-batch9"}
         )
@@ -193,19 +196,20 @@ class TestBackgroundJobs:
         (job,) = background_jobs.read_jobs()
         assert job.job_id == "44fbf725"
         assert job.state == "done"
-        assert job.model == "fable"  # 从扁平的 respawnFlags 里挑出来
+        assert job.model == "fable"  # Picked out of the flat respawnFlags
         assert job.created_at == datetime(2026, 7, 15, 4, 9, 27, 12000, tzinfo=UTC)
 
     def test_in_flight_is_absence_of_a_terminal_stamp(self, tmp_path, monkeypatch):
-        """不猜 state 字符串：本机实测有 done / stopped 两种终态，
-        而 CC 二进制里没有一处枚举把它们一起列出——白名单必漏。"""
+        """Do not guess state strings: local measurements show two terminal states, done / stopped,
+        and nowhere in the CC binary is there an enumeration listing them together — a whitelist would inevitably
+        miss some."""
         self._write(
             tmp_path,
             monkeypatch,
             [
-                self._record("aaaa"),  # 有 firstTerminalAt = 终态
+                self._record("aaaa"),  # Has firstTerminalAt = terminal
                 self._record("bbbb", state="running", firstTerminalAt=None),
-                self._record("cccc", state="某个没见过的状态", firstTerminalAt=None),
+                self._record("cccc", state="some never-seen state", firstTerminalAt=None),
             ],
         )
         assert {j.job_id for j in background_jobs.in_flight_jobs()} == {"bbbb", "cccc"}
@@ -240,10 +244,11 @@ class TestBackgroundJobs:
 
 
 class TestSendMessageMirror:
-    """CC 队友私信由 CC 自管邮箱，OS 的定位是只读镜像。
+    """CC teammate direct messages are handled by CC's own mailbox; the OS's positioning is a read-only mirror.
 
-    刻意**不写进 channel_messages**：那张表是 OS 自有广播频道
-    （已规划未启用）的地盘，与队友私信语义不同，合流不可逆。
+    Deliberately **not written into channel_messages**: that table is the territory of the OS's own broadcast channel
+    (planned but not yet enabled), whose semantics differ from teammate direct messages; merging them would be
+    irreversible.
     """
 
     @pytest.mark.asyncio
@@ -255,20 +260,20 @@ class TestSendMessageMirror:
                 "session_id": SESSION,
                 "agent_type": "batch9",
                 "tool_name": "SendMessage",
-                "tool_input": {"to": "main", "summary": "批9 完成", "message": "详细汇报正文"},
+                "tool_input": {"to": "main", "summary": "Batch 9 complete", "message": "Detailed report body"},
             }
         )
         (event,) = bus.of("cc.message_sent")
-        # 收件人只在这里有记录 —— cc.tool_use 只存工具名与一句摘要
+        # The recipient is only recorded here — cc.tool_use stores only the tool name and a one-line summary
         assert event["recipient"] == "main"
         assert event["sender"] == "batch9"
-        assert event["summary"] == "批9 完成"
-        assert event["message"] == "详细汇报正文"
+        assert event["summary"] == "Batch 9 complete"
+        assert event["message"] == "Detailed report body"
 
     @pytest.mark.asyncio
     async def test_long_body_is_capped_but_true_length_kept(self, translator):
         tr, bus = translator
-        body = "长" * 9000
+        body = "x" * 9000
         await tr.handle_event(
             {
                 "hook_event_name": "PostToolUse",
@@ -283,7 +288,7 @@ class TestSendMessageMirror:
 
     @pytest.mark.asyncio
     async def test_structured_protocol_message_is_serialised_not_dropped(self, translator):
-        """SendMessage 的 message 也可以是协议对象（shutdown_response 等）。"""
+        """SendMessage's message can also be a protocol object (shutdown_response etc.)."""
         tr, bus = translator
         await tr.handle_event(
             {
@@ -298,7 +303,7 @@ class TestSendMessageMirror:
 
     @pytest.mark.asyncio
     async def test_nothing_is_written_to_the_channel_lane(self, translator, repo):
-        """回归护栏：镜像绝不能悄悄变成第五张消息表的写入口。"""
+        """Regression guardrail: the mirror must never quietly become a write entry point for a fifth message table."""
         tr, _bus = translator
         await tr.handle_event(
             {
