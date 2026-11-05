@@ -1,6 +1,4 @@
-import type { Translations } from './zh';
-
-export const en: Translations = {
+export const en = {
   nav: {
     label: 'Navigation',
     overview: 'Overview',
@@ -424,7 +422,7 @@ export const en: Translations = {
     projectNamePlaceholder: 'Enter project name',
     projectDesc: 'Project Description',
     projectDescPlaceholder: 'Enter project description',
-    interfaceLang: 'Interface Language / 界面语言',
+    interfaceLang: 'Interface Language',
     langSwitchHint: 'Switch language, takes effect immediately',
     darkMode: 'Dark Mode',
     darkModeHint: 'Toggle dark/light theme',
@@ -859,3 +857,14 @@ export const en: Translations = {
     freeInput: 'Free input',
   },
 };
+
+// Recursive loosening: string leaves -> string, functions keep their type, objects recurse
+type DeepLoosen<T> = {
+  [K in keyof T]: T[K] extends (...args: infer A) => infer R
+    ? (...args: A) => R
+    : T[K] extends string
+      ? string
+      : DeepLoosen<T[K]>;
+};
+
+export type Translations = DeepLoosen<typeof en>;
