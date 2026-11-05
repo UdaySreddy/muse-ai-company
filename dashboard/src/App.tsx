@@ -57,7 +57,7 @@ function AppWithLanguage() {
               <Route path="agent-live" element={<ErrorBoundary><AgentLivePage /></ErrorBoundary>} />
               <Route path="briefings" element={<ErrorBoundary><BriefingsPage /></ErrorBoundary>} />
               <Route path="reports" element={<ErrorBoundary><ReportsPage /></ErrorBoundary>} />
-              {/* pipeline 已整域退役（2026-07）：页面已删，仅留重定向让旧书签不断链 */}
+              {/* The pipeline domain was fully retired (2026-07): pages deleted; only a redirect remains so old bookmarks do not break */}
               <Route path="pipelines" element={<Navigate to="/workflows" replace />} />
               <Route path="workflows" element={<ErrorBoundary><WorkflowsPage /></ErrorBoundary>} />
               <Route path="workflows/:wfId" element={<ErrorBoundary><WorkflowDetailPage /></ErrorBoundary>} />
@@ -68,8 +68,8 @@ function AppWithLanguage() {
               <Route path="ecosystem/batches" element={<ErrorBoundary><EcosystemBatchesPage /></ErrorBoundary>} />
               <Route path="ecosystem/batches/:batchId" element={<ErrorBoundary><EcosystemBatchDetailPage /></ErrorBoundary>} />
               <Route path="ecosystem/:repoId" element={<ErrorBoundary><EcosystemDetailPage /></ErrorBoundary>} />
-              {/* 内部诊断页：用量归因（设计文档 §5）。刻意排在 settings 之前、
-                  不占靠前位置——它不是首屏叙事材料。 */}
+              {/* Internal diagnostics page: usage attribution (design doc §5). Deliberately placed before settings,
+                  not in a prominent position — it is not first-screen narrative material. */}
               <Route path="usage" element={<ErrorBoundary><UsagePage /></ErrorBoundary>} />
               <Route path="settings" element={<ErrorBoundary><SettingsPage /></ErrorBoundary>} />
             </Route>

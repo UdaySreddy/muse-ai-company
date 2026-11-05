@@ -278,7 +278,7 @@
 
 /* ============================================================ */
 
-/* 进行中任务 — 柔和呼吸灯 */
+/* In-progress tasks — soft breathing glow */
 .animate-pulse-subtle {
   animation: pulse-subtle 2.5s ease-in-out infinite;
 }
