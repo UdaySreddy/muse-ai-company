@@ -1,80 +1,74 @@
 ---
 name: os-workflow
-description: 在 AI Team OS 项目里使用 CC 内置 Workflow（ultracode）时，让工作流产出回写 OS 的标准做法。当 Leader 准备调用 Workflow 工具编排子 agent 时使用。
+description: When using CC's built-in Workflow (ultracode) in an AI Team OS project, the standard practice for making workflow output write back to the OS. Use when the Leader is about to call the Workflow tool to orchestrate sub-agents.
 ---
 
-# OS Workflow — 用 CC 工作流，但让产出回流 OS
+# OS Workflow — Use CC Workflows, but Let the Output Flow Back into the OS
 
-## 背景
+## Background
 
-调用 Workflow 后，每个内部 agent 会被 hook 自动注册成一个 OS 团队（`workflow-<wf_id>`，
-一次 workflow = 一个团队）。追踪是自动的，但**工作内容不会自己入库**——下面两件事必须你做。
+After you call Workflow, each internal agent is automatically registered by a hook as an OS team (`workflow-<wf_id>`; one workflow = one team). Tracking is automatic, but **the work content does not store itself** — you must do the following two things.
 
-## 1. 总任务上墙（Leader 职责，不变）
+## 1. Put the overall task on the wall (Leader's duty, unchanged)
 
-调用 Workflow 前/后，把这次工作方向用 `task_create` 登记到任务墙并置 running。
-Leader 负责决策、设计、记录；执行交给 workflow——但**账要记在 OS**。
-完成后 `task_update` 置 completed 并填 result。
+Before/after calling Workflow, register this work direction on the task wall with `task_create` and set it to running. The Leader handles decisions, design, and records; execution goes to the workflow — but **the accounts must be kept in the OS**. When done, `task_update` it to completed and fill in the result.
 
-## 2. 在每个 workflow agent 的 prompt 里嵌入「回写指令」
+## 2. Embed a "write-back instruction" in every workflow agent's prompt
 
-把下面这段**粘进你写的 workflow 脚本里每个 `agent()` 的 prompt 末尾**（已验证 workflow
-agent 能调 OS 的 MCP 工具 + HTTP API，非沙盒）：
+Paste the following snippet **at the end of the prompt of every `agent()` in the workflow script you write** (it is verified that workflow agents can call the OS's MCP tools + HTTP API; they are not sandboxed):
 
 ```
-【回写 OS（收尾必做）】
-1. ToolSearch 加载：select:mcp__ai-team-os__task_memo_add,mcp__ai-team-os__report_save
-2. 完成本职工作后：
-   - task_memo_add(task_id="<总任务id>", content="<这步干了啥+关键结论>", memo_type="progress")
-   - 重要产出再 report_save(...) 落库，并把 report_id 写进 memo
-3. 你在项目目录运行，MCP 自动带项目头，无需关心端口/项目 id。
+[Write back to the OS (mandatory at wrap-up)]
+1. Load via ToolSearch: select:mcp__ai-team-os__task_memo_add,mcp__ai-team-os__report_save
+2. After finishing your own work:
+   - task_memo_add(task_id="<overall task id>", content="<what this step did + key conclusions>", memo_type="progress")
+   - For important output, also report_save(...) it into the DB, and write the report_id into the memo
+3. You are running in the project directory; the MCP automatically carries the project headers, so you do not need to worry about ports/project ids.
 ```
 
-在脚本里把 `<总任务id>` 用第 1 步 `task_create` 拿到的 id 通过 prompt 字符串插值传进去。
+In the script, pass the `<overall task id>` obtained from step 1's `task_create` into the prompt via string interpolation.
 
-### 脚本写法示例
+### Script Writing Example
 
 ```js
-// Leader 先 task_create 拿到 taskId（OS MCP），再写 workflow：
-const WRITEBACK = `\n【回写 OS（收尾必做）】\n1. ToolSearch: select:mcp__ai-team-os__task_memo_add\n2. 完成后 task_memo_add(task_id="${taskId}", content="...", memo_type="progress")\n3. 项目目录运行，MCP 自动带项目头。`
+// The Leader first task_creates to get the taskId (OS MCP), then writes the workflow:
+const WRITEBACK = `\n[Write back to the OS (mandatory at wrap-up)]\n1. ToolSearch: select:mcp__ai-team-os__task_memo_add\n2. When done, task_memo_add(task_id="${taskId}", content="...", memo_type="progress")\n3. Running in the project directory; the MCP automatically carries the project headers.`
 
-const r = await agent('你的实际任务……' + WRITEBACK, { schema, label })
+const r = await agent('Your actual task…' + WRITEBACK, { schema, label })
 ```
 
-## 3. 模型档位纪律（用户裁定）
+## 3. Model Tier Discipline (user ruling)
 
-两档制：**Fable = 编排层**（统筹/架构裁决/终审），**Opus = 执行层**（一切 worker）。
-不传 model 即继承主会话模型，所以在 Fable 会话里裸派会整场按 Fable 价率烧：
+A two-tier system: **Fable = the orchestration layer** (coordination/architecture rulings/final review), **Opus = the execution layer** (all workers). Passing no model means inheriting the main session's model, so dispatching bare inside a Fable session burns the whole run at Fable rates:
 
-- 每个 `agent()` **默认显式带 `model: 'opus'`**（层级别名，浮动到最新 Opus，不写死型号）；
-- 仅**终审/对抗裁决/最高难度修复**的 stage 用 `model: 'fable'`（通常配 `effort: 'xhigh'`）。
+- Every `agent()` **carries `model: 'opus'` explicitly by default** (a tier alias that floats to the latest Opus; never pin a model number);
+- Only the **final review / adversarial ruling / hardest-fix** stages use `model: 'fable'` (usually paired with `effort: 'xhigh'`).
 
 ```js
-// 典型分层：执行 stage 全 opus，终审 stage 才 fable
+// Typical layering: execution stages all opus; only the final-review stage is fable
 const found = await parallel(ITEMS.map(x => () =>
   agent(findPrompt(x) + WRITEBACK, { model: 'opus', schema: FINDINGS })))
 const verdict = await agent(judgePrompt(found) + WRITEBACK,
   { model: 'fable', effort: 'xhigh', schema: VERDICT })
 ```
 
-注：effort 由脚本作者按需自选，治理层不设档位制度；本纪律只软约束，无 hook 硬拦。
+Note: effort is chosen by the script author as needed; the governance layer sets no tier system for it. This discipline is a soft constraint only, with no hook hard block.
 
-## 4. 结构化输出体量纪律（两次生产实锤）
+## 4. Structured Output Size Discipline (two production confirmations)
 
-给 agent 配 `schema` 时，prompt 里必须写**显式体量硬约束**（每字段字符上限、条目数上限、"宁可精炼不可超限"）——只靠 schema 的 `maxLength` 拦不住：agent 超限会陷入 StructuredOutput 重试循环，耗尽重试上限（5）后整路阵亡返回 `null`。
+When giving an agent a `schema`, the prompt must state **explicit size hard constraints** (per-field character caps, item-count caps, "better concise than over the limit") — relying on the schema's `maxLength` alone cannot stop it: an agent that exceeds the limit falls into a StructuredOutput retry loop, and after exhausting the retry cap (5) the whole route dies and returns `null`.
 
-- schema 的 `maxLength` 给出安全余量；长文本产出改让 agent 直接 Write 文件，结构化输出只返摘要与路径。
-- 某一路阵亡后用 resume 修复：只改失败路的 prompt，其余路 `(prompt, opts)` 不动，走缓存零成本重放。
+- Give the schema's `maxLength` a safety margin; for long-text output, have the agent Write a file directly, and let the structured output return only a summary and the path.
+- After a route dies, repair with resume: change only the failed route's prompt, leave the other routes' `(prompt, opts)` untouched, and replay from cache at zero cost.
 
-## 0. 先确认 ultracode 已开启
+## 0. First confirm ultracode is on
 
-ultracode 不是常驻模式，需用户手动开启：
+ultracode is not a resident mode; the user must enable it manually:
 
-- 会话未开启 → **先提示用户开启**，再调 Workflow；已开启（有 system-reminder 确认）→ 直接编排。
-- 生态调研的产物必须回写 ecosystem 表（`ecosystem_apply_shallow_summary` /
-  `ecosystem_apply_quality_review`），否则台账与 `/ecosystem` 页面看不到。
+- Session not enabled → **prompt the user to enable it first**, then call Workflow; already enabled (confirmed by a system-reminder) → orchestrate directly.
+- Ecosystem research output must be written back to the ecosystem tables (`ecosystem_apply_shallow_summary` / `ecosystem_apply_quality_review`), otherwise the ledger and the `/ecosystem` page cannot see it.
 
-## 要点
+## Key Points
 
-- 回写走 **MCP 工具优先**（自动项目隔离）；HTTP `localhost:8000/api/*` 是等价兜底。
-- 安全护栏（危险命令/敏感文件/密钥拦截）对 workflow agent 照常生效。
+- Write-backs go through **MCP tools first** (automatic project isolation); HTTP `localhost:8000/api/*` is an equivalent fallback.
+- The safety guardrails (dangerous commands/sensitive files/secret interception) apply to workflow agents as usual.
