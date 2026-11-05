@@ -338,8 +338,10 @@ def test_shutdown_endpoint_returns_pid_and_schedules_exit():
 
 
 def test_restart_pid_alive_zombie_is_dead(monkeypatch):
-    """A defunct zombie must count as dead — when a child process lingers as a zombie after a successful graceful shutdown,
-    the old implementation's pid_exists judged it alive and falsely reported shutdown_timeout (2026-07-06 inspection record)."""
+    """A defunct zombie must count as dead — when a child process lingers as a zombie after a successful graceful
+    shutdown,
+    the old implementation's pid_exists judged it alive and falsely reported shutdown_timeout (2026-07-06 inspection
+    record)."""
     import sys as _sys
     import types as _types
 

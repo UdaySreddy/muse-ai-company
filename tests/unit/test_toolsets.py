@@ -1,7 +1,8 @@
 """Tool group switches + read-only tier unit tests (tool progressive loading P2).
 
 Coverage: AITEAM_TOOLSETS parsing (all/default/list/unknown group name warning/mixed incremental),
-the default group hard cap of ≤50, AITEAM_READONLY removing write tools while keeping read tools, and the default full set of 112 unchanged.
+the default group hard cap of ≤50, AITEAM_READONLY removing write tools while keeping read tools, and the default full
+set of 112 unchanged.
 """
 
 from __future__ import annotations
@@ -28,7 +29,8 @@ DEFAULT_HARD_CAP = 50
 def _registered_names(monkeypatch, env: dict[str, str] | None = None) -> list[str]:
     """Under the given env, register all modules and return the bare tool name list.
 
-    Go through the public ``list_tools()`` rather than reading the private component table — the private surface is a guaranteed blow-up point of fastmcp 4.0,
+    Go through the public ``list_tools()`` rather than reading the private component table — the private surface is a
+    guaranteed blow-up point of fastmcp 4.0,
     and there is no point in a test double hitting it before the production code does.
     """
     monkeypatch.delenv("AITEAM_TOOLSETS", raising=False)
@@ -123,7 +125,8 @@ def test_toolsets_all_registers_full_total(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_default_group_under_hard_cap(monkeypatch: pytest.MonkeyPatch) -> None:
-    """After registering the default group, the tool count hard cap is ≤50 (universal guardrail + the official 30-50 inflection point)."""
+    """After registering the default group, the tool count hard cap is ≤50 (universal guardrail + the official 30-50
+    inflection point)."""
     names = _registered_names(monkeypatch, {"AITEAM_TOOLSETS": "default"})
     assert len(names) <= DEFAULT_HARD_CAP
     # Representative core-group tools must be present

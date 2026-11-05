@@ -130,10 +130,12 @@ class TestStaleTaskwallWarning:
 
 
 class TestTaskwallCatchupGovernance:
-    """Reminder governance ①: reset events expand to all task_*/taskwall_* + a per-session reminder cap of 2, then silence."""
+    """Reminder governance ①: reset events expand to all task_*/taskwall_* + a per-session reminder cap of 2, then
+    silence."""
 
     def test_task_create_resets_timer(self):
-        # task_create is a task-wall operation and should reset the timer (the old implementation only recognized the two view tools)
+        # task_create is a task-wall operation and should reset the timer (the old implementation only recognized the
+        # two view tools)
         stale_ago = time.time() - 2100
         state = {"last_taskwall_view": stale_ago}
         event = {
@@ -279,13 +281,15 @@ class TestSessionBucketHelper:
 
 
 class TestReportFormatDirectionGating:
-    """Reminder governance ⑤: the report-format reminder fires only for subagent sessions (member reports), excluding Leader sessions."""
+    """Reminder governance ⑤: the report-format reminder fires only for subagent sessions (member reports), excluding
+    Leader sessions."""
 
     _MSG = {
         "to": "team-lead",
         "message": (
             "The task is done, I did a lot of work, changed several files, and ran the tests once,"
-            "but this message deliberately does not write those three fields in the standard format, padded past one hundred characters to trigger the check"
+            "but this message deliberately does not write those three fields in the "
+                "standard format, padded past one hundred characters to trigger the check"
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         ),
     }
@@ -331,9 +335,12 @@ class TestCommitBranchOwnership:
     """A1'(S5) commit-time branch assertion: who claimed which branch on which checkout.
 
     Ruling semantics (debate 503e07f1 topic A): all state lives in the hook's own supervisor state, no API calls;
-    the first commit records (checkout, agent)→branch+ts; switching one's own branch warns loudly without blocking; landing on another's record within 24h
-    hard-blocks with exit(2); another's expired record degrades to a warning (so a dead agent's record does not harm a legitimate taker-over);
-    a git probe failure is fail-loud (neither passes nor hard-blocks; it explicitly declares the check was not performed).
+    the first commit records (checkout, agent)→branch+ts; switching one's own branch warns loudly without blocking;
+    landing on another's record within 24h
+    hard-blocks with exit(2); another's expired record degrades to a warning (so a dead agent's record does not harm a
+    legitimate taker-over);
+    a git probe failure is fail-loud (neither passes nor hard-blocks; it explicitly declares the check was not
+    performed).
     """
 
     _CHECKOUT = "/repo/main"
@@ -459,7 +466,8 @@ class TestCommitBranchOwnership:
                 time.time() - _BRANCH_OWNERSHIP_PRUNE_TTL - 60
             )
             _check_workflow_reminders(self._event("agent-9"), state)
-        # Records expired to the pruning line are removed wholesale; the state file does not bloat indefinitely with the agent count
+        # Records expired to the pruning line are removed wholesale; the state file does not bloat indefinitely with the
+        # agent count
         assert "agent-1" not in self._records(state)
         assert "agent-9" in self._records(state)
 
@@ -467,7 +475,8 @@ class TestCommitBranchOwnership:
         state: dict = {}
         with self._git("feature-a", checkout="/repo/main"):
             _check_workflow_reminders(self._event("agent-1"), state)
-        # A same-named branch in another worktree should not be treated as the same claim (git does not allow it anyway, but the state keys must separate)
+        # A same-named branch in another worktree should not be treated as the same claim (git does not allow it anyway,
+        # but the state keys must separate)
         with self._git("feature-a", checkout="/repo/wt-1"):
             warnings = _check_workflow_reminders(self._event("agent-2"), state)
         assert self._own(warnings) == []

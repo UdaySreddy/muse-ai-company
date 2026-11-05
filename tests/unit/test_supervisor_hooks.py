@@ -50,7 +50,8 @@ class TestLeaderDoingTooMuch:
         assert result is None
 
     def test_workflow_call_resets_counter(self):
-        """A Workflow (ultracode delegation) call should also reset the counter — delegating via a CC workflow should not be nagged with 'why not delegate'."""
+        """A Workflow (ultracode delegation) call should also reset the counter — delegating via a CC workflow should
+        not be nagged with 'why not delegate'."""
         state: dict = {}
         bash_event = {"tool_name": "Bash", "hook_event_name": "PreToolUse"}
         workflow_event = {"tool_name": "Workflow", "hook_event_name": "PreToolUse"}
@@ -66,7 +67,8 @@ class TestLeaderDoingTooMuch:
         """Workflow orchestration is also a delegation action and should reset the counter.
 
         (The original test_team_create_resets_counter: the TeamCreate tool no longer exists as of CC v2.1.219
-        — removed from _DELEGATION_TOOLS after the 2026-07-25 tool-surface check; the test now tests Workflow, still in the roster;
+        — removed from _DELEGATION_TOOLS after the 2026-07-25 tool-surface check; the test now tests Workflow, still in
+        the roster;
         the Agent direct-dispatch reset is covered by test_agent_dispatch_resets_counter.)
         """
         state: dict = {}

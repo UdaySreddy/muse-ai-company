@@ -18,7 +18,8 @@ class TestVersion:
     """Test the version number output."""
 
     def test_version_flag(self) -> None:
-        """`aiteam --version` outputs the version number (following the real package version; hard-coding is not allowed)."""
+        """`aiteam --version` outputs the version number (following the real package version; hard-coding is not
+        allowed)."""
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
         assert "AI Team OS" in result.output

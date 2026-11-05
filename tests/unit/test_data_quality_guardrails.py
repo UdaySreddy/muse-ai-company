@@ -5,22 +5,27 @@ Three confirmed findings (2026-07-28 production ledger forensics):
 1. **Test stubs leaking into the real ledger**: ``tests/unit/test_context_scripts.py`` runs the real hook
    ``pre_compact_save.py`` as a subprocess with ``session_id="test-session"``. When that hook
    cannot get the port file it **falls back to localhost:8000**, i.e. the production instance — so every test run
-   writes a ``session.compact_checkpoint`` into the real ledger. Of the 18 checkpoints in the production database, 14 came
+   writes a ``session.compact_checkpoint`` into the real ledger. Of the 18 checkpoints in the production database, 14
+   came
    this way (all ``trigger=manual`` + ``cwd=""``, matching the test inputs field by field); real data
-   is only 4. The guardrail sits at the **single write entry point**: session identities with reserved prefixes (test-/demo-) are never
+   is only 4. The guardrail sits at the **single write entry point**: session identities with reserved prefixes
+   (test-/demo-) are never
    persisted — no matter how the tests hit it, the ledger stays clean.
 
 2. **compact_summary stripped by the size gate**: when the overall payload is >32KB, ``send_event.py`` keeps only
    ``ESSENTIAL_FIELDS``, and neither ``compact_summary`` nor ``trigger`` is among them. Compression summaries
-   routinely run to tens of thousands of characters, so in large-summary scenarios both vanish from the payload the server receives and are persisted
+   routinely run to tens of thousands of characters, so in large-summary scenarios both vanish from the payload the
+   server receives and are persisted
    as ``summary_chars=0`` — exactly the shape of that production record ``{session_id, trigger:"",
    summary_chars:0}``. The body is **deliberately not stored** anyway, so stop shipping the body over and computing:
-   compute the length on the hook side on the spot, drop the body, and let the length pass the gate as a must-keep field.
+   compute the length on the hook side on the spot, drop the body, and let the length pass the gate as a must-keep
+   field.
 
 3. **decision.user_asked field misalignment**: the extraction logic read the singular ``tool_input["question"]``,
    while AskUserQuestion's real payload is the **plural ``questions`` array** (each item containing
    question/header/options). As a result, in 6 production ruling records question/options/agent_name
-   were all empty and the real content was all stuffed into the answer JSON — the human-review scene was effectively unrecorded.
+   were all empty and the real content was all stuffed into the answer JSON — the human-review scene was effectively
+   unrecorded.
 """
 
 from __future__ import annotations
@@ -132,7 +137,8 @@ class TestReservedIdGuardrail:
 class TestCompactSummaryChars:
     @pytest.mark.asyncio()
     async def test_precomputed_chars_wins(self, translator):
-        """The hook-side computed length wins — the body was already dropped on the hook side, so the server has no len() to compute."""
+        """The hook-side computed length wins — the body was already dropped on the hook side, so the server has no
+        len() to compute."""
         tr, bus = translator
         await tr.handle_event(
             {
@@ -162,7 +168,8 @@ class TestCompactSummaryChars:
         assert event["summary_chars"] == 4321
 
     def test_hook_precomputes_and_drops_body(self):
-        """Hook side: the body is replaced by the length, and the length is a must-keep field (otherwise the size gate zeroes it)."""
+        """Hook side: the body is replaced by the length, and the length is a must-keep field (otherwise the size
+        gate zeroes it)."""
         from aiteam.hooks import send_event
 
         payload = send_event._trim_payload(

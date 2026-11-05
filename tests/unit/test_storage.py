@@ -54,10 +54,13 @@ async def test_get_or_create_team_creates_new(db_repository: StorageRepository) 
 
 
 async def test_get_or_create_team_concurrent_single_row(tmp_path) -> None:
-    """Concurrent find-or-create of the same-named team: no exception, exactly one row, all return the same id, exactly one created.
+    """Concurrent find-or-create of the same-named team: no exception, exactly one row, all return the same id, exactly
+    one created.
 
-    Use a **file database** (not an in-memory StaticPool) to reproduce production's independent-connection topology — each request takes an independent connection
-    from the pool; after the loser hits UNIQUE, re-fetching can see the winner's committed row. In-memory single-connection
+    Use a **file database** (not an in-memory StaticPool) to reproduce production's independent-connection topology —
+    each request takes an independent connection
+    from the pool; after the loser hits UNIQUE, re-fetching can see the winner's committed row. In-memory
+    single-connection
     StaticPool concurrent transaction snapshots are mutually invisible — not the real scenario.
     """
     import asyncio
@@ -78,7 +81,8 @@ async def test_get_or_create_team_concurrent_single_row(tmp_path) -> None:
 async def test_get_or_create_team_swallows_integrity_race(
     db_repository: StorageRepository, monkeypatch
 ) -> None:
-    """Deterministically cover the except branch: get misses first (simulating concurrency) → create hits UNIQUE → swallow the error and re-fetch the existing row."""
+    """Deterministically cover the except branch: get misses first (simulating concurrency) → create hits UNIQUE →
+    swallow the error and re-fetch the existing row."""
     seeded = await db_repository.create_team("forced-a", "coordinate")
 
     orig_get = db_repository.get_team_by_name

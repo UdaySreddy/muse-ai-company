@@ -1,9 +1,13 @@
 """The backfill script's behavioral contract — see docs/token-attribution-v1-design.md §7 phase 1.
 
-This script will rewrite nearly two thousand rows of production data in one pass, executed by the Creator personally, so its promises must be machine-checked:
-**write only empty columns** (never overwrite observed values), **idempotent** (a rerun changes nothing), **classify rather than silently skip**
-(rows that cannot be written must carry a reason code), **do not cross boundaries** (touch only the two columns of agents; ``workflow_agents.tokens``
-unchanged row by row — that is the ctx_last metric, and mixing it into usage_sum would permanently pollute history), **risks visible**
+This script will rewrite nearly two thousand rows of production data in one pass, executed by the Creator personally, so
+its promises must be machine-checked:
+**write only empty columns** (never overwrite observed values), **idempotent** (a rerun changes nothing), **classify
+rather than silently skip**
+(rows that cannot be written must carry a reason code), **do not cross boundaries** (touch only the two columns of
+agents; ``workflow_agents.tokens``
+unchanged row by row — that is the ctx_last metric, and mixing it into usage_sum would permanently pollute history),
+**risks visible**
 (when it would create (session,name) collisions, refuse to write, hard).
 
 All cases run only against temporary databases in tmp_path; not a single byte touches the production database.
@@ -25,7 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 _spec = importlib.util.spec_from_file_location("backfill_agent_session_ids", SCRIPT)
 assert _spec and _spec.loader
 bf = importlib.util.module_from_spec(_spec)
-# It must first be registered into sys.modules and then exec'd: the @dataclass in the script looks back into its own module namespace.
+# It must first be registered into sys.modules and then exec'd: the @dataclass in the script looks back into its own
+# module namespace.
 sys.modules["backfill_agent_session_ids"] = bf
 _spec.loader.exec_module(bf)
 
@@ -89,7 +94,8 @@ class TestJobASubagentSessionId:
         assert [(r.reason, r.value) for r in job.rows] == [("written", SESSION)]
 
     def test_never_overwrites_an_existing_value(self, db):
-        """An existing value differing from the derived value = conflict; not a single row moves. Overwriting would erase observation with inference."""
+        """An existing value differing from the derived value = conflict; not a single row moves. Overwriting would
+        erase observation with inference."""
         _add_agent(db, "a1", session_id=OTHER, transcript_path=_path(SESSION, "cc1"))
         job = bf.job_subagent_session_id(bf.load_agents(db))
         assert job.rows[0].reason == "conflict"
@@ -102,20 +108,23 @@ class TestJobASubagentSessionId:
         assert job.written() == []
 
     def test_missing_and_unparseable_paths_get_distinct_reason_codes(self, db):
-        """Rows that cannot be written must be classified: no-data ≠ zero; a single total cannot say whether they can be saved."""
+        """Rows that cannot be written must be classified: no-data ≠ zero; a single total cannot say whether they can
+        be saved."""
         _add_agent(db, "a1", transcript_path=None)
         _add_agent(db, "a2", transcript_path="/tmp/whatever.jsonl")
         job = bf.job_subagent_session_id(bf.load_agents(db))
         assert job.counts() == {"no_transcript_path": 1, "unparseable_path": 1}
 
     def test_slug_mismatch_is_flagged_but_never_changes_attribution(self, db):
-        """The slug is a lossy mapping; a mismatch is only a reminder and must never be used to change the ownership column."""
+        """The slug is a lossy mapping; a mismatch is only a reminder and must never be used to change the ownership
+        column."""
         _add_agent(db, "a1", transcript_path=_path(SESSION, "cc1", slug="-Volumes-other"))
         job = bf.job_subagent_session_id(bf.load_agents(db))
         row = job.rows[0]
         assert row.reason == "written"  # The session_id is backfilled anyway
         assert "does not match" in row.warn  # But a human can see it
-        assert row.column == "session_id"  # Only this column is written; project_id is untouched, not a single character
+        assert row.column == "session_id"  # Only this column is written; project_id is untouched, not a single
+        # character
 
     def test_leader_rows_are_not_this_jobs_business(self, db):
         _add_agent(db, "L1", name="Leader", role="leader")
@@ -156,7 +165,8 @@ class TestJobBLeaderTranscriptPath:
         assert job.rows[0].reason == "no_session_id"
 
     def test_team_name_prefix_is_not_accepted_as_identity(self, db, disk):
-        """A team name kept only the first 8 characters of the session — a prefix is not an identity and must not be used as a fallback."""
+        """A team name kept only the first 8 characters of the session — a prefix is not an identity and must not be
+        used as a fallback."""
         db.execute("update teams set config='{}' where id='t1'")
         db.commit()
         _add_agent(db, "L1", name="Leader", role="leader")
@@ -215,7 +225,8 @@ class TestApplyIsSafeAndIdempotent:
         con.close()
 
     def test_workflow_agents_tokens_is_never_touched(self, db, tmp_path, monkeypatch):
-        """R3: writing usage_sum into the ctx_last column would permanently pollute history and be indistinguishable afterwards."""
+        """R3: writing usage_sum into the ctx_last column would permanently pollute history and be indistinguishable
+        afterwards."""
         _add_agent(db, "a1", transcript_path=_path(SESSION, "cc1"))
         db.close()
         dbfile = tmp_path / "t.db"
@@ -225,7 +236,8 @@ class TestApplyIsSafeAndIdempotent:
         con.close()
 
     def test_apply_refuses_when_it_would_create_a_name_collision(self, db, tmp_path, monkeypatch):
-        """Multiple rows with the same (session,name) would make the registration dedup bypass reuse an old row and overwrite its token columns."""
+        """Multiple rows with the same (session,name) would make the registration dedup bypass reuse an old row and
+        overwrite its token columns."""
         _add_agent(db, "a1", name="Explore", transcript_path=_path(SESSION, "cc1"))
         _add_agent(db, "a2", name="Explore", transcript_path=_path(SESSION, "cc2"))
         db.close()

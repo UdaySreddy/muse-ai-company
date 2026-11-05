@@ -1,7 +1,10 @@
-"""TokenAttribution contract tests — the three rules of attribution v1 §2.5; they are acceptance conditions, not options.
+"""TokenAttribution contract tests — the three rules of attribution v1 §2.5; they are acceptance conditions, not
+options.
 
-The design deliberately pins these three rules **at the type layer rather than the view layer**, for a reason confirmed in the meeting: page annotations are soft
-constraints that oneself three months later will ignore. So what is tested here is not "does the page show the coverage", but
+The design deliberately pins these three rules **at the type layer rather than the view layer**, for a reason confirmed
+in the meeting: page annotations are soft
+constraints that oneself three months later will ignore. So what is tested here is not "does the page show the
+coverage", but
 "can the page physically obtain an isolated total" — the answer must be no.
 
 The three rules verbatim (§2.5):
@@ -54,24 +57,28 @@ class TestNoBareTotal:
 
     @pytest.mark.parametrize("banned", ["total", "total_tokens"])
     def test_no_total_attribute_or_property(self, banned):
-        # Fields being absent is not enough: adding an @property bypasses the first assertion, and that is exactly the most natural way to write
+        # Fields being absent is not enough: adding an @property bypasses the first assertion, and that is exactly the
+        # most natural way to write
         # "add a total for the frontend's convenience".
         assert not hasattr(TokenAttribution, banned)
         assert not hasattr(_sample(), banned)
 
     def test_no_attribute_sums_the_four_layers(self):
-        """No accessible member may exactly equal the sum of the four layers — renaming it sum/aggregate does not help."""
+        """No accessible member may exactly equal the sum of the four layers — renaming it sum/aggregate does not
+        help."""
         att = _sample()
         four_sum = sum(getattr(att, layer) for layer in TOKEN_LAYERS)
         for name in dir(att):
-            # model_* are Pydantic's own introspection interfaces; taking them from an instance warns and is irrelevant here
+            # model_* are Pydantic's own introspection interfaces; taking them from an instance warns and is irrelevant
+            # here
             if name.startswith(("_", "model_")) or name in TOKEN_LAYERS:
                 continue
             value = getattr(att, name, None)
             if isinstance(value, int) and not isinstance(value, bool):
                 assert value != four_sum, (
                     f"{name} exactly equals the sum of the four layers — that is just a renamed total."
-                    f"Measured: 95.6% of the four layers is cache_read, so reporting only the total equals reporting only the cache read volume (§1.2)"
+                    f"Measured: 95.6% of the four layers is cache_read, so reporting "
+                        f"only the total equals reporting only the cache read volume (§1.2)"
                 )
 
     def test_dump_carries_no_total(self):
@@ -110,7 +117,8 @@ class TestMetricHasNoDefault:
             assert TokenAttribution.model_fields[field].is_required()
 
     def test_frozen(self):
-        """Immutable after construction — otherwise one could construct legally first and then change the denominator to 0."""
+        """Immutable after construction — otherwise one could construct legally first and then change the denominator
+        to 0."""
         att = _sample()
         with pytest.raises(ValidationError):
             att.dispatches_total = 0
@@ -119,8 +127,10 @@ class TestMetricHasNoDefault:
 class TestNumeratorPlusUnattributedEqualsDenominator:
     """Numerator + unattributed == denominator. This is the machine-checkable form of R2.
 
-    The way to "optimize" coverage to 100% is to move rows without data out of the denominator; this invariant makes that approach
-    immediately unbalanced — the moved rows are in neither the numerator nor the unattributed, and the equation fails on the spot.
+    The way to "optimize" coverage to 100% is to move rows without data out of the denominator; this invariant makes
+    that approach
+    immediately unbalanced — the moved rows are in neither the numerator nor the unattributed, and the equation fails on
+    the spot.
     """
 
     def test_holds_for_a_well_formed_value(self):
@@ -136,7 +146,8 @@ class TestNumeratorPlusUnattributedEqualsDenominator:
     def test_by_design_never_enters_the_reason_dict(self):
         """``by_design`` speaks of the tool-call level (52,119 activities), not the same unit as dispatches.
 
-        It is the fourth code of §3.4, a formal label on the presentation surface, but mixing it into this dict would break
+        It is the fourth code of §3.4, a formal label on the presentation surface, but mixing it into this dict would
+        break
         the equation above, and would mix dimensions — the thing this design most opposes.
         """
         from aiteam.types import UnattributedReason

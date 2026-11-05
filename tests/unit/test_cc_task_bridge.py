@@ -3,8 +3,10 @@
 Q1 ruling C+B (2026-07-27). The bridge before the change had three problems; this file pins them one by one:
 - Mounted on TaskCreated: tasks that have not completed are meaningless to a project's accounts.
 - Full mirroring: a CC task list is an in-session inventory; ownerless, dependency-free entries on the wall are noise.
-- The project cache is a **global single value** + a 5-minute TTL: with several CC sessions from different projects running on this machine at the same time,
-  whoever resolves first wins, and for the next 5 minutes everyone else's tasks all land in their project — not a rare race, but inevitable cross-talk.
+- The project cache is a **global single value** + a 5-minute TTL: with several CC sessions from different projects
+running on this machine at the same time,
+  whoever resolves first wins, and for the next 5 minutes everyone else's tasks all land in their project — not a rare
+  race, but inevitable cross-talk.
 """
 
 from __future__ import annotations
@@ -35,7 +37,8 @@ def _mock_response(payload: dict) -> MagicMock:
 
 class TestProjectCacheIsPerCwd:
     def test_two_projects_do_not_share_one_cached_id(self):
-        """The real scenario of multiple sessions running in parallel on this machine: two cwds must each resolve their own."""
+        """The real scenario of multiple sessions running in parallel on this machine: two cwds must each resolve
+        their own."""
         mod = _import_module()
         state: dict = {}
         with patch.object(mod, "_load_state", side_effect=lambda: state), patch.object(

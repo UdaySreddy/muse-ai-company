@@ -40,7 +40,8 @@ class TestGenerateDefaultConfig:
         content = generate_default_config()
         data = yaml.safe_load(content)
         assert "defaults" in data
-        assert data["defaults"]["model"] == "opus"  # The generated template uses tier-level aliases (settings.py:164, automatically follows the latest version)
+        assert data["defaults"]["model"] == "opus"  # The generated template uses tier-level aliases (settings.py:164,
+        # automatically follows the latest version)
         assert data["defaults"]["max_context_ratio"] == 0.8
 
     def test_contains_infrastructure_section(self) -> None:
@@ -57,7 +58,8 @@ class TestGenerateDefaultConfig:
         data = yaml.safe_load(content)
         config = ProjectConfig.model_validate(data)
         assert config.project.name == "my-project"
-        assert config.defaults.model == "opus"  # The generated template uses tier-level aliases (settings.py:164, automatically follows the latest version)
+        assert config.defaults.model == "opus"  # The generated template uses tier-level aliases (settings.py:164,
+        # automatically follows the latest version)
 
 
 class TestLoadConfig:
@@ -98,7 +100,8 @@ team:
         """Return the default configuration when the file does not exist."""
         config = load_config(tmp_path / "nonexistent.yaml")
         assert config.project.name == ""
-        assert config.defaults.model == ""  # Since v1.8.1 the default is empty = inherit the CC global (model governance, 4-7 phantom cleanup)
+        assert config.defaults.model == ""  # Since v1.8.1 the default is empty = inherit the CC global (model
+        # governance, 4-7 phantom cleanup)
 
     def test_load_empty_file(self, tmp_path: Path) -> None:
         """An empty file returns the default configuration."""
@@ -178,7 +181,8 @@ class TestConfigDefaults:
     def test_defaults_config(self) -> None:
         """DefaultsConfig defaults."""
         config = ProjectConfig()
-        assert config.defaults.model == ""  # Since v1.8.1 the default is empty = inherit the CC global (model governance, 4-7 phantom cleanup)
+        assert config.defaults.model == ""  # Since v1.8.1 the default is empty = inherit the CC global (model
+        # governance, 4-7 phantom cleanup)
         assert config.defaults.max_context_ratio == 0.8
 
     def test_infrastructure_defaults(self) -> None:

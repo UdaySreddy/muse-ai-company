@@ -298,8 +298,10 @@ class TestWindowsLauncher:
             for hook in group["hooks"]:
                 if "auto_install.py" in hook["command"]:
                     # The timeout unit is **seconds** (CC official documentation: "Seconds before canceling",
-                    # with a default of 600 for the command class). Corrected 2026-07-27: previously the whole repo wrote with a millisecond mindset,
-                    # 3000/5000/300000, which amounted to turning the timeout protection off (3000 seconds = 50 minutes).
+                    # with a default of 600 for the command class). Corrected 2026-07-27: previously the whole repo
+                    # wrote with a millisecond mindset,
+                    # 3000/5000/300000, which amounted to turning the timeout protection off (3000 seconds = 50
+                    # minutes).
                     # auto_install runs git+pip installs; give it a 120-600 second range.
                     assert 120 <= hook["timeout"] <= 600
                     return

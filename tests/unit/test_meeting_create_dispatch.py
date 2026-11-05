@@ -170,8 +170,10 @@ class TestBuildDispatchPlan:
     def test_launch_call_no_longer_passes_team_name(self):
         """team_name no longer goes into the Agent parameters (CC v2.1.219 Deprecated; ignored).
 
-        The session carries its own unique implicit team; passing it is ignored anyway; OS-side ownership is auto-enrolled by SubagentStart.
-        The team_name parameter itself is kept (meeting records/display still use it); it is just no longer sent down to Agents.
+        The session carries its own unique implicit team; passing it is ignored anyway; OS-side ownership is
+        auto-enrolled by SubagentStart.
+        The team_name parameter itself is kept (meeting records/display still use it); it is just no longer sent down to
+        Agents.
         """
         plan, _, _, _ = _build_dispatch_plan(
             meeting_id="mtg-1",

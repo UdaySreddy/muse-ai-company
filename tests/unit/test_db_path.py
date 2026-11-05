@@ -49,7 +49,8 @@ class TestDefaultDbUrl:
 
 
 class TestDbPathEnvOverride:
-    """Verify the AITEAM_DB_PATH environment variable override: when set, use that path and skip the old-database migration."""
+    """Verify the AITEAM_DB_PATH environment variable override: when set, use that path and skip the old-database
+    migration."""
 
     def test_env_override_used_and_skips_migration(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

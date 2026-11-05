@@ -32,7 +32,8 @@ def test_is_port_open_returns_true():
 @patch("aiteam.mcp._autostart._is_api_healthy_on_port", return_value=True)
 @patch(
     "aiteam.mcp._autostart._get_running_api_version_on_port",
-    # Must follow the real package version — it once hard-coded "1.3.4" and after a package upgrade was judged "version outdated"
+    # Must follow the real package version — it once hard-coded "1.3.4" and after a package upgrade was judged "version
+    # outdated"
     # and walked into the kill-the-occupier path (Popen of fuser/lsof), failing assertions falsely
     return_value=_aiteam_pkg.__version__,
 )

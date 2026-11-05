@@ -1,8 +1,11 @@
 """The behavioral contract of the legacy-data shifting script — see docs/utc-unification-design.md §6.
 
-This script rewrites 320,000 cells in one pass and is executed by the creator personally, so its promises must be machine-checked:
-**lossless** (sub-second digits not dropped), **reversible** (rollback restores byte for byte), **able to stop** (aborts when the order is reversed),
-**able to recognize mixed conventions** (UTC rows already written by new code are excluded row by row; neither of the two shifts may touch them),
+This script rewrites 320,000 cells in one pass and is executed by the creator personally, so its promises must be
+machine-checked:
+**lossless** (sub-second digits not dropped), **reversible** (rollback restores byte for byte), **able to stop** (aborts
+when the order is reversed),
+**able to recognize mixed conventions** (UTC rows already written by new code are excluded row by row; neither of the
+two shifts may touch them),
 **runs only once** (idempotency marker + journal overwrite protection).
 
 All cases run only against temporary databases in tmp_path; not one byte of the production database is touched.
@@ -56,7 +59,8 @@ def _reports(conn: sqlite3.Connection, now_local: datetime):
 
 class TestLosslessShift:
     def test_subsecond_digits_survive(self, db: sqlite3.Connection) -> None:
-        """Second truncation would erase the microsecond digits of 320,000 rows, and the event ledger orders same-second precedence by timestamp."""
+        """Second truncation would erase the microsecond digits of 320,000 rows, and the event ledger orders
+        same-second precedence by timestamp."""
         _seed(db, ["2026-07-28 17:01:25.068573"])
         db.execute(f"update events set timestamp = {mig.shift_expr('timestamp', -8)}")
         db.commit()
@@ -99,7 +103,8 @@ class TestWidthGuard:
     def test_date_only_values_abort_instead_of_being_nulled(
         self, db: sqlite3.Connection
     ) -> None:
-        """Prefix splitting on a date-only value builds an illegal string and SQLite silently gives NULL — that is data loss."""
+        """Prefix splitting on a date-only value builds an illegal string and SQLite silently gives NULL — that is
+        data loss."""
         _seed(db, ["2026-07-28"])
         reports = _reports(db, datetime(2026, 7, 28, 17, 0))
         with pytest.raises(SystemExit, match="Cannot safely split"):
@@ -115,7 +120,8 @@ class TestOrderGuard:
         return datetime.now()
 
     def test_local_written_rows_are_positively_proven(self, db: sqlite3.Connection) -> None:
-        """A UTC clock cannot write a future value — so a max later than the current UTC moment is positive proof, not a heuristic."""
+        """A UTC clock cannot write a future value — so a max later than the current UTC moment is positive proof,
+        not a heuristic."""
         now_local = self._now()
         _seed(db, [now_local.strftime("%Y-%m-%d %H:%M:%S.%f")])
         reports = _reports(db, now_local)
@@ -136,7 +142,8 @@ class TestOrderGuard:
     def test_all_cold_data_is_refused_rather_than_guessed(
         self, db: sqlite3.Connection
     ) -> None:
-        """When everything is cold data there is no way to judge — stop and ask a human to confirm rather than guessing for them."""
+        """When everything is cold data there is no way to judge — stop and ask a human to confirm rather than
+        guessing for them."""
         now_local = self._now()
         _seed(db, [(now_local - timedelta(days=90)).strftime("%Y-%m-%d %H:%M:%S.%f")])
         reports = _reports(db, now_local)
@@ -153,19 +160,22 @@ class TestManifest:
         assert "pipeline_stage_history" not in mig.LOCAL_COLUMNS
 
     def test_manifest_matches_the_design_document(self) -> None:
-        """The checklist and design document §3.1 are the same ledger; a count mismatch means one side was changed unilaterally."""
+        """The checklist and design document §3.1 are the same ledger; a count mismatch means one side was changed
+        unilaterally."""
         columns = sum(len(v) for v in mig.LOCAL_COLUMNS.values())
         assert len(mig.LOCAL_COLUMNS) == 20, f"Table count changed: {len(mig.LOCAL_COLUMNS)}"
         assert columns == 46, f"Column count changed: {columns}"
 
     def test_every_table_declares_a_birth_column(self) -> None:
-        """The birth column is the foundation of per-row convention judgment; a missing table means that table's rows are judged by no one."""
+        """The birth column is the foundation of per-row convention judgment; a missing table means that table's rows
+        are judged by no one."""
         assert set(mig.ROW_BIRTH_COLUMN) == set(mig.LOCAL_COLUMNS)
         for table, birth in mig.ROW_BIRTH_COLUMN.items():
             assert birth in mig.LOCAL_COLUMNS[table], f"{table}.{birth} is not in the migration list"
 
     def test_birth_column_is_classified_before_the_columns_that_anchor_on_it(self) -> None:
-        """In-place updated columns anchor on the birth column, so the birth column must be first in its table and judged first."""
+        """In-place updated columns anchor on the birth column, so the birth column must be first in its table and
+        judged first."""
         for table, columns in mig.LOCAL_COLUMNS.items():
             assert columns[0] == mig.ROW_BIRTH_COLUMN[table], f"{table}'s birth column is not first"
 
@@ -190,7 +200,8 @@ class TestManifest:
 
 
 # ---------------------------------------------------------------------------
-# Mixed conventions — the production reality of 2026-07-28: UTC new code was merged into master and is an editable install,
+# Mixed conventions — the production reality of 2026-07-28: UTC new code was merged into master and is an editable
+# install,
 # so every newly started process writes UTC rows into a not-yet-shifted database. All cases below are fault injections
 # made against this reality.
 # ---------------------------------------------------------------------------
@@ -216,10 +227,12 @@ def _read_journal(path: Path) -> dict:
 
 @pytest.fixture()
 def mixed(tmp_path: Path) -> tuple[Path, sqlite3.Connection, datetime]:
-    """A database the old code is still writing and new code has just mixed a few rows into — i.e. the one --apply actually faces.
+    """A database the old code is still writing and new code has just mixed a few rows into — i.e. the one --apply
+    actually faces.
 
     events (append-only): a run of local rows → 3 UTC rows written by new code → a few more local rows.
-    teams (with in-place update columns): one row whose update value judges as UTC, one row where both readings are self-consistent (goes to human review),
+    teams (with in-place update columns): one row whose update value judges as UTC, one row where both readings are
+    self-consistent (goes to human review),
     one row fully clean.
     """
     now = datetime.now().replace(microsecond=246810)
@@ -244,7 +257,8 @@ def mixed(tmp_path: Path) -> tuple[Path, sqlite3.Connection, datetime]:
         [
             # ① The update value is a full timezone earlier than creation — can only be the UTC convention
             (_stamp(now - timedelta(minutes=5)), _stamp(now - timedelta(seconds=90) - OFFSET), None),
-            # ② A row created three days ago whose update value falls in the risk band: neither reading violates "updates do not predate creation"
+            # ② A row created three days ago whose update value falls in the risk band: neither reading violates
+            # "updates do not predate creation"
             (_stamp(now - timedelta(days=3)), _stamp(now - timedelta(seconds=100) - OFFSET), None),
             # ③ Fully clean
             (
@@ -271,7 +285,8 @@ class TestMixedCaliberDetection:
     def test_minority_utc_rows_are_pinned_down_row_by_row(
         self, mixed: tuple[Path, sqlite3.Connection, datetime]
     ) -> None:
-        """Minority UTC rows affect neither the column max nor the whole-database max — only the rowid write order catches them."""
+        """Minority UTC rows affect neither the column max nor the whole-database max — only the rowid write order
+        catches them."""
         _, conn, now = mixed
         found = _contamination(conn, now)
         assert found["events.timestamp"].excluded == [36, 37, 38]
@@ -280,7 +295,8 @@ class TestMixedCaliberDetection:
     def test_clean_rows_are_never_excluded(
         self, mixed: tuple[Path, sqlite3.Connection, datetime]
     ) -> None:
-        """Exclusion has a cost: missing one pushes it 8 hours earlier; wrongly excluding one leaves a row forever 8 hours later."""
+        """Exclusion has a cost: missing one pushes it 8 hours earlier; wrongly excluding one leaves a row forever 8
+        hours later."""
         _, conn, now = mixed
         found = _contamination(conn, now)
         assert found["teams.created_at"].excluded == []
@@ -289,7 +305,8 @@ class TestMixedCaliberDetection:
     def test_in_place_columns_are_judged_against_their_birth_column(
         self, mixed: tuple[Path, sqlite3.Connection, datetime]
     ) -> None:
-        """rowid is meaningless for in-place update columns; what it relies on is the invariant "an update cannot predate creation"."""
+        """rowid is meaningless for in-place update columns; what it relies on is the invariant "an update cannot
+        predate creation"."""
         _, conn, now = mixed
         found = _contamination(conn, now)
         assert found["teams.updated_at"].excluded == [1]
@@ -297,7 +314,8 @@ class TestMixedCaliberDetection:
     def test_undecidable_rows_are_listed_rather_than_silently_shifted(
         self, mixed: tuple[Path, sqlite3.Connection, datetime]
     ) -> None:
-        """What cannot be judged is named and handed to human review — silently following the majority is exactly how such incidents happen."""
+        """What cannot be judged is named and handed to human review — silently following the majority is exactly how
+        such incidents happen."""
         _, conn, now = mixed
         found = _contamination(conn, now)
         pending = mig.all_undecidable(found)
@@ -308,7 +326,8 @@ class TestMixedCaliberDetection:
     ) -> None:
         """The production task_memos.created_at has 7.1–8.7 hours of legitimate disorder (memory v2 batch backfill).
 
-        An hour-level tolerance would treat them as a timezone fingerprint and exclude them wholesale — so the tolerance is given in minutes.
+        An hour-level tolerance would treat them as a timezone fingerprint and exclude them wholesale — so the tolerance
+        is given in minutes.
         """
         now = datetime.now()
         _seed(
@@ -331,9 +350,11 @@ class TestGuardSeesMinorities:
     def test_already_shifted_db_with_one_stray_local_row_is_not_waved_through(
         self, db: sqlite3.Connection
     ) -> None:
-        """The old guardrail waves this through: one local value backfilled by old code tops the whole-database max at the local now.
+        """The old guardrail waves this through: one local value backfilled by old code tops the whole-database max at
+        the local now.
 
-        The real criterion must be the convention of the **majority** of recent writes; a minority cannot overturn the median.
+        The real criterion must be the convention of the **majority** of recent writes; a minority cannot overturn the
+        median.
         """
         now_local = datetime.now()
         now_utc_naive = now_local.astimezone(UTC).replace(tzinfo=None)
@@ -351,7 +372,8 @@ class TestGuardSeesMinorities:
     def test_guard_reports_how_many_rows_will_be_excluded(
         self, mixed: tuple[Path, sqlite3.Connection, datetime]
     ) -> None:
-        """Mixed conventions are no longer a binary pass/block — the guardrail's duty is to confirm polluted rows are identified and excluded."""
+        """Mixed conventions are no longer a binary pass/block — the guardrail's duty is to confirm polluted rows are
+        identified and excluded."""
         _, conn, now = mixed
         found = _contamination(conn, now)
         _, notes = mig.verdict(mig.collect(conn, now), now, found, ack_undecidable=True)
@@ -402,7 +424,8 @@ class TestApplyIsIdempotentAndReversible:
     def test_second_apply_is_refused_by_the_marker(
         self, mixed: tuple[Path, sqlite3.Connection, datetime], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A second --apply subtracts another 8 hours, and the old guardrail may still wave through "majority UTC + minority local"."""
+        """A second --apply subtracts another 8 hours, and the old guardrail may still wave through "majority UTC +
+        minority local"."""
         path, conn, _ = mixed
         assert _run(monkeypatch, "--db", str(path), "--apply", "--journal",
                     str(path.parent / "j1.json"), "--ack-undecidable") == 0
@@ -425,7 +448,8 @@ class TestApplyIsIdempotentAndReversible:
     def test_existing_journal_is_never_overwritten(
         self, mixed: tuple[Path, sqlite3.Connection, datetime], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The journal is the only recovery credential (including the per-row exclusion list); overwriting it destroys it."""
+        """The journal is the only recovery credential (including the per-row exclusion list); overwriting it
+        destroys it."""
         path, conn, _ = mixed
         journal = path.parent / "j.json"
         journal.write_text('{"This is the credential of the previous migration": true}')

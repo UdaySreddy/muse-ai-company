@@ -174,9 +174,11 @@ def test_memo_rejects_invisible_unicode(app_client: TestClient):
 
 
 def test_memo_keeps_injection_shaped_text(app_client: TestClient):
-    """The scenario layer scans **only** invisible characters: memos enter no system prompt; injection phrasings are just recorded text.
+    """The scenario layer scans **only** invisible characters: memos enter no system prompt; injection phrasings are
+    just recorded text.
 
-    Keep the high-frequency path light, and avoid blocking legitimate records like "retrospect on an injection incident".
+    Keep the high-frequency path light, and avoid blocking legitimate records like "retrospect on an injection
+    incident".
     """
     _, task_id = _create_team_and_task(app_client)
     resp = app_client.post(

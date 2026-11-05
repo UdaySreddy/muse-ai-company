@@ -340,9 +340,11 @@ def test_conclude_succeeds_when_all_spoke():
 
 
 def test_conclude_does_not_write_memory():
-    """Meeting close no longer automatically writes the memory layer (2026-07-31 ruling): conclusions go through decision events + the task wall.
+    """Meeting close no longer automatically writes the memory layer (2026-07-31 ruling): conclusions go through
+    decision events + the task wall.
 
-    This used to be the memory layer's only automatic write entry point — unreviewed, unmanaged on the invalidation axis, growing linearly with meeting count.
+    This used to be the memory layer's only automatic write entry point — unreviewed, unmanaged on the invalidation
+    axis, growing linearly with meeting count.
     """
     client, repo, _event_bus = _make_client()
     try:

@@ -1,8 +1,10 @@
 """Tests for _check_agent_team_name in workflow_reminder.py.
 
 2026-07-22 interception-retirement edition (the Creator's ruling of 'full opening + always auto-track', task 8705dac2):
-The unconditional hard block is deleted — implementation-style direct dispatches without a team_name are allowed (SubagentStart auto-enrolls them).
-Retained: the explore/plan+team_name misuse reminder; the explicit team_name cross-project interception (verified at the mock layer).
+The unconditional hard block is deleted — implementation-style direct dispatches without a team_name are allowed
+(SubagentStart auto-enrolls them).
+Retained: the explore/plan+team_name misuse reminder; the explicit team_name cross-project interception (verified at the
+mock layer).
 """
 
 from __future__ import annotations
@@ -29,7 +31,8 @@ def test_agent_with_team_name_no_warning():
 
 
 def test_impl_agent_without_team_name_allowed():
-    """Implementation-style, with no team_name → allowed through (the old hard block has been retired; SubagentStart auto-enrolls)."""
+    """Implementation-style, with no team_name → allowed through (the old hard block has been retired; SubagentStart
+    auto-enrolls)."""
     event = {
         "tool_name": "Agent",
         "tool_input": {
@@ -89,7 +92,8 @@ def test_explore_agent_with_team_name_warns():
 
 
 def test_cross_project_team_blocked():
-    """An explicit team_name hitting a cross-project case → still exit(2) (the 2026-05-08 accident defense line is retained)."""
+    """An explicit team_name hitting a cross-project case → still exit(2) (the 2026-05-08 accident defense line is
+    retained)."""
     event = {
         "tool_name": "Agent",
         "tool_input": {

@@ -1,21 +1,30 @@
 """The historical re-collection script's behavioral contract — see docs/token-attribution-v1-design.md §6 / §7 phase 3.
 
-This script will rewrite more than two thousand rows of production data in one pass, executed by the Creator personally, so the three 'hard constraints' in the design
+This script will rewrite more than two thousand rows of production data in one pass, executed by the Creator personally,
+so the three 'hard constraints' in the design
 (§6.4) cannot only be written in comments; they must be machine-checkable one by one:
 
 * **Hard constraint (1) never touch ``workflow_agents.tokens``** — that is the ctx_last metric (the last round's context
-  watermark), differing from the usage_sum this script produces by a measured 5-25x. Writing it in = mixing metrics, permanently solidified into history and
-  indistinguishable afterwards (risk R3). Three blocks: the write-column whitelist, an assert at the apply layer, and per-row sha256 fingerprints before and after.
-* **Hard constraint (2) coverage split by window by tokens_measured_at** — re-collection raises the total coverage from 0.5% to 78%,
-  but 'whether new dispatches were collected' is another matter. One number masking another number (countermeasure 6.3-2), so the two numbers
+  watermark), differing from the usage_sum this script produces by a measured 5-25x. Writing it in = mixing metrics,
+  permanently solidified into history and
+  indistinguishable afterwards (risk R3). Three blocks: the write-column whitelist, an assert at the apply layer, and
+  per-row sha256 fingerprints before and after.
+* **Hard constraint (2) coverage split by window by tokens_measured_at** — re-collection raises the total coverage from
+0.5% to 78%,
+  but 'whether new dispatches were collected' is another matter. One number masking another number (countermeasure
+  6.3-2), so the two numbers
   are never merged.
-* **Hard constraint (3) dry-run first, write only empty columns, a rerun changes nothing** — idempotency is structural (``already_measured``
+* **Hard constraint (3) dry-run first, write only empty columns, a rerun changes nothing** — idempotency is structural
+(``already_measured``
   is the first branch of the determination), not reliant on a marker bit.
 
-Plus two disciplines of this script itself: **rows that cannot be written must carry a reason code** (no-data ≠ zero), **model is only
-backfilled by observation** (the alias ledger's resolution results never land in the database; rows without a transcript are not guessed at or touched).
+Plus two disciplines of this script itself: **rows that cannot be written must carry a reason code** (no-data ≠ zero),
+**model is only
+backfilled by observation** (the alias ledger's resolution results never land in the database; rows without a transcript
+are not guessed at or touched).
 
-All cases run only against temporary databases and temporary transcripts in tmp_path; not a single byte touches the production database.
+All cases run only against temporary databases and temporary transcripts in tmp_path; not a single byte touches the
+production database.
 """
 
 from __future__ import annotations
@@ -34,7 +43,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 _spec = importlib.util.spec_from_file_location("backfill_token_usage", SCRIPT)
 assert _spec and _spec.loader
 bf = importlib.util.module_from_spec(_spec)
-# It must first be registered into sys.modules and then exec'd: the @dataclass in the script looks back into its own module namespace.
+# It must first be registered into sys.modules and then exec'd: the @dataclass in the script looks back into its own
+# module namespace.
 sys.modules["backfill_token_usage"] = bf
 _spec.loader.exec_module(bf)
 
@@ -50,9 +60,12 @@ def write_transcript(
 ) -> Path:
     """Write a real jsonl — do not mock the parser.
 
-    Each (requestId, usage) pair is written as **two rows**, the second row with a larger output_tokens: this replicates the real form of streaming
-    (within the same requestId, output is an increasing snapshot rather than an increment). The parser must take the last entry per requestId;
-    bare per-row addition would seriously inflate. This fixture exists so that 'the re-collection value = the real parse result' rather than '= what I assumed the'
+    Each (requestId, usage) pair is written as **two rows**, the second row with a larger output_tokens: this replicates
+    the real form of streaming
+    (within the same requestId, output is an increasing snapshot rather than an increment). The parser must take the
+    last entry per requestId;
+    bare per-row addition would seriously inflate. This fixture exists so that 'the re-collection value = the real parse
+    result' rather than '= what I assumed the'
     parse result was'.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -186,17 +199,20 @@ BATCH = "2026-07-29 03:00:00.000000"
 # ===========================================================================
 class TestHardConstraint1ForbiddenColumn:
     def test_the_forbidden_column_is_not_in_the_write_whitelist(self):
-        """The whitelist is a closed set; forbidden columns are not in it — this is the first block, and the cheapest."""
+        """The whitelist is a closed set; forbidden columns are not in it — this is the first block, and the
+        cheapest."""
         assert bf.FORBIDDEN_COLUMN == ("workflow_agents", "tokens")
         assert bf.FORBIDDEN_COLUMN not in bf.WRITABLE_COLUMNS
 
     def test_only_model_is_writable_on_workflow_agents(self):
-        """When this script touches workflow_agents it only swaps an alias for an observed model; no other column is ever written."""
+        """When this script touches workflow_agents it only swaps an alias for an observed model; no other column is
+        ever written."""
         wa_cols = {c for t, c in bf.WRITABLE_COLUMNS if t == "workflow_agents"}
         assert wa_cols == {"model"}
 
     def test_apply_refuses_a_job_that_targets_the_forbidden_column(self, dbfile):
-        """The second block: even if someone constructs such a Job in the future, the write layer blows up on the spot rather than writing as told."""
+        """The second block: even if someone constructs such a Job in the future, the write layer blows up on the
+        spot rather than writing as told."""
         add_wa(dbfile, "wa1", model="opus", tokens=999)
         job = bf.Job("malicious", "workflow_agents")
         job.rows.append(bf.Row("workflow_agents", "wa1", "x", "written", values={"tokens": 1}))
@@ -207,7 +223,8 @@ class TestHardConstraint1ForbiddenColumn:
         assert fetch(dbfile, "select tokens from workflow_agents where id='wa1'")[0] == 999
 
     def test_fingerprint_catches_compensating_edits_that_preserve_the_sum(self, dbfile):
-        """The third block must be stronger than 'comparing totals': one row up and one row down can leave the sum utterly unmoved."""
+        """The third block must be stronger than 'comparing totals': one row up and one row down can leave the sum
+        utterly unmoved."""
         add_wa(dbfile, "wa1", model="opus", tokens=100)
         add_wa(dbfile, "wa2", model="opus", tokens=200)
         con = sqlite3.connect(dbfile)
@@ -221,7 +238,8 @@ class TestHardConstraint1ForbiddenColumn:
         assert before["sha256"] != after["sha256"]  # The per-row fingerprint cannot be fooled
 
     def test_a_real_apply_leaves_the_column_byte_identical(self, dbfile, tmp_path, monkeypatch):
-        """End-to-end: really run one re-collection; the forbidden columns are unchanged row by row (§7 phase 3 acceptance item)."""
+        """End-to-end: really run one re-collection; the forbidden columns are unchanged row by row (§7 phase 3
+        acceptance item)."""
         tp = write_transcript(tmp_path / "a1.jsonl", [("r1", USAGE_ONE), ("r2", USAGE_ONE)])
         add_agent(dbfile, "a1", transcript_path=str(tp))
         add_wa(dbfile, "wa1", model="opus", os_agent_id="a1", tokens=777)
@@ -239,7 +257,8 @@ class TestHardConstraint1ForbiddenColumn:
         assert fetch(dbfile, "select model from workflow_agents where id='wa1'")[0] == "claude-opus-5"
 
     def test_journal_records_the_fingerprint_both_sides(self, dbfile, tmp_path, monkeypatch):
-        """The journal is the only recovery credential; the forbidden columns' before/after fingerprints must be in it."""
+        """The journal is the only recovery credential; the forbidden columns' before/after fingerprints must be in
+        it."""
         tp = write_transcript(tmp_path / "a1.jsonl", [("r1", USAGE_ONE)])
         add_agent(dbfile, "a1", transcript_path=str(tp))
         add_wa(dbfile, "wa1", model="opus", os_agent_id="a1", tokens=777)
@@ -256,7 +275,8 @@ class TestHardConstraint1ForbiddenColumn:
 # ===========================================================================
 class TestHardConstraint2CoverageWindowing:
     def test_denominator_keeps_rows_that_have_no_transcript(self, dbfile):
-        """§4.1: rows must not be moved out of the denominator on the grounds of 'no path, so they do not count' — that is exactly passing a part off as the whole (R2)."""
+        """§4.1: rows must not be moved out of the denominator on the grounds of 'no path, so they do not count' —
+        that is exactly passing a part off as the whole (R2)."""
         add_agent(dbfile, "a1", transcript_path=None)
         add_agent(dbfile, "a2", transcript_path="/nope.jsonl")
         cov = bf.measure_coverage(load(dbfile), set(), leader=False)
@@ -264,14 +284,16 @@ class TestHardConstraint2CoverageWindowing:
         assert cov.measured == 0
 
     def test_leader_rows_are_counted_under_their_own_denominator(self, dbfile):
-        """A main session's magnitude is two to three orders larger than a sub-agent's; sharing one denominator would drown the sub-agents (§3.3)."""
+        """A main session's magnitude is two to three orders larger than a sub-agent's; sharing one denominator would
+        drown the sub-agents (§3.3)."""
         add_agent(dbfile, "a1")
         add_agent(dbfile, "L1", role="leader")
         assert bf.measure_coverage(load(dbfile), set(), leader=False).total == 1
         assert bf.measure_coverage(load(dbfile), set(), leader=True).total == 1
 
     def test_a_shared_timestamp_is_what_marks_a_backfill_cohort(self, dbfile):
-        """The live chain writes each row's own stop moment (unique to the microsecond); re-collection stamps the same value on thousands of rows."""
+        """The live chain writes each row's own stop moment (unique to the microsecond); re-collection stamps the
+        same value on thousands of rows."""
         for i in range(bf.BATCH_COHORT_MIN):
             add_agent(dbfile, f"b{i}", measured_at=BATCH)
         add_agent(dbfile, "live", measured_at="2026-07-28 11:20:20.521255")
@@ -281,7 +303,8 @@ class TestHardConstraint2CoverageWindowing:
         assert cohorts == {BATCH}
 
     def test_a_handful_of_rows_sharing_a_timestamp_is_not_a_cohort(self, dbfile):
-        """The point of the threshold: two or three rows accidentally at the same moment should not be misjudged as one re-collection."""
+        """The point of the threshold: two or three rows accidentally at the same moment should not be misjudged as
+        one re-collection."""
         for i in range(3):
             add_agent(dbfile, f"b{i}", measured_at=BATCH)
         con = bf.open_db(dbfile, writable=False)
@@ -289,7 +312,8 @@ class TestHardConstraint2CoverageWindowing:
         con.close()
 
     def test_backfill_never_moves_the_incremental_number(self, dbfile):
-        """The core of countermeasure 6.3-2: re-collection raises only the 'historical backfill' cell; 'incremental collection' is untouched, verbatim."""
+        """The core of countermeasure 6.3-2: re-collection raises only the 'historical backfill' cell; 'incremental
+        collection' is untouched, verbatim."""
         add_agent(dbfile, "live", measured_at="2026-07-28 11:20:20.521255")
         for i in range(5):
             add_agent(dbfile, f"todo{i}")
@@ -300,7 +324,8 @@ class TestHardConstraint2CoverageWindowing:
         assert after.total == before.total  # The denominator does not change because of re-collection
 
     def test_the_rendered_line_shows_three_numbers_and_no_sum(self, dbfile):
-        """Adding the two cells together is meaningless, and the report does not give that sum either — the next step after mixing metrics is mixing denominators."""
+        """Adding the two cells together is meaningless, and the report does not give that sum either — the next step
+        after mixing metrics is mixing denominators."""
         add_agent(dbfile, "live", measured_at="2026-07-28 11:20:20.521255")
         add_agent(dbfile, "todo")
         line = bf.measure_coverage(load(dbfile), set(), leader=False).line()
@@ -342,7 +367,8 @@ class TestHardConstraint3DryRunAndIdempotence:
         assert "Total to write: 0 rows" in capsys.readouterr().out
 
     def test_a_measured_row_is_never_re_measured(self, dbfile, tmp_path):
-        """Where idempotency is implemented: ``already_measured`` is the first branch of the determination, earlier than reading files."""
+        """Where idempotency is implemented: ``already_measured`` is the first branch of the determination, earlier
+        than reading files."""
         tp = write_transcript(tmp_path / "a1.jsonl", [("r1", USAGE_ONE)])
         add_agent(dbfile, "a1", transcript_path=str(tp), measured_at=BATCH, source="transcript")
         job = bf.job_subagent_usage(load(dbfile), bf.Parser(verbose=False), BATCH)
@@ -350,7 +376,8 @@ class TestHardConstraint3DryRunAndIdempotence:
         assert job.written() == []
 
     def test_sql_guard_lets_a_concurrent_writer_win(self, dbfile, tmp_path):
-        """Between dry-run and apply, the live system may have written the value — the guard is in the SQL and does not overwrite even under concurrency."""
+        """Between dry-run and apply, the live system may have written the value — the guard is in the SQL and does
+        not overwrite even under concurrency."""
         tp = write_transcript(tmp_path / "a1.jsonl", [("r1", USAGE_ONE)])
         add_agent(dbfile, "a1", transcript_path=str(tp))
         job = bf.job_subagent_usage(load(dbfile), bf.Parser(verbose=False), BATCH)
@@ -370,7 +397,8 @@ class TestHardConstraint3DryRunAndIdempotence:
         assert run(monkeypatch, dbfile, "--apply") == 2
 
     def test_an_existing_journal_is_never_overwritten(self, dbfile, tmp_path, monkeypatch):
-        """A second apply would overwrite the 'pre-re-collection baseline' with the 'post-re-collection state', and the credential would be gone (following the UTC script's precedent)."""
+        """A second apply would overwrite the 'pre-re-collection baseline' with the 'post-re-collection state', and
+        the credential would be gone (following the UTC script's precedent)."""
         journal = tmp_path / "j.json"
         journal.write_text("{}")
         assert run(monkeypatch, dbfile, "--apply", "--journal", str(journal)) == 2
@@ -385,11 +413,15 @@ class TestHardConstraint3DryRunAndIdempotence:
         assert {r.values["tokens_measured_at"] for r in job.written()} == {BATCH}
 
     def test_leader_rerun_never_promotes_a_ghost_of_a_measured_file(self, dbfile, tmp_path):
-        """Job D's idempotency holds for ghost rows too: a file's representation follows 'who has already posted accounts', not the scan order.
+        """Job D's idempotency holds for ghost rows too: a file's representation follows 'who has already posted
+        accounts', not the scan order.
 
-        A main-session transcript file is shared by multiple rows (ghost rows). After the first apply measures the earliest row,
-        a rerun puts that row into already_measured and exits early — if it no longer occupies its place, the ghost rows of the same file would slip past the
-        duplicate interception and be promoted to candidates; a second apply would count the same usage twice (production re-run measured 2026-08-03:
+        A main-session transcript file is shared by multiple rows (ghost rows). After the first apply measures the
+        earliest row,
+        a rerun puts that row into already_measured and exits early — if it no longer occupies its place, the ghost rows
+        of the same file would slip past the
+        duplicate interception and be promoted to candidates; a second apply would count the same usage twice
+        (production re-run measured 2026-08-03:
         after the first round wrote 10 rows, a rerun reported 5 rows to write, all ghosts of already-measured files).
         """
         tp = write_transcript(tmp_path / "main.jsonl", [("r1", USAGE_ONE)])
@@ -414,7 +446,8 @@ class TestHardConstraint3DryRunAndIdempotence:
 # ===========================================================================
 class TestReasonCodes:
     def test_missing_path_and_gone_file_are_different_reasons(self, dbfile):
-        """§3.4: a single 'not measured' total cannot say whether they can be saved; the two classes are handled completely differently."""
+        """§3.4: a single 'not measured' total cannot say whether they can be saved; the two classes are handled
+        completely differently."""
         add_agent(dbfile, "a1", transcript_path=None)
         add_agent(dbfile, "a2", transcript_path="/definitely/not/here.jsonl")
         job = bf.job_subagent_usage(load(dbfile), bf.Parser(verbose=False), BATCH)
@@ -430,7 +463,8 @@ class TestReasonCodes:
         assert job.written() == []
 
     def test_gone_rows_are_listed_row_by_row_not_just_counted(self, dbfile, capsys):
-        """This class only grows and never shrinks; the report itself is the evidence that 'the window has closed on these rows' (§3.4)."""
+        """This class only grows and never shrinks; the report itself is the evidence that 'the window has closed on
+        these rows' (§3.4)."""
         add_agent(dbfile, "a1", name="lost-worker", transcript_path="/gone/x.jsonl")
         job = bf.job_subagent_usage(load(dbfile), bf.Parser(verbose=False), BATCH)
         bf.print_transcript_gone([job])
@@ -445,7 +479,8 @@ class TestReasonCodes:
         assert "0 rows" in capsys.readouterr().out
 
     def test_every_reason_used_by_the_jobs_has_a_human_description(self):
-        """Reason codes are for humans to read; miss one description and the report will contain a code nobody recognizes."""
+        """Reason codes are for humans to read; miss one description and the report will contain a code nobody
+        recognizes."""
         assert set(bf.REASON_ORDER) == set(bf.REASONS)
         assert all(bf.REASONS.values())
 
@@ -466,7 +501,8 @@ class TestModelObservationBackfill:
         assert job.written()[0].guard == {"model": "opus"}  # The guard pins 'still the alias I read'
 
     def test_a_row_without_a_transcript_is_left_alone_not_guessed(self, dbfile):
-        """"Rows without a transcript are not guessed at and not touched" — the alias ledger only covers on the read side and never lands in the database."""
+        """"Rows without a transcript are not guessed at and not touched" — the alias ledger only covers on the read
+        side and never lands in the database."""
         add_wa(dbfile, "wa1", model="opus", os_agent_id=None)
         con = bf.open_db(dbfile, writable=False)
         job = bf.job_workflow_model(bf.load_workflow_agents(con), bf.Parser(verbose=False))
@@ -477,8 +513,10 @@ class TestModelObservationBackfill:
     def test_the_alias_ledger_is_never_consulted_for_writing(self):
         """MODEL_ALIAS_LEDGER is a read-side fallback; the re-collection script should not even reference it.
 
-        The criterion goes through the AST rather than a text search: in docstrings it **must** be possible to talk about this boundary ('the alias resolution result never
-        gets written into any row' is exactly the discipline to write down); it can be talked about but not called. A text search would judge talking about the discipline itself as
+        The criterion goes through the AST rather than a text search: in docstrings it **must** be possible to talk
+        about this boundary ('the alias resolution result never
+        gets written into any row' is exactly the discipline to write down); it can be talked about but not called. A
+        text search would judge talking about the discipline itself as
         a violation, and that kind of machine check would only force people to delete the discipline from the comments.
         """
         import ast
@@ -496,7 +534,8 @@ class TestModelObservationBackfill:
         assert "resolve_model_alias" not in referenced
 
     def test_a_concrete_model_is_never_overwritten_by_another_observation(self, dbfile, tmp_path):
-        """An observed value does not overwrite an observed value — this script only fills in truth; it does not re-judge."""
+        """An observed value does not overwrite an observed value — this script only fills in truth; it does not
+        re-judge."""
         tp = write_transcript(tmp_path / "a1.jsonl", [("r1", USAGE_ONE)], model="claude-opus-5")
         add_agent(dbfile, "a1", transcript_path=str(tp))
         add_wa(dbfile, "wa1", model="claude-opus-4-8", os_agent_id="a1")
@@ -553,19 +592,22 @@ class TestSourceLabelRecompute:
         return bf.job_source_label(load(dbfile), bf.Parser(verbose=False))
 
     def test_label_is_written_only_when_recompute_matches_field_by_field(self, dbfile, tmp_path):
-        """The shape of gate 2 (1): the parser is a pure function, with zero tolerance rather than 10%. Only equality dares to mark provenance."""
+        """The shape of gate 2 (1): the parser is a pure function, with zero tolerance rather than 10%. Only equality
+        dares to mark provenance."""
         job = self._measured(dbfile, tmp_path, USAGE_ONE)
         assert job.written()[0].values == {"tokens_source": "transcript"}
 
     def test_a_grown_transcript_is_its_own_class_not_an_anomaly(self, dbfile, tmp_path):
-        """The agent is still alive (e.g. the one running this script); after measurement the transcript grew again — normal."""
+        """The agent is still alive (e.g. the one running this script); after measurement the transcript grew again —
+        normal."""
         smaller = {k: v - 1 for k, v in USAGE_ONE.items()}
         job = self._measured(dbfile, tmp_path, smaller)
         assert [r.reason for r in job.rows] == ["transcript_grew"]
         assert job.written() == []
 
     def test_a_genuine_divergence_is_reported_and_never_written(self, dbfile, tmp_path):
-        """A mismatch that is not growth = a real anomaly; a human must look, and no value may be changed because of it."""
+        """A mismatch that is not growth = a real anomaly; a human must look, and no value may be changed because of
+        it."""
         bigger = {k: v + 1000 for k, v in USAGE_ONE.items()}
         job = self._measured(dbfile, tmp_path, bigger)
         assert [r.reason for r in job.rows] == ["recompute_mismatch"]
@@ -604,7 +646,8 @@ class TestLeaderIsOptIn:
     def test_one_transcript_is_counted_once_no_matter_how_many_rows_point_at_it(
         self, dbfile, tmp_path
     ):
-        """A measured 47 Leader rows point to only 13 files, with at most one file shared by 11 rows. Accepting them all as listed =
+        """A measured 47 Leader rows point to only 13 files, with at most one file shared by 11 rows. Accepting them all
+        as listed =
         counting the same 850 million tokens of usage 11 times over."""
         tp = str(write_transcript(tmp_path / "main.jsonl", [("r1", USAGE_ONE)]))
         add_agent(dbfile, "L1", name="Leader", role="leader", transcript_path=tp,

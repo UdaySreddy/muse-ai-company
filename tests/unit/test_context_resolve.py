@@ -106,8 +106,10 @@ async def test_auto_create(db_repository):
 
 @pytest.mark.asyncio
 async def test_default_never_auto_creates(db_repository):
-    """Ownership iron rule (2026-07-08): when a default request matches no project, leave it empty and never auto-create a project —
-    the hook hits this endpoint on every tool call, and the former default of True registered output directories as projects."""
+    """Ownership iron rule (2026-07-08): when a default request matches no project, leave it empty and never auto-create
+    a project —
+    the hook hits this endpoint on every tool call, and the former default of True registered output directories as
+    projects."""
     app = _make_app(db_repository)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(

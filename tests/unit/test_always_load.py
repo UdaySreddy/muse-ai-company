@@ -1,13 +1,19 @@
 """Progressive tool loading P1 — alwaysLoad dynamic rotation unit tests.
 
 Coverage over four layers:
-1. Pure logic (compute_rotation / build_candidates): the cross-day threshold downstream, frequency sorting, the hard cap,
-   hysteresis anti-jitter (no swap at 1.1x / swap at 1.3x / an incumbent falling below the threshold is out), cold start with empty data.
-2. Repository SQL (alwaysload_tool_frequencies): the cross-day threshold blocks single-day bursts, frequency descending, a 7-day window, prefix filtering.
-3. Endpoint (GET /api/tools/always-load): audit event writing, hysteresis baseline continuity, silently returning empty on failure.
+1. Pure logic (compute_rotation / build_candidates): the cross-day threshold downstream, frequency sorting, the hard
+cap,
+   hysteresis anti-jitter (no swap at 1.1x / swap at 1.3x / an incumbent falling below the threshold is out), cold start
+   with empty data.
+2. Repository SQL (alwaysload_tool_frequencies): the cross-day threshold blocks single-day bursts, frequency descending,
+a 7-day window, prefix filtering.
+3. Endpoint (GET /api/tools/always-load): audit event writing, hysteresis baseline continuity, silently returning empty
+on failure.
 4. MCP server side mounting (apply_always_load_meta): the meta must really appear in tools/list's
-   in `_meta` — the assertions cross the `to_mcp_tool()` serialization boundary instead of only looking at values assigned on in-memory objects.
-   This also pins down the fastmcp behavior assumption that '``list_tools()`` returns live components rather than copies'.
+   in `_meta` — the assertions cross the `to_mcp_tool()` serialization boundary instead of only looking at values
+   assigned on in-memory objects.
+   This also pins down the fastmcp behavior assumption that '``list_tools()`` returns live components rather than
+   copies'.
 """
 
 from __future__ import annotations
@@ -129,7 +135,8 @@ def test_hysteresis_challenger_1_3x_swap():
 
 
 def test_incumbent_drops_below_threshold_removed():
-    # Incumbent c is not eligible this period (not among the candidates; blocked by the cross-day threshold) → out; the empty slot is filled directly by challenger d
+    # Incumbent c is not eligible this period (not among the candidates; blocked by the cross-day threshold) → out; the
+    # empty slot is filled directly by challenger d
     cands = [
         Candidate("a", 300, 5),
         Candidate("b", 200, 5),
@@ -174,7 +181,8 @@ async def _insert_activity(
     ts: datetime,
     agent_id: str = "agent-1",
 ) -> None:
-    """Insert one agent_activities row directly, with a specified timestamp (create_activity does not support custom times)."""
+    """Insert one agent_activities row directly, with a specified timestamp (create_activity does not support custom
+    times)."""
     activity = AgentActivity(
         agent_id=agent_id,
         session_id="sess-1",
@@ -380,7 +388,8 @@ def _mcp_meta(server, tool_name: str) -> dict:
 
 
 def test_apply_meta_lands_in_serialized_tool(monkeypatch):
-    """The mounted meta must survive the to_mcp_tool() serialization boundary, otherwise the CC side cannot see the exemption."""
+    """The mounted meta must survive the to_mcp_tool() serialization boundary, otherwise the CC side cannot see the
+    exemption."""
     from aiteam.mcp import _alwaysload
 
     monkeypatch.setattr(_alwaysload, "_fetch_always_load", lambda registered: ["winner"])
@@ -425,7 +434,8 @@ def test_apply_meta_preserves_existing_meta(monkeypatch):
 
 
 def test_apply_meta_noop_when_api_returns_nothing(monkeypatch):
-    """The API returns an empty roster (this path is also taken when the service is down/times out) → no tool gets meta mounted; all are deferred."""
+    """The API returns an empty roster (this path is also taken when the service is down/times out) → no tool gets
+    meta mounted; all are deferred."""
     from aiteam.mcp import _alwaysload
 
     monkeypatch.setattr(_alwaysload, "_fetch_always_load", lambda registered: [])

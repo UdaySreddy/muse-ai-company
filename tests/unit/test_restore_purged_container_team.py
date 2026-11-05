@@ -1,25 +1,36 @@
 """The behavioral contract of the restore script — see report b168eb34-9c19-40e5-8ecb-624a74ccbc5a §4.
 
 This script **inserts back** 843 rows of historical data (1 team + 7 agent rows + 835 activities) together with
-an attribution ledger of 325 million tokens into the production database, executed by the creator personally. The cost of a wrong insert is symmetric to the re-collection script: mixed-convention data written in
+an attribution ledger of 325 million tokens into the production database, executed by the creator personally. The cost
+of a wrong insert is symmetric to the re-collection script: mixed-convention data written in
 is indistinguishable afterwards. So every one of its disciplines must be machine-checkable:
 
-* **Dual-source strong validation** — token values take the re-parsed transcript as authoritative, with the 07-29 journal as an independent comparison;
+* **Dual-source strong validation** — token values take the re-parsed transcript as authoritative, with the 07-29
+journal as an independent comparison;
   any single field mismatch aborts the whole transaction, **with no downgrade switch**.
-* **The clock convention is an explicit criterion** — source and target each read ``PRAGMA user_version``; only known combinations are converted, everything else
-  aborts. The conversion reuses ``migrate_timestamps_utc.py``'s column list and shift function, and preserves sub-second digits.
-  This is a real problem the drill caught: the 07-28 backup was taken before the UTC shift, and restoring it as-is would stuff 843 rows
+* **The clock convention is an explicit criterion** — source and target each read ``PRAGMA user_version``; only known
+combinations are converted, everything else
+  aborts. The conversion reuses ``migrate_timestamps_utc.py``'s column list and shift function, and preserves sub-second
+  digits.
+  This is a real problem the drill caught: the 07-28 backup was taken before the UTC shift, and restoring it as-is would
+  stuff 843 rows
   of +8h timestamps into a UTC database (I11 red line: "no second clock in the database").
-* **Third-party review** — what another snapshot says about the same batch of rows: NULL→valued is judged a backfill in the meantime and takes the latter; both non-empty
+* **Third-party review** — what another snapshot says about the same batch of rows: NULL→valued is judged a backfill in
+the meantime and takes the latter; both non-empty
   and unequal (or the latter losing a value) is judged a contradiction and aborts.
-* **Rows and ledger in one transaction** — if acceptance fails the whole transaction rolls back and the target database keeps not one row; there is no "insert rows first, write the ledger later"
+* **Rows and ledger in one transaction** — if acceptance fails the whole transaction rolls back and the target database
+keeps not one row; there is no "insert rows first, write the ledger later"
   intermediate window (any reap tick in that window would delete the ledger-less husks again).
-* **Closed write surface + structural idempotency** — only INSERTs into three tables; ``workflow_agents.tokens`` per-row fingerprints are unchanged
-  before and after; ``already_present`` is the first branch of judgment, and the SQL layer has a ``WHERE NOT EXISTS`` guard too.
-* **``tokens_measured_at`` writes the original batch moment, not now()** — that column doubles as the re-collection batch signature and live-collection
+* **Closed write surface + structural idempotency** — only INSERTs into three tables; ``workflow_agents.tokens`` per-row
+fingerprints are unchanged
+  before and after; ``already_present`` is the first branch of judgment, and the SQL layer has a ``WHERE NOT EXISTS``
+  guard too.
+* **``tokens_measured_at`` writes the original batch moment, not now()** — that column doubles as the re-collection
+batch signature and live-collection
   health; writing now() would pollute the coverage windowing.
 
-All cases run only against temporary databases and temporary transcripts in tmp_path; not one byte touches the production database or those backups.
+All cases run only against temporary databases and temporary transcripts in tmp_path; not one byte touches the
+production database or those backups.
 """
 
 from __future__ import annotations
@@ -47,8 +58,10 @@ sys.modules["restore_purged_container_team"] = rp
 _spec.loader.exec_module(rp)
 
 TEAM = rp.RESTORE_TEAM_ID
-# Regular cases run a **synthetic team**: the real one carries the §3 class-① expected fingerprint (7 rows / 835 entries / 325 million),
-# using it as a general fixture would make every case hit the count gate. The expectation gate itself is verified specifically by TestSingleTransaction.
+# Regular cases run a **synthetic team**: the real one carries the §3 class-① expected fingerprint (7 rows / 835 entries
+# / 325 million),
+# using it as a general fixture would make every case hit the count gate. The expectation gate itself is verified
+# specifically by TestSingleTransaction.
 SYNTH_TEAM = "synthetic-team-for-unit-tests"
 LEADER = "e4495c71-1721-4c08-83af-45f299242bd7"
 W1 = "3603792a-d574-4f8c-b9ee-1d879e0fafff"
@@ -99,8 +112,10 @@ create table workflow_agents (
 def write_transcript(path: Path, usage: dict[str, int], *, model: str = "claude-opus-5") -> Path:
     """Write a real jsonl — do not mock the parser.
 
-    The same requestId is written as two rows, the second with a larger output: this replicates streaming's real form (output is an increasing snapshot, not
-    an increment). The parser must take the last entry per requestId. This fixture exists so that "validation passed" means
+    The same requestId is written as two rows, the second with a larger output: this replicates streaming's real form
+    (output is an increasing snapshot, not
+    an increment). The parser must take the last entry per requestId. This fixture exists so that "validation passed"
+    means
     "the real parse result agrees with the journal", not "the parse result I assumed agrees".
     """
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -248,7 +263,8 @@ def ledger_values(usage: dict[str, int], *, model: str | None = "claude-opus-5")
 
 @pytest.fixture()
 def world(tmp_path: Path) -> dict[str, Any]:
-    """A team of two workers + one Leader: present in the source database, empty in the target, isomorphic to the real one."""
+    """A team of two workers + one Leader: present in the source database, empty in the target, isomorphic to the
+    real one."""
     src = make_db(tmp_path / "source.db", marker=rp.MIGRATION_MARKER)
     tgt = make_db(tmp_path / "target.db", marker=rp.MIGRATION_MARKER)
     add_wa(tgt, "wa1", tokens=424242)
@@ -301,7 +317,8 @@ def count(db: Path, table: str) -> int:
 # ===========================================================================
 class TestDualSourceVerification:
     def test_matching_sources_produce_the_ledger_overlay(self, world):
-        """happy path: re-parse agrees with the journal → the overlay carries the four layers + the original batch moment + source annotation."""
+        """happy path: re-parse agrees with the journal → the overlay carries the four layers + the original batch
+        moment + source annotation."""
         con = rp.open_immutable(world["src"])
         rows = rp.load_source_agents(con, SYNTH_TEAM)
         con.close()
@@ -320,7 +337,8 @@ class TestDualSourceVerification:
         assert count(world["tgt"], "agents") == 0
 
     def test_a_missing_transcript_aborts_instead_of_trusting_the_journal(self, world):
-        """One source missing = dual-source validation cannot be done. A journal alone being trustworthy is not acceptable either; that is "take-one downgrade"."""
+        """One source missing = dual-source validation cannot be done. A journal alone being trustworthy is not
+        acceptable either; that is "take-one downgrade"."""
         world["t1"].unlink()
         assert run(world) == 3
 
@@ -344,7 +362,8 @@ class TestDualSourceVerification:
         assert run(world) == 3
 
     def test_an_observed_model_mismatch_aborts(self, world):
-        """The model is also part of the dual source: what the journal recorded and what the re-parse produced must be the same."""
+        """The model is also part of the dual source: what the journal recorded and what the re-parse produced must
+        be the same."""
         write_journal(
             world["journal"],
             {W1: ledger_values(USAGE_A, model="claude-opus-4-8"),
@@ -369,10 +388,13 @@ class TestDualSourceVerification:
 class TestClockConvention:
     @pytest.fixture(autouse=True)
     def _pin_host_timezone(self):
-        """shift_for's contract is "shift the source database's wall clock by the host timezone" — inherited verbatim from the migration script,
-        because the wall clock in the backup is this machine's wall clock. The test therefore pins the host timezone to the machine that wrote the data
+        """shift_for's contract is "shift the source database's wall clock by the host timezone" — inherited verbatim
+        from the migration script,
+        because the wall clock in the backup is this machine's wall clock. The test therefore pins the host timezone to
+        the machine that wrote the data
         (+0800); unpinned, the offset is zero on a UTC runner and the assertions go falsely red (2026-08-03 public
-        CI record). Running the real script on the wrong machine does not corrupt data: the third-party review gate (866 timestamp cells
+        CI record). Running the real script on the wrong machine does not corrupt data: the third-party review gate (866
+        timestamp cells
         with zero deviation per column) aborts before writing.
         """
         if not hasattr(time, "tzset"):
@@ -395,14 +417,16 @@ class TestClockConvention:
         assert rp.needs_clock_shift(0, rp.MIGRATION_MARKER) is True
 
     def test_any_unknown_pairing_is_refused_rather_than_guessed(self):
-        """Stop when there is no known conversion — guessing a direction costs hundreds of rows permanently off by one timezone."""
+        """Stop when there is no known conversion — guessing a direction costs hundreds of rows permanently off by
+        one timezone."""
         with pytest.raises(rp.ClockConventionError):
             rp.needs_clock_shift(rp.MIGRATION_MARKER, 0)
         with pytest.raises(rp.ClockConventionError):
             rp.needs_clock_shift(0, 99999999)
 
     def test_the_shift_preserves_sub_minute_bytes(self):
-        """The migration script only moves the "to the minute" prefix; seconds and sub-second digits are spliced back as-is — the event ledger's ordering relies on those digits."""
+        """The migration script only moves the "to the minute" prefix; seconds and sub-second digits are spliced back
+        as-is — the event ledger's ordering relies on those digits."""
         shifted = rp.shift_value("2026-07-25 03:01:03.230396")
         assert shifted.endswith(":03.230396")
         assert shifted == "2026-07-24 19:01:03.230396"
@@ -411,9 +435,11 @@ class TestClockConvention:
         assert rp.shift_value(None) is None
 
     def test_restoring_from_a_pre_migration_source_lands_utc_values(self, tmp_path):
-        """End-to-end: the source is a pre-shift database; **every** local wall-clock column inserted into the target database must already be UTC.
+        """End-to-end: the source is a pre-shift database; **every** local wall-clock column inserted into the target
+        database must already be UTC.
 
-        This is a real problem the drill caught — the forensics report compared only the schema, not the clock convention; restoring directly from it would
+        This is a real problem the drill caught — the forensics report compared only the schema, not the clock
+        convention; restoring directly from it would
         write hundreds of rows of +8h timestamps into a UTC database, looking exactly like the real values afterwards.
         """
         src = make_db(tmp_path / "old.db", marker=0)
@@ -440,11 +466,13 @@ class TestClockConvention:
         assert fetch(tgt, "select timestamp from agent_activities where id='act-1'")[0] == (
             "2026-07-24 21:17:19.712719"
         )
-        # The shift marker itself does not move along — the target database's convention is declared by the target database itself
+        # The shift marker itself does not move along — the target database's convention is declared by the target
+        # database itself
         assert fetch(tgt, "pragma user_version")[0] == rp.MIGRATION_MARKER
 
     def test_a_future_timestamp_trips_the_direction_guard(self, world):
-        """A reversed conversion direction moves historical rows into the future — the in-transaction backstop gate must catch it."""
+        """A reversed conversion direction moves historical rows into the future — the in-transaction backstop gate
+        must catch it."""
         con = sqlite3.connect(world["tgt"])
         con.row_factory = sqlite3.Row
         add_team(world["tgt"])
@@ -472,9 +500,11 @@ class TestCorroboration:
         return db
 
     def test_a_null_that_later_became_a_value_is_accepted_and_reported(self, world, capsys):
-        """Backfilled in the meantime: review source NULL, main source valued → take the main source, but it must be visible in the report.
+        """Backfilled in the meantime: review source NULL, main source valued → take the main source, but it must be
+        visible in the report.
 
-        This is exactly the proof that "the main source must be the later snapshot" — restoring from the earlier one would drop this column.
+        This is exactly the proof that "the main source must be the later snapshot" — restoring from the earlier one
+        would drop this column.
         """
         corro = self._corroborant(world["tmp"], session_id=None)
         assert run(world, corroborant=corro) == 0
@@ -483,17 +513,20 @@ class TestCorroboration:
         assert "zero contradictions" in out
 
     def test_two_snapshots_disagreeing_on_a_value_aborts(self, world):
-        """Both non-empty and unequal = the two snapshots disagree about the same row's identity; which is right is not the script's to guess."""
+        """Both non-empty and unequal = the two snapshots disagree about the same row's identity; which is right is
+        not the script's to guess."""
         corro = self._corroborant(world["tmp"], session_id="sess-OTHER")
         assert run(world, corroborant=corro, ) == 3
 
     def test_a_missing_corroborant_is_loudly_flagged_not_silently_skipped(self, world, capsys):
-        """Skipping the review is allowed, but not silently — otherwise "no error" would be read as "the review passed"."""
+        """Skipping the review is allowed, but not silently — otherwise "no error" would be read as "the review
+        passed"."""
         assert run(world) == 0
         assert "Review source unavailable" in capsys.readouterr().out
 
     def test_rows_absent_from_the_corroborant_are_counted_not_fatal(self, world, capsys):
-        """The review source may simply be an earlier snapshot than some row — count it truthfully; do not treat it as a problem."""
+        """The review source may simply be an earlier snapshot than some row — count it truthfully; do not treat it
+        as a problem."""
         corro = make_db(world["tmp"] / "thin.db", marker=rp.MIGRATION_MARKER)
         add_team(corro)  # Only the team row; the 3 member rows + 2 activities are all later than it
         assert run(world, corroborant=corro) == 0
@@ -509,7 +542,8 @@ class TestWriteSurface:
         assert rp.FORBIDDEN_COLUMN[0] not in rp.WRITABLE_TABLES
 
     def test_the_fingerprint_is_the_backfill_scripts_own_function(self):
-        """The fingerprint algorithm exists in exactly one copy — copy one out and changing one place later grows two criteria of "unchanged"."""
+        """The fingerprint algorithm exists in exactly one copy — copy one out and changing one place later grows two
+        criteria of "unchanged"."""
         import backfill_token_usage as bf
 
         assert rp.workflow_tokens_fingerprint is bf.workflow_tokens_fingerprint
@@ -523,7 +557,8 @@ class TestWriteSurface:
         assert rp.MIGRATION_MARKER == mig.MIGRATION_MARKER
 
     def test_insert_refuses_a_table_outside_the_whitelist(self, world):
-        """Even if someone constructs such a plan in the future, the write layer blows up on the spot instead of writing it."""
+        """Even if someone constructs such a plan in the future, the write layer blows up on the spot instead of
+        writing it."""
         plan = rp.RowPlan("workflow_agents", "wa1", "wf", "restorable", {"id": "wa1", "tokens": 1})
         con = sqlite3.connect(world["tgt"])
         with pytest.raises(RuntimeError, match="write-table whitelist interception"):
@@ -543,7 +578,8 @@ class TestWriteSurface:
         assert count(world["tgt"], "agents") == 3  # But this apply did do work
 
     def test_the_journal_carries_the_fingerprint_and_the_clock_verdict(self, world):
-        """The journal is the only credential: the forbidden-column fingerprints before/after and the clock judgment must all be in it."""
+        """The journal is the only credential: the forbidden-column fingerprints before/after and the clock judgment
+        must all be in it."""
         journal = world["tmp"] / "j.json"
         assert run(world, "--apply", "--journal", str(journal)) == 0
         data = json.loads(journal.read_text())
@@ -559,7 +595,8 @@ class TestWriteSurface:
 # ===========================================================================
 class TestSingleTransaction:
     def test_a_failed_check_leaves_not_one_row_behind(self, tmp_path):
-        """Expected fingerprint mismatch → rollback. If the rows landed but the ledger did not, the next reap tick would delete them again."""
+        """Expected fingerprint mismatch → rollback. If the rows landed but the ledger did not, the next reap tick
+        would delete them again."""
         src = make_db(tmp_path / "s.db", marker=rp.MIGRATION_MARKER)
         tgt = make_db(tmp_path / "t.db", marker=rp.MIGRATION_MARKER)
         add_team(src, team_id=TEAM)
@@ -580,7 +617,8 @@ class TestSingleTransaction:
         assert not (tmp_path / "out.json").exists()  # A failed write should not leave a "success credential" behind
 
     def test_the_expectation_gate_is_skipped_loudly_for_unknown_teams(self, tmp_path, capsys):
-        """The synthetic team has no expected fingerprint — say the skip plainly instead of pretending an empty dict passed."""
+        """The synthetic team has no expected fingerprint — say the skip plainly instead of pretending an empty dict
+        passed."""
         src = make_db(tmp_path / "s.db", marker=rp.MIGRATION_MARKER)
         tgt = make_db(tmp_path / "t.db", marker=rp.MIGRATION_MARKER)
         add_team(src, team_id="other-team")
@@ -617,7 +655,8 @@ class TestIdempotenceAndDryRun:
         assert fetch(world["tgt"], "select count(*) from agents")[0] == before
 
     def test_the_sql_guard_lets_a_concurrent_insert_win(self, world):
-        """Someone else inserted between judgment and write — the guard is in the SQL, so no duplicate insert even under concurrency."""
+        """Someone else inserted between judgment and write — the guard is in the SQL, so no duplicate insert even
+        under concurrency."""
         con = rp.open_immutable(world["src"])
         row = con.execute("select * from agents where id=?", (W1,)).fetchone()
         cols = set(rp.table_columns(con, "agents"))
@@ -653,7 +692,8 @@ class TestIdempotenceAndDryRun:
 # ===========================================================================
 class TestBatchTimestamp:
     def test_the_original_batch_timestamp_is_written_not_now(self, world):
-        """This column doubles as the re-collection batch signature and live-collection health: writing now() would fabricate "new measurements" and pollute the windowing."""
+        """This column doubles as the re-collection batch signature and live-collection health: writing now() would
+        fabricate "new measurements" and pollute the windowing."""
         assert run(world, "--apply", "--journal", str(world["tmp"] / "j.json")) == 0
         stamps = {
             r[0]
@@ -664,7 +704,8 @@ class TestBatchTimestamp:
         assert stamps == {rp.BATCH_TS}
 
     def test_a_declared_batch_timestamp_is_the_one_that_lands(self, world):
-        """The batch moment is parameterized (unit tests must be able to swap it), but what is written must be exactly the declared one."""
+        """The batch moment is parameterized (unit tests must be able to swap it), but what is written must be
+        exactly the declared one."""
         assert run(
             world, "--apply", "--journal", str(world["tmp"] / "j.json"),
             "--batch-ts", "2026-08-03 00:00:00.000000",
@@ -678,10 +719,13 @@ class TestBatchTimestamp:
         assert stamps == {"2026-08-03 00:00:00.000000"}
 
     def test_a_stray_batch_timestamp_is_caught_inside_the_transaction(self, world):
-        """In-transaction gate: a moment in the database that does not belong to this batch → report a problem (the caller rolls back accordingly).
+        """In-transaction gate: a moment in the database that does not belong to this batch → report a problem (the
+        caller rolls back accordingly).
 
-        This guards against "half the rows stamped with the batch stamp, the other half written with another stamp by another path" — then this batch of rows is no longer
-        a windowable cohort, and coverage windowing identifies batches precisely by "the same moment shared by enough rows".
+        This guards against "half the rows stamped with the batch stamp, the other half written with another stamp by
+        another path" — then this batch of rows is no longer
+        a windowable cohort, and coverage windowing identifies batches precisely by "the same moment shared by enough
+        rows".
         """
         con = sqlite3.connect(world["tgt"])
         con.row_factory = sqlite3.Row
@@ -702,7 +746,8 @@ class TestBatchTimestamp:
 # ===========================================================================
 class TestSchemaAdaptation:
     def test_a_known_missing_column_falls_back_to_its_declared_rule(self, tmp_path):
-        """The source has no tokens_source (it only launched in v1.11.1) → ledger-less rows stay NULL, not backfilled with 'transcript'."""
+        """The source has no tokens_source (it only launched in v1.11.1) → ledger-less rows stay NULL, not backfilled
+        with 'transcript'."""
         src = make_db(tmp_path / "s.db", marker=rp.MIGRATION_MARKER, with_tokens_source=False)
         tgt = make_db(tmp_path / "t.db", marker=rp.MIGRATION_MARKER)
         add_team(src, team_id="other-team")
@@ -719,7 +764,8 @@ class TestSchemaAdaptation:
         assert fetch(tgt, "select tokens_source from agents where id=?", LEADER)[0] is None
 
     def test_an_unknown_missing_column_is_schema_drift_not_a_silent_null(self, world):
-        """An unregistered missing column = drift nobody has seen. Backfilling NULL is exactly how "fields quietly disappeared" happens."""
+        """An unregistered missing column = drift nobody has seen. Backfilling NULL is exactly how "fields quietly
+        disappeared" happens."""
         con = sqlite3.connect(world["tgt"])
         con.execute("alter table agents add column brand_new text")
         con.commit()
@@ -727,7 +773,8 @@ class TestSchemaAdaptation:
         assert run(world) == 5
 
     def test_a_column_dropped_by_the_target_aborts_rather_than_losing_data(self, tmp_path):
-        """The target database has one column fewer than the source → restored content would be lost; requires human ruling, no head-down inserting."""
+        """The target database has one column fewer than the source → restored content would be lost; requires human
+        ruling, no head-down inserting."""
         src = make_db(tmp_path / "s.db", marker=rp.MIGRATION_MARKER)
         tgt = make_db(tmp_path / "t.db", marker=rp.MIGRATION_MARKER, with_tokens_source=False)
         add_team(src, team_id="other-team")
@@ -755,7 +802,8 @@ class TestPreBackup:
         assert count(world["tgt"], "agents") == 3
 
     def test_a_second_backup_in_the_same_second_never_overwrites_the_first(self, world):
-        """The whole value of the pre-backup is "never written" — on a name collision, start a new one; never overwrite."""
+        """The whole value of the pre-backup is "never written" — on a name collision, start a new one; never
+        overwrite."""
         backups = world["tmp"] / "baks"
         run(world, "--apply", "--journal", str(world["tmp"] / "j1.json"),
             "--pre-backup-dir", str(backups))

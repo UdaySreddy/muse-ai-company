@@ -1,7 +1,9 @@
 """Data-fetching unit tests for the single-measurement card — attribution v1 §5.2 ④.
 
-This card is **explicitly exempt from the coverage gate**, so it is the only place on the whole page with "a number without a denominator". The exemption holds
-only because it paid the price: the data can only come from parsing a transcript live. Every test below tests whether that price
+This card is **explicitly exempt from the coverage gate**, so it is the only place on the whole page with "a number
+without a denominator". The exemption holds
+only because it paid the price: the data can only come from parsing a transcript live. Every test below tests whether
+that price
 is still being paid — once the price lapses, the exemption becomes a back door around the gate.
 
 The most important is :class:`TestNoBareTotal`: the parser internally computes a ``total_tokens`` (it needs it
@@ -83,10 +85,12 @@ class TestNoDataIsNotZero:
 
 
 class TestSameArithmeticAsTheLedger:
-    """There is only one copy of the numeric algorithm — the card and the ledger must use the exact same accumulation metric."""
+    """There is only one copy of the numeric algorithm — the card and the ledger must use the exact same accumulation
+    metric."""
 
     def test_same_request_id_takes_last_snapshot_not_sum(self, tmp_path):
-        # One API call produces multiple assistant rows with output increasing as it streams; bare per-row addition inflates several-fold
+        # One API call produces multiple assistant rows with output increasing as it streams; bare per-row addition
+        # inflates several-fold
         p = tmp_path / "t.jsonl"
         _write_transcript(
             p,
@@ -155,7 +159,8 @@ class TestModelIsObserved:
         p = tmp_path / "t.jsonl"
         _write_transcript(p, [_assistant("r1", USAGE)])
         payload = usage_probe.probe_dispatch(str(p))
-        # Transcripts always carry the full model name; the `model: opus` in templates is a tier alias — the two are not interchangeable
+        # Transcripts always carry the full model name; the `model: opus` in templates is a tier alias — the two are not
+        # interchangeable
         assert payload["model"] == "claude-opus-5"
         assert payload["model_source"] == "transcript"
 

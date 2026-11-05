@@ -364,9 +364,11 @@ class TestWorkflowSubagentTracking:
     async def test_join_reopens_closed_session_shell(self, translator):
         """A collected workflow-session shell team, when joined again, must be revived on the spot.
 
-        A shell team is addressable by name forever: a long-lived session starting a workflow after the reaper collected the team lands new members
+        A shell team is addressable by name forever: a long-lived session starting a workflow after the reaper collected
+        the team lands new members
         in a completed team — and every "active" view filters teams by status, so the members become invisible.
-        The reaper's contradiction self-healing can rescue it within one tick, but the moment of joining is the most accurate point.
+        The reaper's contradiction self-healing can rescue it within one tick, but the moment of joining is the most
+        accurate point.
         """
         ht, repo = translator
         shell = await repo.create_team(
@@ -544,7 +546,8 @@ class TestTeamlessAutoAdoption:
 
     @pytest.mark.asyncio
     async def test_teamless_dispatch_auto_adopted(self, translator):
-        """No cc_team_name, no Leader, no team to belong to → automatically build a session-<sid8> container team and enroll."""
+        """No cc_team_name, no Leader, no team to belong to → automatically build a session-<sid8> container team and
+        enroll."""
         ht, repo = translator
         payload = {
             "hook_event_name": "SubagentStart",
@@ -562,7 +565,8 @@ class TestTeamlessAutoAdoption:
 
     @pytest.mark.asyncio
     async def test_completed_session_team_revived_on_dispatch(self, translator):
-        """After the container team is closed (SessionEnd/reaped), a direct dispatch → automatically revives it to active and enrolls (lesion ②)."""
+        """After the container team is closed (SessionEnd/reaped), a direct dispatch → automatically revives it to
+        active and enrolls (lesion ②)."""
         ht, repo = translator
         sid = "revive-sess-0001"
         team, _ = await repo.get_or_create_team(
@@ -591,7 +595,8 @@ class TestTeamlessAutoAdoption:
 
     @pytest.mark.asyncio
     async def test_leader_rehomed_from_completed_workflow_team(self, translator):
-        """The Leader drifted to a completed workflow team → on enrollment it is homed to the session container team (lesion ③)."""
+        """The Leader drifted to a completed workflow team → on enrollment it is homed to the session container team
+        (lesion ③)."""
         ht, repo = translator
         sid = "drift-sess-0001"
         wf_team, _ = await repo.get_or_create_team(
@@ -613,7 +618,9 @@ class TestTeamlessAutoAdoption:
         assert result["status"] == "created", result
 
         container = await repo.get_team_by_name(f"session-{sid[:8]}")
-        assert container is not None, "Ownership validation should reject the parasitic workflow team and create a container team by name"
+        assert container is not None, (
+            "Ownership validation should reject the parasitic workflow team and create a container team by name"
+        )
         agents = await repo.list_agents(container.id)
         assert any(a.name == "frontend-dev" for a in agents)
         leader_after = await repo.get_agent(leader.id)

@@ -1,17 +1,25 @@
-"""Token usage attribution v1 phase 0 — metric rectification and two machine checks (I12 dimension whitelist / I13 same-screen coverage).
+"""Token usage attribution v1 phase 0 — metric rectification and two machine checks (I12 dimension whitelist / I13
+same-screen coverage).
 
-The core number quoted at project initiation, "186.2 million tokens already lying in the database, only the display layer missing", had the wrong metric.
+The core number quoted at project initiation, "186.2 million tokens already lying in the database, only the display
+layer missing", had the wrong metric.
 ``workflow_agents.tokens`` takes the four-field sum of the last assistant message = an **instantaneous context
 watermark snapshot**; ``token_attribution.parse_transcript_usage`` accumulates across requestIds = the real
 usage. Measured on the same batch of agents, the two differ by 5–25× (117,800 vs 632,504 … 127,089 vs 3,236,088).
-Adding them together, juxtaposing them, or putting them in the same "total token" is the same class of accident this repo just had on timestamps.
+Adding them together, juxtaposing them, or putting them in the same "total token" is the same class of accident this
+repo just had on timestamps.
 
-So this batch promotes "metric" to a first-class dimension alongside "coverage", and makes the two red lines machine criteria:
+So this batch promotes "metric" to a first-class dimension alongside "coverage", and makes the two red lines machine
+criteria:
 
-* **I12 dimension whitelist**: usage presentation surfaces may only show the token four layers / counts / duration milliseconds / percentages.
-  A whitelist rather than a banned-word list — a blacklist only works by enumerating every out-of-bounds phrasing; miss one and the defense breaks.
-* **I13 same-screen coverage**: every token number must carry its metric; aggregate surfaces must return the denominator and unattributed at the same level.
-  Page annotations are soft constraints, so it is pinned at the type layer: the metric is written next to the field, not only in the registry.
+* **I12 dimension whitelist**: usage presentation surfaces may only show the token four layers / counts / duration
+milliseconds / percentages.
+  A whitelist rather than a banned-word list — a blacklist only works by enumerating every out-of-bounds phrasing; miss
+  one and the defense breaks.
+* **I13 same-screen coverage**: every token number must carry its metric; aggregate surfaces must return the denominator
+and unattributed at the same level.
+  Page annotations are soft constraints, so it is pinned at the type layer: the metric is written next to the field, not
+  only in the registry.
 
 Specification: docs/token-attribution-v1-design.md §0.2 / §1.1 / §2.5 / §2.6 / §4.4.
 """
@@ -67,7 +75,8 @@ class TestMetricVocabulary:
     def test_context_watermark_is_deliberately_outside_the_enum(self):
         """The third metric (context watermark) is deliberately not a TokenMetric member, but must still be labelable.
 
-        It is unrelated to usage attribution (it serves agent reuse governance), yet every token number on a page must carry
+        It is unrelated to usage attribution (it serves agent reuse governance), yet every token number on a page must
+        carry
         its metric — including those not participating in attribution. So it is in the vocabulary, not in the enum.
         """
         assert CTX_WATERMARK_METRIC not in {m.value for m in TokenMetric}
@@ -75,13 +84,15 @@ class TestMetricVocabulary:
         assert TOKEN_METRIC_LABELS == frozenset({"usage_sum", "ctx_last", CTX_WATERMARK_METRIC})
 
     def test_every_metric_has_a_definition_and_a_producer(self):
-        """A metric must state clearly who produced it — otherwise "where did this number come from" is untraceable afterwards."""
+        """A metric must state clearly who produced it — otherwise "where did this number come from" is untraceable
+        afterwards."""
         assert set(TOKEN_METRIC_SPECS) == set(TOKEN_METRIC_LABELS)
         for label, (name, producer, definition) in TOKEN_METRIC_SPECS.items():
             assert name and producer and definition, f"{label}'s metric description is incomplete"
 
     def test_four_layers_are_the_unit_of_presentation(self):
-        """Four-layer itemization is a hard requirement: measured 95.6% of the volume is cache_read; reporting only the total equals reporting only cache reads."""
+        """Four-layer itemization is a hard requirement: measured 95.6% of the volume is cache_read; reporting only
+        the total equals reporting only cache reads."""
         assert TOKEN_LAYERS == (
             "input_tokens",
             "output_tokens",
@@ -91,10 +102,12 @@ class TestMetricVocabulary:
 
 
 class TestTokensSourceColumn:
-    """The only newly added column — adding a column must sync four places (types / ORM / bidirectional conversion / migration)."""
+    """The only newly added column — adding a column must sync four places (types / ORM / bidirectional conversion /
+    migration)."""
 
     def test_declared_in_columns_to_ensure(self):
-        """Project iron rule: ORM field additions must sync COLUMNS_TO_ENSURE, otherwise existing databases never get this column."""
+        """Project iron rule: ORM field additions must sync COLUMNS_TO_ENSURE, otherwise existing databases never get
+        this column."""
         assert ("agents", "tokens_source") in {(t, c) for t, c, _ in COLUMNS_TO_ENSURE}
 
     def test_legacy_db_gets_the_column(self, tmp_path: Path):
@@ -142,7 +155,8 @@ class TestI12Dimensions:
     def test_forbidden_words_match_by_word_not_substring(self):
         """Substring matching would read isPending as "spend" and statusDone as "usd".
 
-        The first version was written that way and produced 64 false positives in one run. A machine check that false-alarms daily equals no machine check, so
+        The first version was written that way and produced 64 false positives in one run. A machine check that
+        false-alarms daily equals no machine check, so
         it was changed to split words by camelCase / snake_case before judging.
         """
         for innocent in ("isPending", "statusDone", "agentStatusDone", "statusData",
@@ -156,7 +170,8 @@ class TestI12Dimensions:
             assert dimensions._forbidden_word(guilty), f"{guilty} slipped through"
 
     def test_undeclared_numeric_field_is_red(self, monkeypatch):
-        """A new undeclared dimension numeric field on a presentation surface = red (the whitelist is only closed when declarations are complete)."""
+        """A new undeclared dimension numeric field on a presentation surface = red (the whitelist is only closed
+        when declarations are complete)."""
         surface = registry.PySurface(
             model="WorkflowAgent",
             kind="row",
@@ -222,7 +237,8 @@ class TestI13Coverage:
         assert any("metric not labeled" in p for p in problems)
 
     def test_metric_only_in_the_registry_is_red(self, monkeypatch):
-        """The metric must be on the same screen as the field. Only in the registry = the next person editing this line cannot see it."""
+        """The metric must be on the same screen as the field. Only in the registry = the next person editing this
+        line cannot see it."""
         # The Agent definition block writes USAGE_SUM and CTX_WATERMARK_METRIC, but not ctx_last —
         # pass it off as ctx_last and the machine check must see that "this metric does not exist in the source at all".
         surface = registry.PySurface(
@@ -235,7 +251,8 @@ class TestI13Coverage:
         assert any("only written in the registry" in p for p in problems)
 
     def test_aggregate_without_denominator_is_red(self, monkeypatch):
-        """An aggregate surface missing its denominator = a part impersonating the whole. This rule is loaded but not fired today; it takes effect when phase 2 lands."""
+        """An aggregate surface missing its denominator = a part impersonating the whole. This rule is loaded but not
+        fired today; it takes effect when phase 2 lands."""
         surface = registry.PySurface(
             model="WorkflowRun",
             kind="aggregate",
@@ -246,7 +263,8 @@ class TestI13Coverage:
         assert any("missing same-level coverage fields" in p for p in problems)
 
     def test_usage_sum_aggregate_cannot_declare_a_gap(self, monkeypatch):
-        """The attribution numbers' denominator has no exceptions — the ctx_last-side historical gap cannot be analogized to usage_sum."""
+        """The attribution numbers' denominator has no exceptions — the ctx_last-side historical gap cannot be
+        analogized to usage_sum."""
         surface = registry.PySurface(
             model="Agent",
             kind="aggregate",
@@ -258,7 +276,8 @@ class TestI13Coverage:
         assert any("does not accept gap declarations" in p for p in problems)
 
     def test_row_surface_zero_as_no_data_must_be_declared(self, monkeypatch):
-        """A non-Optional token column where 0 also means "not collected" — if not changed, it must be declared by name, not silently."""
+        """A non-Optional token column where 0 also means "not collected" — if not changed, it must be declared by
+        name, not silently."""
         surface = registry.PySurface(
             model="WorkflowAgent",
             kind="row",
@@ -269,7 +288,8 @@ class TestI13Coverage:
         assert any("'not collected' and 'really 0'" in p for p in problems)
 
     def test_declared_gaps_stay_visible(self, monkeypatch):
-        """A declaration is not an exemption: every machine check prints the gap, so it does not become the default state."""
+        """A declaration is not an exemption: every machine check prints the gap, so it does not become the default
+        state."""
         surface = registry.PySurface(
             model="WorkflowAgent",
             kind="row",

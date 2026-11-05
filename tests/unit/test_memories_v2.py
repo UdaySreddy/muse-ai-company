@@ -2,7 +2,8 @@
 
 Coverage: repository create_memory (kind/source_refs/supersedes), list_memories
 valid-only + kind filtering, invalidate_memory, list_direction_memories assembly +
-kind priority sorting, bucket character usage accounting, and the direction-memory rendering and injection fuse of both hooks.
+kind priority sorting, bucket character usage accounting, and the direction-memory rendering and injection fuse of both
+hooks.
 (pyproject asyncio_mode=auto; async tests need no decorator.)
 """
 
@@ -87,7 +88,8 @@ async def test_list_memories_kind_filter(db_repository: StorageRepository) -> No
 async def test_list_direction_memories_scope_and_priority(
     db_repository: StorageRepository,
 ) -> None:
-    """Direction-layer assembly: global+user global entries + the current project's project-level entries; sorted by kind priority."""
+    """Direction-layer assembly: global+user global entries + the current project's project-level entries; sorted by
+    kind priority."""
     proj = await db_repository.create_project("dir-proj", root_path="/tmp/dir-proj")
     other = await db_repository.create_project(
         "other-proj", root_path="/tmp/other-proj"
@@ -207,8 +209,10 @@ def test_render_direction_memories_subagent() -> None:
 def test_injection_fuse_covers_full_storage_quota() -> None:
     """The injection fuse ≥ the total storage quota (v2.1 single axis): what can be stored must be deliverable.
 
-    Both hooks are pure-stdlib files with constants defined separately, so align each here against the sum of the server-side quotas —
-    if the fuse drops below the quota, injection falls back to "routine truncation" and direction-layer inheritance is hollowed out again.
+    Both hooks are pure-stdlib files with constants defined separately, so align each here against the sum of the
+    server-side quotas —
+    if the fuse drops below the quota, injection falls back to "routine truncation" and direction-layer inheritance is
+    hollowed out again.
     """
     from aiteam.api.routes.memory import _DIRECTION_TOTAL_BUDGET
     from aiteam.hooks.inject_subagent_context import (

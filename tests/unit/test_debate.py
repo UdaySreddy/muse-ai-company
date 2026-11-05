@@ -47,7 +47,8 @@ class TestDebateTemplate:
         assert "Action Items" in rule or "Action" in rule
 
     def test_debate_has_roles_definition(self):
-        # The template has no standalone roles key — the three roles (advocate/critic/judge) are semantically embedded in the four rounds' names
+        # The template has no standalone roles key — the three roles (advocate/critic/judge) are semantically embedded
+        # in the four rounds' names
         template = TEMPLATE_ROUNDS["debate"]
         round_names = [r["name"] for r in template["rounds"]]
         assert any("Advocate" in n for n in round_names)  # advocate

@@ -63,7 +63,8 @@ async def test_supersedes_invalidation(db_repository: StorageRepository) -> None
 
 
 async def test_hydrate_config_memo_view(db_repository: StorageRepository) -> None:
-    """get_task splices the valid memos back into the config['memo'] view (legacy read side compatible with zero changes)."""
+    """get_task splices the valid memos back into the config['memo'] view (legacy read side compatible with zero
+    changes)."""
     team = await db_repository.create_team("memo-team", "coordinate")
     task = await db_repository.create_task(team.id, "Task D")
     await db_repository.add_task_memo(task.id, "Progress one")
@@ -114,7 +115,8 @@ async def test_backfill_idempotent(db_repository: StorageRepository) -> None:
 async def test_unified_search_filters_invalidated(
     db_repository: StorageRepository,
 ) -> None:
-    """unified_search queries the table directly; invalid memos do not appear in results, and the superseder is retrievable."""
+    """unified_search queries the table directly; invalid memos do not appear in results, and the superseder is
+    retrievable."""
     project = await db_repository.create_project("proj-memo")
     team = await db_repository.create_team("memo-team", "coordinate")
     task = await db_repository.create_task(

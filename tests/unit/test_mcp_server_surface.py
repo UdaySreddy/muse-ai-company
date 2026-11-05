@@ -149,5 +149,6 @@ def test_every_tool_and_parameter_is_described(tool_names):
     ]
     assert not missing, (
         f"Parameters missing a description (tool search cannot find them): {missing}\n"
-        "Note: the docstring Args section can only hold one parameter per line; `limit / offset: ...` gets dropped wholesale"
+        "Note: the docstring Args section can only hold one parameter "
+            "per line; `limit / offset: ...` gets dropped wholesale"
     )
