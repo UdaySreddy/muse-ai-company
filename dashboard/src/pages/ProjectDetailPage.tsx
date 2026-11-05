@@ -449,8 +449,8 @@ function TeamStatusBadge({ status }: { status: string }) {
 function LeaderCard({ leaders }: { leaders: SummaryLeader[] | null | undefined }) {
   const t = useT();
   if (!leaders || leaders.length === 0) {
-    // 不再整卡隐藏（用户 2026-07-07：cronus 项目页"没有显示 leader 栏"）——
-    // 显示空态，让每个项目页结构一致、可解释。
+    // No longer hide the whole card (user, 2026-07-07: the cronus project page "did not show the leader section") —
+    // show an empty state instead, so every project page has a consistent, explainable structure.
     return (
       <Card>
         <CardHeader className="pb-3">
@@ -466,7 +466,7 @@ function LeaderCard({ leaders }: { leaders: SummaryLeader[] | null | undefined }
     );
   }
 
-  // 多会话并行（用户裁定 2026-07-10）：每个 CC session 一条 CEO-<英文名>，并列展示
+  // Multiple parallel sessions (user ruling, 2026-07-10): one CEO-<English name> entry per CC session, shown side by side
   const anyActive = leaders.some((l) => l.status?.toLowerCase() === 'busy');
   return (
     <Card className={anyActive ? 'border-green-500/50 bg-green-50/30 dark:bg-green-950/10' : ''}>
@@ -524,8 +524,8 @@ function LeaderCard({ leaders }: { leaders: SummaryLeader[] | null | undefined }
 
 /* ── Worktree Card ── */
 
-// 脱敏展示：只截取 .claude/worktrees/ 之后的相对片段，不暴露本机绝对路径全貌
-// （docs/worktree-governance-design.md §4/(c) 前端一节明确要求）。
+// Redacted display: only the relative fragment after .claude/worktrees/ is shown; the machine's full absolute path is never exposed
+// (explicitly required by the frontend section of docs/worktree-governance-design.md §4/(c)).
 function shortenWorktreePath(path: string): string {
   const marker = '.claude/worktrees/';
   const idx = path.indexOf(marker);
@@ -593,27 +593,27 @@ function WorktreeCard({ worktrees }: { worktrees: SummaryWorktree[] | null | und
 }
 
 /* ── Session Container Team (kind=session) ──
- * 会话容器队：CC 会话启动时自动建的兜底队（hook_translator._find_or_create_session_team，
- * config.kind='session'，队名 session-<sid8>），与 workflow 队（kind='workflow'）是两类
- * 互斥的非 team CRUD 容器，不该共用同一套卡片模板——否则套 workflow 卡片会因缺 run 数据
- * 渲染残缺（用户 2026-07-14 需求，任务 11463815 三症）。 */
+ * Session container teams: fallback teams auto-created when a CC session starts (hook_translator._find_or_create_session_team,
+ * config.kind='session', team name session-<sid8>). They and workflow teams (kind='workflow') are two distinct classes of
+ * mutually exclusive non-team-CRUD containers and must not share one card template — otherwise a workflow card, lacking run data, would
+ * render incompletely (user requirement, 2026-07-14; task 11463815, symptom 3 of 3). */
 
-// session-<sid8> 队名模式——8 位十六进制 session id 前缀，不会与 workflow-session-<sid8>
-// 兜底队（不同前缀）或常规手工命名的队（8 位纯 hex 撞车概率可忽略）混淆。
+// The session-<sid8> team-name pattern — an 8-hex-digit session id prefix; it cannot be confused with workflow-session-<sid8>
+// fallback teams (different prefix) or regular hand-named teams (the collision probability of 8 pure hex digits is negligible).
 const SESSION_TEAM_NAME_RE = /^session-[0-9a-f]{8}$/;
 
-/** kind=session 判定：优先信后端创建时打的 config.kind 标记；实测发现存量队（早于该
- *  标记上线，或走了未打标签的创建路径——如本项目页自身所在的 session-cd8423a5，
- *  config 为空对象）没有这个字段，退化按队名模式 session-<sid8> 识别，与后端
- *  hook_translator._team_owned_by_session 的同款 legacy 兜底思路一致。 */
+/** kind=session judgement: trust the config.kind marker stamped by the backend at creation first; in practice, legacy teams (created before that
+ *  marker shipped, or created via an unlabelled path — e.g. session-cd8423a5, which hosts this very project page,
+ *  with an empty config object) lack the field, so fall back to the team-name pattern session-<sid8>, following the same legacy fallback approach as the backend's
+ *  hook_translator._team_owned_by_session. */
 function isSessionKind(team: Team): boolean {
   if (team.config?.kind === 'session') return true;
   return SESSION_TEAM_NAME_RE.test(team.name);
 }
 
-/** 按 session_id 把 session 容器队匹配到 project_summary.leaders[] 里的 CEO 条目——
- *  优先用创建时打的 owner_session_id（新队权威口径），legacy 队（无该字段）退化到按
- *  队名 session-<sid8> 匹配（与后端 hook_translator._team_owned_by_session 同规则）。 */
+/** Match a session container team to the CEO entry in project_summary.leaders[] by session_id —
+ *  prefer the owner_session_id stamped at creation (the authoritative definition for new teams); legacy teams (without the field) fall back to matching by
+ *  team name session-<sid8> (same rule as the backend's hook_translator._team_owned_by_session). */
 function matchSessionLeader(
   team: Team,
   leaders: SummaryLeader[] | null | undefined,
@@ -627,9 +627,9 @@ function matchSessionLeader(
   });
 }
 
-/** session 容器队主标题：CEO 名贯通——匹配到就显示 CEO-<英文名> 为主标题，
- *  session-<sid8> 技术名降为小号淡色副标题（与 TeamDisplayName 的 workflow 主标题
- *  降级规则一致）。匹配不到（无活跃/历史会话数据）时退化显示原始队名。 */
+/** Session container team headline: the CEO name carries through — when matched, CEO-<English name> is the headline,
+ *  and the session-<sid8> technical name is demoted to a small, muted subtitle (consistent with TeamDisplayName's workflow headline
+ *  demotion rule). When there is no match (no active/historic session data), fall back to the raw team name. */
 function SessionTeamDisplayName({
   team,
   leaders,
@@ -700,8 +700,8 @@ function ActiveTeamContent({
     return [...agents].sort((a, b) => (priority[a.status.toLowerCase()] ?? 99) - (priority[b.status.toLowerCase()] ?? 99));
   }, [agents]);
 
-  // workflow 团队：成员主名用观测层阶段标签，wf-<ccid> 降级小字
-  //（与 CompletedTeamRow/TeamDetailPage 同规则——此前活跃团队区漏接，用户 2026-07-07 实测指出）
+  // Workflow teams: members' primary name uses the observability-layer phase label; wf-<ccid> is demoted to small text
+  //(same rule as CompletedTeamRow/TeamDetailPage — the active-teams area previously missed this wiring; user report, tested 2026-07-07)
   const wfId = teamWfId(team);
   const { data: wfAgents } = useWorkflowAgents(wfId ?? '', true);
   const labelByCc = useMemo(() => {
@@ -984,7 +984,7 @@ function ActiveTeamContent({
 
 /* ── Completed Team Row (collapsible) ── */
 
-/** workflow 团队 → wf_id（兜底队 workflow-session-* 无对应 run，返回 undefined） */
+/** Workflow team -> wf_id (fallback teams workflow-session-* have no corresponding run; returns undefined) */
 function teamWfId(team: Team): string | undefined {
   return (
     (team.config?.workflow_run_id as string | undefined) ??
@@ -1000,8 +1000,8 @@ function CompletedTeamRow({ team, run }: { team: Team; run?: WorkflowRun }) {
   const { data: agentsData } = useAgents(expanded ? team.id : '');
   const agents = (agentsData?.data ?? []).filter((a) => a.role !== 'leader');
 
-  // workflow 团队：成员主名用观测层阶段标签（cc_tool_use_id↔cc_agent_id 关联），
-  // wf-<ccid> 降级小字（与 TeamDetailPage 同规则，用户 2026-07-06 需求）。
+  // Workflow teams: members' primary name uses the observability-layer phase label (cc_tool_use_id ↔ cc_agent_id association),
+  // with wf-<ccid> demoted to small text (same rule as TeamDetailPage; user requirement, 2026-07-06).
   const wfId = teamWfId(team);
   const { data: wfAgents } = useWorkflowAgents(expanded && wfId ? wfId : '');
   const labelByCc: Record<string, string> = {};
@@ -1021,7 +1021,7 @@ function CompletedTeamRow({ team, run }: { team: Team; run?: WorkflowRun }) {
           <span className="font-medium text-sm truncate">
             <TeamDisplayName team={team} />
           </span>
-          {/* 方案 A（用户 2026-07-07 拍板）：workflow 团队行内摘要——run 状态/agent 数/耗时 */}
+          {/* Option A (user decision, 2026-07-07): inline summary in workflow team rows — run status / agent count / duration */}
           {run ? <WorkflowStatusBadge status={run.status} /> : <TeamStatusBadge status={team.status} />}
           {run && (
             <span className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
@@ -1078,9 +1078,9 @@ function CompletedTeamRow({ team, run }: { team: Team; run?: WorkflowRun }) {
   );
 }
 
-/** kind=session 容器队完成态专属行——没有 workflow run 数据，展示会话起止时间戳，
- *  绝不渲染"查看泳道"链接（套 CompletedTeamRow 的 workflow 卡片模板会因缺 run 数据
- *  灰色残缺，用户 2026-07-14 需求，任务 11463815 三症之三）。 */
+/** Dedicated completed-state row for kind=session container teams — no workflow run data; shows the session start/end timestamps and
+ *  never renders a "View swim lane" link (applying CompletedTeamRow's workflow card template would, lacking run data, render grey and
+ *  incomplete; user requirement, 2026-07-14; task 11463815, symptom 3 of 3). */
 function CompletedSessionRow({
   team,
   leaders,
@@ -1152,9 +1152,9 @@ export function ProjectDetailPage() {
   const { data: projectData, isLoading: projectLoading, error: projectError } = useProject(projectId ?? '');
   const { data: teamsData } = useTeams();
   const { data: projSummary } = useProjectSummary(projectId ?? '');
-  // 方案 A：本项目 workflow run 按 wf_id 索引供团队行内摘要使用。
-  // limit 必须 ≤ 后端 Query(le=200)——曾传 500 触发 422 被前端静默兜底成
-  // 空列表，摘要条/泳道链接整体消失（2026-07-08 实录）。
+  // Option A: this project's workflow runs are indexed by wf_id for the team-row inline summaries.
+  // The limit must be ≤ the backend's Query(le=200) — passing 500 once triggered a 422 that the frontend silently fell back from into an
+  // empty list, making the summary strip / swim-lane links disappear entirely (recorded 2026-07-08).
   const { data: projectRuns } = useWorkflows({ project_id: projectId ?? '', limit: 200 });
   const runByWfId: Record<string, WorkflowRun> = {};
   for (const r of projectRuns ?? []) runByWfId[r.wf_id] = r;
@@ -1215,12 +1215,12 @@ export function ProjectDetailPage() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4 text-sm">
-            {/* 描述：占满整行，长文本可读性最优 */}
+            {/* Description: spans the full row for optimal long-text readability */}
             <div>
               <p className="text-muted-foreground">{t.projectDetail.description}</p>
               <p className="mt-1 leading-relaxed whitespace-pre-wrap">{project.description || '--'}</p>
             </div>
-            {/* 三个统计：紧凑成一排（各占数字宽度），上方细分隔线 */}
+            {/* Three stats: compact in one row (each takes its number's width), with a thin divider above */}
             <div className="flex flex-wrap items-baseline gap-x-8 gap-y-2 border-t pt-3">
               <div className="flex items-baseline gap-2">
                 <span className="text-muted-foreground">{t.projectDetail.activeTeams}</span>
@@ -1245,7 +1245,7 @@ export function ProjectDetailPage() {
         </CardContent>
       </Card>
 
-      {/* Tabs: 团队总览 / Ecosystem 设置 */}
+      {/* Tabs: Team Overview / Ecosystem Settings */}
       <Tabs defaultValue="teams">
         <TabsList variant="line" className="gap-3">
           <TabsTrigger value="teams">{t.projectDetail.tabTeams}</TabsTrigger>

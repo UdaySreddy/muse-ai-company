@@ -30,8 +30,8 @@ const EVENT_TYPE_OPTIONS = [
   { value: 'agent', label: 'agent.*' },
   { value: 'task', label: 'task.*' },
   { value: 'cc', label: 'cc.*' },
-  // decision.* 与 session.* 是批 9 起的两族观测事件（方案/人审裁决现场、
-  // 压缩检查点、存活判据双轨分歧）。不进这个下拉就只能在"全部"里大海捞针。
+  // decision.* and session.* are two families of observability events since batch 9 (plan / human-review decision scenes,
+  // compaction checkpoints, dual-track liveness-criteria divergence). Without this dropdown they can only be found by digging through "All".
   { value: 'decision', label: 'decision.*' },
   { value: 'session', label: 'session.*' },
   { value: 'workflow', label: 'workflow.*' },

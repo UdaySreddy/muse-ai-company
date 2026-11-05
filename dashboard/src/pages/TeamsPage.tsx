@@ -27,14 +27,14 @@ import type { Team } from '@/types';
 import { useT } from '@/i18n';
 import { formatDateTimeSystemLocale } from '@/lib/datetime';
 
-// CC Workflow（ultracode）自动追踪的运行团队徽章。可点击跳转到 /workflows 观测详情；
-// workflow-session-* 是会话级兜底团队（wf_id 迟到期的临时归组），不打徽章。
+// Badge for run teams auto-tracked by CC Workflow (ultracode). Clickable, jumping to the /workflows observability detail;
+// workflow-session-* are session-level fallback teams (temporary grouping while the wf_id is late) and get no badge.
 function WorkflowBadge({ team }: { team: Team }) {
   const t = useT();
   if (!team.name.startsWith('workflow-') || team.name.startsWith('workflow-session-')) {
     return null;
   }
-  // 反查 wf_id：优先 config.workflow_run_id，退化到团队名 workflow-<wf_id> 去前缀。
+  // Reverse-lookup of wf_id: prefer config.workflow_run_id; fall back to stripping the prefix from the team name workflow-<wf_id>.
   const wfId =
     (team.config?.workflow_run_id as string | undefined) ??
     team.name.replace(/^workflow-/, '');
@@ -59,8 +59,8 @@ function WorkflowBadge({ team }: { team: Team }) {
   );
 }
 
-// workflow 团队主标题 = 观测层 run 名称（如 d5-ecosystem-axis-convergence）；
-// wf 编号降级为小号淡色追踪标——编号是追踪用的，不该当主描述（用户 2026-07-06 需求）。
+// A workflow team's headline = the observability-layer run name (e.g. d5-ecosystem-axis-convergence);
+// the wf number is demoted to a small, muted tracking mark — numbers are for tracking, not the main description (user requirement, 2026-07-06).
 export function TeamDisplayName({ team }: { team: Team }) {
   const wfId =
     (team.config?.workflow_run_id as string | undefined) ??
@@ -79,10 +79,10 @@ export function TeamDisplayName({ team }: { team: Team }) {
   );
 }
 
-// 同一个 CC 进程在 OS 侧可能留下多支容器队：CC 建队时盖的会话号永不更新，进程换
-// 会话（结束后重开 / resume）就另起一支，老的那支 completed 留在列表里。后端解析出
-// cc_pid 的按进程排到一起并打组徽章；解析不出的（历史会话在进程登记里查不到，且
-// 刻意不做 cwd 猜测）保持原样独立成行。
+// One CC process may leave several container teams on the OS side: the session id CC stamps at team creation never updates, so when the process changes
+// session (reopened after ending / resumed) it starts a new one, and the old completed one stays in the list. The backend resolves
+// cc_pid to sort teams of one process together and badge the group; teams it cannot resolve (historic sessions not found in the process registry, and
+// deliberately no cwd guessing) stay as standalone rows, unchanged.
 type GroupedTeam = { team: Team; groupSize: number; indexInGroup: number };
 
 export function groupByProcess(teams: Team[]): GroupedTeam[] {

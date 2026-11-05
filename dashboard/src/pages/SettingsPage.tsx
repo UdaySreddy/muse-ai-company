@@ -39,18 +39,18 @@ export function SettingsPage() {
 
   const t = useT();
 
-  // 通用设置
+  // General settings
   const [projectName, setProjectName] = useState('AI Team OS');
   const [projectDesc, setProjectDesc] = useState(t.settings.defaultProjectDesc);
   const [darkMode, setDarkMode] = useState(false);
 
   const langCtx = useContext(LanguageContext);
-  const currentLang = langCtx?.lang ?? 'zh';
+  const currentLang = langCtx?.lang ?? 'en';
   const handleLangChange = (v: string | null) => {
     if (v && langCtx) langCtx.switchLang(v as Lang);
   };
 
-  // 基础设施设置
+  // Infrastructure settings
   const [storageBackend, setStorageBackend] = useState('sqlite');
   const [dbUrl, setDbUrl] = useState('sqlite:///data/aiteam.db');
   const [cacheBackend, setCacheBackend] = useState('memory');
@@ -59,14 +59,14 @@ export function SettingsPage() {
   const [apiPort, setApiPort] = useState('8000');
   const [dashboardPort, setDashboardPort] = useState('5173');
 
-  // 团队配置
+  // Team config
   const { data: teamDefaults, isLoading: teamDefaultsLoading } = useTeamDefaults();
   const updateDefaults = useUpdateTeamDefaults();
   const addMember = useAddPermanentMember();
   const removeMember = useRemovePermanentMember();
   const toggleMember = useTogglePermanentMember();
 
-  // 团队模板
+  // Team templates
   const { data: teamTemplates, isLoading: templatesLoading } = useTeamTemplates();
 
   const [autoCreateTeam, setAutoCreateTeam] = useState<boolean | null>(null);
@@ -191,7 +191,7 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Toast通知 */}
+      {/* Toast notification */}
       {showToast && (
         <div className="fixed top-4 right-4 z-50 rounded-lg border bg-background px-4 py-3 text-sm shadow-lg ring-1 ring-foreground/10 animate-in fade-in slide-in-from-top-2">
           {toastMessage}
@@ -206,9 +206,9 @@ export function SettingsPage() {
           <TabsTrigger value={3}>{t.settings.tabAbout}</TabsTrigger>
         </TabsList>
 
-        {/* Tab 1: 通用设置 */}
+        {/* Tab 1: General settings */}
         <TabsContent value={0}>
-          {/* 模型治理：可用清单=文件真相源自动拉取（docs/model-governance-design.md） */}
+          {/* Model governance: the available list is auto-discovered from the file source of truth (docs/model-governance-design.md) */}
           <Card className="mb-6">
             <CardHeader>
               <CardTitle>{t.settings.modelGovTitle}</CardTitle>
@@ -245,7 +245,7 @@ export function SettingsPage() {
                         {t.settings.modelSeenMeta(
                           mm.file_count,
                           new Date(mm.last_seen_ts * 1000).toLocaleDateString(
-                            currentLang === 'zh' ? 'zh-CN' : 'en-US',
+                            'en-US',
                           ),
                         )}
                       </span>
@@ -292,7 +292,7 @@ export function SettingsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="zh">中文</SelectItem>
+                    
                     <SelectItem value="en">English</SelectItem>
                   </SelectContent>
                 </Select>
@@ -322,7 +322,7 @@ export function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* Tab 2: 基础设施 */}
+        {/* Tab 2: Infrastructure */}
         <TabsContent value={1}>
           <div className="space-y-4">
             <Card>
@@ -439,7 +439,7 @@ export function SettingsPage() {
           </div>
         </TabsContent>
 
-        {/* Tab 3: 团队配置 */}
+        {/* Tab 3: Team config */}
         <TabsContent value={2}>
           <div className="space-y-4">
             <Card>
@@ -605,7 +605,7 @@ export function SettingsPage() {
                   </div>
                 )}
 
-                {/* 新增成员行 */}
+                {/* New member row */}
                 {newMember && (
                   <div className="flex items-center gap-3 rounded-lg border border-dashed p-3">
                     <div className="grid flex-1 gap-2">
@@ -664,7 +664,7 @@ export function SettingsPage() {
           </div>
         </TabsContent>
 
-        {/* Tab 4: 关于 */}
+        {/* Tab 4: About */}
         <TabsContent value={3}>
           <Card>
             <CardHeader>

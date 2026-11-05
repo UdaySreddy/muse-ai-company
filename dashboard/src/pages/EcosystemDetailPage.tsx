@@ -38,8 +38,8 @@ import { useToast } from '@/components/shared/useToast';
 import { formatDate as formatDateOnly, serverTimeMs } from '@/lib/datetime';
 
 /**
- * 单仓详情页 — 展示完整档案、元数据、评审记录 + 研究历程 timeline (v1.5.0-E)。
- * 路径：/ecosystem/:repoId
+ * Single-repo detail page — shows the full profile, metadata, review records + research history timeline (v1.5.0-E).
+ * Route: /ecosystem/:repoId
  */
 export function EcosystemDetailPage() {
   const { repoId } = useParams<{ repoId: string }>();
@@ -77,16 +77,16 @@ export function EcosystemDetailPage() {
         <Link to="/ecosystem">
           <Button variant="ghost" size="sm" className="mb-4">
             <ArrowLeft className="mr-1 h-4 w-4" aria-hidden="true" />
-            返回列表
+            Back to List
           </Button>
         </Link>
         <Card>
           <CardContent className="p-6 flex items-start gap-3 text-destructive">
             <AlertCircle className="h-5 w-5 mt-0.5 shrink-0" aria-hidden="true" />
             <div>
-              <p className="font-medium">未找到该仓档案</p>
+              <p className="font-medium">Repo Profile Not Found</p>
               <p className="text-sm text-muted-foreground mt-1">
-                {fallbackError?.message ?? '请检查仓 ID 是否正确，或返回列表重新选择。'}
+                {fallbackError?.message ?? 'Check that the repo ID is correct, or go back to the list and select again.'}
               </p>
             </div>
           </CardContent>
@@ -96,16 +96,16 @@ export function EcosystemDetailPage() {
   }
 
   const formatDate = (iso: string | null | undefined): string =>
-    formatDateOnly(iso, { year: 'numeric', month: '2-digit', day: '2-digit' }, '未知');
+    formatDateOnly(iso, { year: 'numeric', month: '2-digit', day: '2-digit' }, 'Unknown');
 
   const summary =
     repo.shallow_summary ||
     repo.one_line_summary ||
     repo.description_excerpt ||
     repo.description ||
-    '暂无描述';
+    'No description yet';
 
-  // 提取最新一条评审记录的状态 + 集成建议
+  // Extract the latest review record's status + integration recommendation
   const latestReview =
     full?.deep_reviews && full.deep_reviews.length > 0
       ? [...full.deep_reviews].sort(
@@ -128,8 +128,8 @@ export function EcosystemDetailPage() {
     avoid: 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/40',
   };
 
-  // v1.6.0 SST: stage 来自 backend 单一源 (repo.stage_status), 不再客户端 derive.
-  // backend _build_stage_map / _serialize_full 已统一派生逻辑.
+  // v1.6.0 SST: the stage comes from a single backend source (repo.stage_status); no longer derived client-side.
+  // The backend _build_stage_map / _serialize_full have unified the derivation logic.
   const inferredStage =
     (latestReview?.stage_status as string) || (repo.stage_status as string) || 'queued';
 
@@ -142,7 +142,7 @@ export function EcosystemDetailPage() {
       onSuccess: (res) => {
         setRetryDone(true);
         setTimeout(() => setRetryDone(false), 3000);
-        // 透出后端诚实提示——重置计数不等于立刻重新抓取，需等下次 tick
+        // Surface the backend's honest hint — resetting the counter does not mean an immediate refetch; it waits for the next tick
         showToast(res.next_action);
       },
     });
@@ -154,21 +154,21 @@ export function EcosystemDetailPage() {
       <div className="max-w-5xl mx-auto p-6 space-y-4">
         <div className="flex items-center gap-2">
           <Link to="/ecosystem">
-            <Button variant="ghost" size="sm" aria-label="返回列表">
+            <Button variant="ghost" size="sm" aria-label="Back to List">
               <ArrowLeft className="mr-1 h-4 w-4" aria-hidden="true" />
-              返回列表
+              Back to List
             </Button>
           </Link>
         </div>
 
-        {/* 头部卡片 */}
+        {/* Header card */}
         <Card className={isFailed ? 'border-rose-300/60 bg-rose-50/30 dark:border-rose-700/40 dark:bg-rose-950/20' : ''}>
           <CardHeader>
             <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <CardTitle className="text-2xl flex items-center gap-2 flex-wrap break-all">
                   {repo.repo_full_name}
-                  {/* v1.5.0-E: stage 徽章（统一颜色） */}
+                  {/* v1.5.0-E: stage badge (unified colors) */}
                   <span
                     className={`inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium ${stageBadgeClass(inferredStage)}`}
                     title={`stage: ${inferredStage}`}
@@ -178,23 +178,23 @@ export function EcosystemDetailPage() {
                   {repo.is_archived && (
                     <Badge variant="outline" className="text-amber-600 border-amber-600">
                       <Archive className="mr-1 h-3 w-3" aria-hidden="true" />
-                      已归档
+                      Archived
                     </Badge>
                   )}
                   {repo.is_deleted && (
                     <Badge variant="outline" className="text-rose-600 border-rose-600/40 bg-rose-500/10">
                       <AlertTriangle className="mr-1 h-3 w-3" aria-hidden="true" />
-                      仓已删除
+                      Repo Deleted
                     </Badge>
                   )}
                   {latestReview && (
                     <Badge
                       variant="outline"
                       className={`text-xs ${reviewStatusStyle[latestReview.status] ?? ''}`}
-                      title="评审当前 stage 进度"
+                      title="Current review stage progress"
                     >
-                      {/* v1.5.2: 用 stage_status 而非 status，避免"浅扫 done 显示深扫已完成"的歧义 */}
-                      评审:
+                      {/* v1.5.2: use stage_status rather than status, avoiding the ambiguity of "shallow scan done displayed as deep review completed" */}
+                      Review:
                       {STAGE_STATUS_LABELS[latestReview.stage_status as keyof typeof STAGE_STATUS_LABELS] ??
                         DEEP_REVIEW_STATUS_LABELS[latestReview.status] ??
                         latestReview.status}
@@ -205,7 +205,7 @@ export function EcosystemDetailPage() {
                       variant="outline"
                       className={`text-xs font-medium ${recommendationStyle[latestReview.integration_recommendation] ?? ''}`}
                     >
-                      建议:
+                      Recommendation:
                       {INTEGRATION_RECOMMENDATION_LABELS[latestReview.integration_recommendation] ??
                         latestReview.integration_recommendation}
                     </Badge>
@@ -213,13 +213,13 @@ export function EcosystemDetailPage() {
                 </CardTitle>
                 <p className="text-sm text-muted-foreground mt-2 leading-relaxed">{summary}</p>
 
-                {/* failed 红色重试条 */}
+                {/* Failed red retry bar */}
                 {isFailed && (
                   <div className="mt-3 flex items-start gap-2 rounded border border-rose-300/50 bg-rose-100/40 dark:bg-rose-950/30 px-3 py-2">
                     <AlertTriangle className="h-4 w-4 text-rose-600 mt-0.5 shrink-0" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-rose-700 dark:text-rose-300">
-                        抓取失败 — 失败次数 {repo.fetch_failure_count ?? 0}
+                        Fetch failed — failures {repo.fetch_failure_count ?? 0}
                       </p>
                       {repo.last_fetch_error && (
                         <p className="text-xs text-rose-700/80 dark:text-rose-300/80 mt-0.5">
@@ -235,7 +235,7 @@ export function EcosystemDetailPage() {
                       disabled={retry.isPending || retryDone}
                     >
                       <RefreshCcw className={`mr-1 h-3.5 w-3.5 ${retry.isPending ? 'animate-spin' : ''}`} aria-hidden="true" />
-                      {retryDone ? '已入队' : '立即重试'}
+                      {retryDone ? 'Queued' : 'Retry Now'}
                     </Button>
                   </div>
                 )}
@@ -262,7 +262,7 @@ export function EcosystemDetailPage() {
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 text-xs text-primary hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
                   >
-                    主页
+                    Homepage
                     <ExternalLink className="h-3 w-3" aria-hidden="true" />
                   </a>
                 )}
@@ -271,12 +271,12 @@ export function EcosystemDetailPage() {
           </CardHeader>
         </Card>
 
-        {/* Tabs：概览 / 扫描研究历程（v1.6.0：合并原 "研究历程" + "事件历史"） */}
+        {/* Tabs: Overview / Scan & Research History (v1.6.0: merged the former "Research History" + "Event History") */}
         <Tabs defaultValue="overview">
           <TabsList variant="line" className="gap-3">
-            <TabsTrigger value="overview">概览</TabsTrigger>
+            <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="scan-history">
-              扫描研究历程
+              Scan & Research History
               {scanHistoryData && scanHistoryData.total > 0 && (
                 <span className="ml-1.5 text-xs text-muted-foreground">({scanHistoryData.total})</span>
               )}
@@ -284,21 +284,21 @@ export function EcosystemDetailPage() {
           </TabsList>
 
           <TabsContent value="overview" className="mt-4 space-y-4">
-            {/* 元数据网格 */}
+            {/* Metadata grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-2">
                     <Info className="h-4 w-4" aria-hidden="true" />
-                    基本信息
+                    Basic Info
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2 text-sm">
-                  <MetaRow label="拥有者" value={repo.owner} />
-                  <MetaRow label="主语言" value={repo.language ?? '未识别'} icon={<Code2 className="h-3.5 w-3.5" />} />
-                  {/* v1.6.0 SST: 删除"类别"行 — relevance_category 启发式分类不可信，
-                      改由 GitHub topics 表达实际分类（详情页底部 topics 标签）
-                      v1.6.1: 删除"相关性评分" + "活跃集排名" — 硬编码指标无参考价值 */}
+                  <MetaRow label="Owner" value={repo.owner} />
+                  <MetaRow label="Primary Language" value={repo.language ?? 'Unrecognized'} icon={<Code2 className="h-3.5 w-3.5" />} />
+                  {/* v1.6.0 SST: removed the "Category" row — the relevance_category heuristic classification is untrustworthy;
+                      the actual classification is expressed by GitHub topics instead (topics tags at the bottom of the detail page)
+                      v1.6.1: removed "Relevance Score" + "Active Set Rank" — hardcoded metrics with no reference value */}
                 </CardContent>
               </Card>
 
@@ -306,26 +306,26 @@ export function EcosystemDetailPage() {
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-2">
                     <Clock className="h-4 w-4" aria-hidden="true" />
-                    时间轴
+                    Timeline
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2 text-sm">
                   <MetaRow
-                    label="最后提交"
+                    label="Last Commit"
                     value={formatDate(repo.last_commit_at)}
                     icon={<GitBranch className="h-3.5 w-3.5" />}
                   />
                   {repo.pushed_at && (
                     <MetaRow
-                      label="最后 Push"
+                      label="Last Push"
                       value={formatDate(repo.pushed_at)}
                       icon={<GitBranch className="h-3.5 w-3.5" />}
                     />
                   )}
                   <MetaRow
-                    label="最后扫描"
+                    label="Last Scan"
                     value={formatDate(
-                      // 取该仓任意一次扫描动作的最新时间（浅扫 / 批次入档）
+                      // Take the latest time of any scan action for this repo (shallow scan / batch archive)
                       [repo.last_shallow_refreshed_at, repo.last_scanned_at]
                         .filter((v): v is string => Boolean(v))
                         .sort((a, b) => serverTimeMs(b) - serverTimeMs(a))[0] ?? null,
@@ -333,7 +333,7 @@ export function EcosystemDetailPage() {
                     icon={<Calendar className="h-3.5 w-3.5" />}
                   />
                   <MetaRow
-                    label="首次入档"
+                    label="First Archived"
                     value={formatDate(repo.first_seen_at)}
                     icon={<Calendar className="h-3.5 w-3.5" />}
                   />
@@ -362,11 +362,11 @@ export function EcosystemDetailPage() {
               </Card>
             )}
 
-            {/* 完整描述 */}
+            {/* Full description */}
             {repo.description && (
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">仓库描述</CardTitle>
+                  <CardTitle className="text-base">Repo Description</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap">
@@ -376,10 +376,10 @@ export function EcosystemDetailPage() {
               </Card>
             )}
 
-            {/* 深度档案区 */}
+            {/* Full profile section */}
             <div className="pt-2">
               <h2 className="text-sm font-semibold text-muted-foreground tracking-wide uppercase mb-3">
-                深度档案
+                Full Profile
               </h2>
 
               {isFullLoading && !full ? (
@@ -396,9 +396,9 @@ export function EcosystemDetailPage() {
                     <div className="flex items-start gap-2 text-sm text-muted-foreground">
                       <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
                       <div>
-                        <p className="font-medium text-foreground">深度档案暂不可用</p>
+                        <p className="font-medium text-foreground">Full Profile Temporarily Unavailable</p>
                         <p className="mt-1 text-xs">
-                          v2 API 调用失败 — 显示基础信息。该仓可能未深扫或服务暂不可达。
+                          The v2 API call failed — showing basic info. This repo may not have been deep-reviewed, or the service is temporarily unreachable.
                         </p>
                       </div>
                     </div>

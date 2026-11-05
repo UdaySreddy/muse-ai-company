@@ -13,13 +13,13 @@ import { EcosystemProjectFilter } from '@/components/ecosystem/EcosystemProjectF
 import { useProject } from '@/context/ProjectContext';
 
 /**
- * Ecosystem 列表页 — v1.6.0：取消失活筛选，所有库永久参与搜索。
- * 项目筛选 = 本页头部的「生态库项目」下拉 (EcosystemProjectFilter，按项目隔离生态库)。
- * ⚠️ 这是 ecosystem 专属筛选，切勿移到全局 Header（历史教训详见 EcosystemProjectFilter.tsx）。
- * "显示已删除" 由 FilterBar 内 checkbox 控制（默认隐藏）。
+ * Ecosystem list page — v1.6.0: removed the inactivity filter; all repos permanently participate in search.
+ * The project filter is the "Ecosystem Project" dropdown in this page's header (EcosystemProjectFilter, isolating ecosystem libraries per project).
+ * ⚠️ This is an ecosystem-only filter; never move it into the global Header (see EcosystemProjectFilter.tsx for the historic lesson).
+ * "Show deleted" is controlled by the checkbox inside FilterBar (hidden by default).
  *
- * 路径：/ecosystem
- * 数据源：GET /api/ecosystem/profiles?facet_counts=true&is_deleted=...
+ * Route: /ecosystem
+ * Data source: GET /api/ecosystem/profiles?facet_counts=true&is_deleted=...
  */
 const PAGE_SIZE = 100;
 
@@ -31,18 +31,18 @@ export function EcosystemListPage() {
     facetCounts: true,
   });
 
-  // 筛选条件变化时重置到第 1 页（防止 page=3 但只剩 50 条空白）
-  // 外部输入(filters)驱动的分页重置，合法 effect-setState；规则误报，具名豁免
+  // Reset to page 1 when filters change (prevents page=3 with only 50 blank rows left)
+  // Pagination reset driven by external input (filters); a legitimate effect-setState — a rule false positive, explicitly exempted by name
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPage(1);
   }, [filters]);
 
-  // v1.6.0 设计哲学：所有库永久参与搜索，不再默认排除已删除/失活仓。
-  // FilterBar 勾选"显示已删除"时不变化（已含），未勾选时显式 isDeleted=false 仅看活跃仓。
-  // - filters.isDeleted=null  → showDeleted 勾选 → 不传参（全集 265）
-  // - filters.isDeleted=undefined（默认）→ 不传参（全集 265，符合 v1.6.0 哲学）
-  // - filters.isDeleted=false → 仅未删除
+  // v1.6.0 design philosophy: all repos permanently participate in search; deleted/inactive repos are no longer excluded by default.
+  // When FilterBar's "Show deleted" is checked there is no change (already included); when unchecked, an explicit isDeleted=false shows active repos only.
+  // - filters.isDeleted=null -> showDeleted checked -> no parameter sent (full set, 265)
+  // - filters.isDeleted=undefined (default) -> no parameter sent (full set, 265; consistent with the v1.6.0 philosophy)
+  // - filters.isDeleted=false -> not-deleted only
   const effectiveFilters = useMemo<EcosystemFilters>(() => {
     return { ...filters, offset: (page - 1) * PAGE_SIZE };
   }, [filters, page]);
@@ -50,7 +50,7 @@ export function EcosystemListPage() {
   const { data, isLoading, error } = useEcosystemProfiles(effectiveFilters);
   const profiles = useMemo(() => data?.profiles ?? [], [data]);
 
-  // 客户端二次过滤：keyword 匹配 owner/description；v1.6.0 topics 多选 OR 求交集
+  // Client-side secondary filtering: keyword matches owner/description; v1.6.0 topics multi-select intersects with OR semantics
   const filtered = useMemo(() => {
     const q = filters.keyword?.toLowerCase() ?? '';
     const selectedTopics = filters.topics ?? [];
@@ -67,7 +67,7 @@ export function EcosystemListPage() {
       }
       if (selectedTopics.length > 0) {
         const repoTopics = p.topics ?? [];
-        // OR 语义：profile 的 topics 与 selected 有交集即通过
+        // OR semantics: a profile passes when its topics intersect the selection
         const hit = selectedTopics.some((t) => repoTopics.includes(t));
         if (!hit) return false;
       }
@@ -75,8 +75,8 @@ export function EcosystemListPage() {
     });
   }, [profiles, filters.keyword, filters.topics]);
 
-  // v1.6.0: 全局 topic 排名 map (StatsBar + RepoCard 共享)
-  // 按 facet_counts.topics 排序后位置 → idx，让卡片标签颜色用全局 idx (不是卡片内部 idx)
+  // v1.6.0: global topic ranking map (shared by StatsBar + RepoCard)
+  // Position after sorting by facet_counts.topics -> idx, so card tag colors use the global idx (not the card-internal idx)
   const topicRankMap = useMemo<Record<string, number>>(() => {
     const fc = data?.facet_counts?.topics ?? {};
     return Object.entries(fc)
@@ -89,25 +89,25 @@ export function EcosystemListPage() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* 页头 */}
+      {/* Page header */}
       <div className="border-b px-6 py-4 bg-background">
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <Boxes className="h-5 w-5 text-primary" aria-hidden="true" />
-              <h1 className="text-xl font-semibold">生态仓档案</h1>
+              <h1 className="text-xl font-semibold">Ecosystem Repo Profiles</h1>
             </div>
             <p className="text-sm text-muted-foreground mt-1">
-              Claude Agent / MCP / Memory / Skill 等开源仓的广索引视图。点击卡片进入详情。
+              A broad index view of open-source repos such as Claude Agent / MCP / Memory / Skill. Click a card for details.
               {projectName && (
                 <>
-                  {' '}当前已按项目 <span className="text-primary font-medium">{projectName}</span> 过滤。
+                  {' '}Currently filtered by project <span className="text-primary font-medium">{projectName}</span>.
                 </>
               )}
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <span className="text-xs text-muted-foreground">生态库项目</span>
+            <span className="text-xs text-muted-foreground">Ecosystem Project</span>
             <EcosystemProjectFilter />
             <Button
               variant="outline"
@@ -117,7 +117,7 @@ export function EcosystemListPage() {
               render={<Link to="/ecosystem/batches" />}
             >
               <Layers className="mr-1 h-4 w-4" aria-hidden="true" />
-              浅扫批次
+              Shallow Scan Batches
             </Button>
           </div>
           <Button
@@ -128,15 +128,15 @@ export function EcosystemListPage() {
             render={<Link to="/ecosystem/research" />}
           >
             <SearchIcon className="mr-1 h-4 w-4" aria-hidden="true" />
-            查找候选
+            Find Candidates
           </Button>
         </div>
       </div>
 
-      {/* 最近批次扫描概览（v1.5.2: 从单仓详情页迁回生态档案级位置） */}
+      {/* Recent batch scan overview (v1.5.2: moved back from the single-repo detail page to the ecosystem-profile level) */}
       <RecentScanRunsBar />
 
-      {/* 统计条 */}
+      {/* Stats bar */}
       {!error && !isLoading && (
         <EcosystemStatsBar
           allProfiles={profiles}
@@ -145,7 +145,7 @@ export function EcosystemListPage() {
         />
       )}
 
-      {/* 筛选栏 */}
+      {/* Filter bar */}
       <FilterBar
         filters={filters}
         onChange={setFilters}
@@ -153,7 +153,7 @@ export function EcosystemListPage() {
         facetCounts={data?.facet_counts}
       />
 
-      {/* 列表区 */}
+      {/* List area */}
       <div className="flex-1 overflow-y-auto p-4">
         {isLoading && (
           <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -170,12 +170,12 @@ export function EcosystemListPage() {
           >
             <AlertCircle className="h-5 w-5 mt-0.5 shrink-0" aria-hidden="true" />
             <div className="text-sm">
-              <p className="font-medium">加载生态档案失败</p>
+              <p className="font-medium">Failed to Load Ecosystem Profiles</p>
               <p className="mt-1 text-xs opacity-80">
                 {error.message}
                 {error.message.includes('Not Found') && (
                   <span className="block mt-1">
-                    提示：API server 可能尚未注册 /api/ecosystem 路由，请确认后端已重启。
+                    Hint: the API server may not have registered the /api/ecosystem routes yet; make sure the backend has been restarted.
                   </span>
                 )}
               </p>
@@ -186,13 +186,13 @@ export function EcosystemListPage() {
         {!isLoading && !error && filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center h-64 text-center text-muted-foreground">
             <Boxes className="h-10 w-10 opacity-30 mb-2" aria-hidden="true" />
-            <p className="text-sm">暂无匹配的仓库</p>
+            <p className="text-sm">No matching repos</p>
             <p className="text-xs mt-1">
               {filters.keyword || filters.category || filters.minStars
-                ? '调整筛选条件或清除过滤试试'
+                ? 'Try adjusting the filters or clearing them'
                 : projectId
-                  ? '当前项目下尚无生态仓档案，可切换到「全部项目」或运行扫描任务后填充'
-                  : '运行扫描任务后将填充档案'}
+                  ? 'There are no ecosystem repo profiles under the current project yet. Switch to "All Projects", or run a scan task to populate them'
+                  : 'Profiles will be populated after a scan task runs'}
             </p>
           </div>
         )}
@@ -205,16 +205,16 @@ export function EcosystemListPage() {
               ))}
             </div>
 
-            {/* 分页器：仅在总数超过单页时显示 */}
+            {/* Paginator: shown only when the total exceeds one page */}
             {(data?.total ?? 0) > PAGE_SIZE && (
               <div className="flex items-center justify-between mt-4 pt-4 border-t">
                 <div className="text-sm text-muted-foreground">
-                  第 <span className="font-medium text-foreground">{(page - 1) * PAGE_SIZE + 1}</span>
+                  {(page - 1) * PAGE_SIZE + 1} –
                   {' - '}
                   <span className="font-medium text-foreground">
                     {Math.min(page * PAGE_SIZE, data?.total ?? 0)}
                   </span>
-                  {' '}/ 共 <span className="font-medium text-foreground">{data?.total ?? 0}</span> 仓
+                  {' '}of <span className="font-medium text-foreground">{data?.total ?? 0}</span> repos
                 </div>
                 <div className="flex items-center gap-2">
                   <Button
@@ -224,10 +224,10 @@ export function EcosystemListPage() {
                     disabled={page === 1}
                   >
                     <ChevronLeft className="h-4 w-4 mr-1" aria-hidden="true" />
-                    上一页
+                    Previous
                   </Button>
                   <span className="text-sm text-muted-foreground px-2">
-                    第 {page} / {Math.ceil((data?.total ?? 0) / PAGE_SIZE)} 页
+                    Page {page} / {Math.ceil((data?.total ?? 0) / PAGE_SIZE)}
                   </span>
                   <Button
                     variant="outline"
@@ -235,7 +235,7 @@ export function EcosystemListPage() {
                     onClick={() => setPage((p) => p + 1)}
                     disabled={!data?.has_more}
                   >
-                    下一页
+                    Next
                     <ChevronRight className="h-4 w-4 ml-1" aria-hidden="true" />
                   </Button>
                 </div>

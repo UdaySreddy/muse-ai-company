@@ -77,7 +77,7 @@ export function TasksPage() {
   const runTask = useRunTask();
   const { showToast, toastNode } = useToast();
 
-  // 当前项目下的团队
+  // Teams under the current project
   const projectTeams = useMemo(() => {
     if (!activeProjectId) return [];
     return teams.filter((tm) => tm.project_id === activeProjectId);
@@ -238,7 +238,7 @@ export function TasksPage() {
             <DialogDescription>{t.tasks.createTaskHint}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            {/* 选择目标团队 */}
+            {/* Select target team */}
             {projectTeams.length > 1 && (
               <div className="space-y-2">
                 <Label htmlFor="task-team">{t.tasks.targetTeam}</Label>

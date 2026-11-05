@@ -117,8 +117,8 @@ export function TeamDetailPage() {
   const status = statusData?.data;
   const agents = useMemo(() => agentsData?.data ?? [], [agentsData?.data]);
 
-  // workflow 团队：主标题用观测层 run 名称，成员名用阶段标签（如 impl:convergence），
-  // wf-<ccid> 与编号降级为小号淡色追踪标（用户 2026-07-06 需求）。
+  // Workflow teams: the headline uses the observability-layer run name, and member names use phase labels (e.g. impl:convergence),
+  // with wf-<ccid> and numbers demoted to small, muted tracking marks (user requirement, 2026-07-06).
   const wfRunId =
     (team?.config?.workflow_run_id as string | undefined) ??
     (team?.name?.startsWith('workflow-') && !team.name.startsWith('workflow-session-')
@@ -181,7 +181,7 @@ export function TeamDetailPage() {
           setRunTaskOpen(false);
           setTaskTitle('');
           setTaskDescription('');
-          // 透出后端已有的诚实提示——这只是入队，不代表已经有 Agent 在执行
+          // Surface the backend's existing honest hint — this only enqueues; it does not mean an Agent is already executing
           showToast(res._hint ?? res.message);
         },
       },

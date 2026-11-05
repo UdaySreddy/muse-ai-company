@@ -76,19 +76,19 @@ export function AnalyticsPage() {
   const { data: timeline } = useActivityTimeline(activeTeamId);
   const { data: efficiency } = useEfficiencyMetrics(activeTeamId);
 
-  // 找最常用的工具
+  // Find the most-used tool
   const topTool = useMemo(() => {
     if (!toolUsage || toolUsage.length === 0) return '--';
     return toolUsage.reduce((a, b) => (a.count > b.count ? a : b)).tool_name;
   }, [toolUsage]);
 
-  // 计算工具最大值，用于进度条
+  // Compute the tool maximum, for the progress bars
   const maxToolCount = useMemo(() => {
     if (!toolUsage || toolUsage.length === 0) return 1;
     return Math.max(...toolUsage.map((tool) => tool.count), 1);
   }, [toolUsage]);
 
-  // 计算时间线最大值
+  // Compute the timeline maximum
   const maxTimelineCount = useMemo(() => {
     if (!timeline || timeline.length === 0) return 1;
     return Math.max(...timeline.map((item) => item.count), 1);
@@ -156,17 +156,17 @@ export function AnalyticsPage() {
         </div>
       </div>
 
-      {/* 无团队时的提示 */}
+      {/* Hint shown when there is no team */}
       {!teamsLoading && teams.length === 0 && (
         <div className="rounded-lg border bg-muted/30 p-12 text-center">
           <p className="text-sm text-muted-foreground">{t.analytics.noTeamData}</p>
         </div>
       )}
 
-      {/* 有团队时显示内容 */}
+      {/* Content shown when a team exists */}
       {(activeTeamId || effectiveTeamId === '__all__') && (
         <>
-          {/* 顶部统计卡片行 */}
+          {/* Top stat card row */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Card size="sm">
               <CardHeader className="flex flex-row items-center justify-between pb-1">
@@ -224,9 +224,9 @@ export function AnalyticsPage() {
             </Card>
           </div>
 
-          {/* 中间两列 */}
+          {/* Middle two columns */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {/* 工具使用分布 */}
+            {/* Tool usage distribution */}
             <Card>
               <CardHeader>
                 <CardTitle>{t.analytics.toolDistribution}</CardTitle>
@@ -257,7 +257,7 @@ export function AnalyticsPage() {
               </CardContent>
             </Card>
 
-            {/* Agent活跃度排行 */}
+            {/* Agent activity ranking */}
             <Card>
               <CardHeader>
                 <CardTitle>{t.analytics.agentRanking}</CardTitle>
@@ -301,7 +301,7 @@ export function AnalyticsPage() {
             </Card>
           </div>
 
-          {/* 活动时间线 */}
+          {/* Activity timeline */}
           <Card>
             <CardHeader>
               <CardTitle>{t.analytics.activityTimeline}</CardTitle>
@@ -317,8 +317,8 @@ export function AnalyticsPage() {
                     const heightPct = maxTimelineCount > 0
                       ? (item.count / maxTimelineCount) * 100
                       : 0;
-                    // 小时桶标签由后端给成带 +00:00 的 UTC 串；换算成读者本地
-                    // 的钟点再显示，否则整张图会平移一个时区。
+                    // Hour-bucket labels come from the backend as UTC strings with +00:00; convert them to the reader's local
+                    // clock hour before display, otherwise the whole chart shifts by one timezone.
                     const bucket = parseServerTime(item.hour);
                     const hour = bucket ? bucket.getHours() : item.hour;
                     return (
@@ -345,13 +345,13 @@ export function AnalyticsPage() {
             </CardContent>
           </Card>
 
-          {/* 效率指标区域 */}
+          {/* Efficiency metrics section */}
           <div className="flex items-center gap-2 pt-4">
             <TrendingUp className="h-5 w-5 text-muted-foreground" />
             <h2 className="text-lg font-semibold">{t.analytics.efficiencyMetrics}</h2>
           </div>
 
-          {/* 效率统计卡片行 */}
+          {/* Efficiency stat card row */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Card size="sm">
               <CardHeader className="flex flex-row items-center justify-between pb-1">
@@ -425,7 +425,7 @@ export function AnalyticsPage() {
             </Card>
           </div>
 
-          {/* 最高效Agent排行 */}
+          {/* Most efficient agents ranking */}
           <Card>
             <CardHeader>
               <CardTitle>{t.analytics.topAgents}</CardTitle>

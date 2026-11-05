@@ -13,18 +13,18 @@ import { useT } from '@/i18n';
 import { useUnattributedSamples, useUsageCoverage, type DispatchPath } from '@/api/usage';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// /usage —— token 用量归因（docs/token-attribution-v1-design.md §5）。
+// /usage — token usage attribution (docs/token-attribution-v1-design.md §5).
 //
-// 五块结构，**自上而下的顺序即优先级**，不许重排：
-//   ① 覆盖率矩阵（第一屏第一块，不可折叠、不可关闭）—— 这是页面主体不是页眉
-//   ② 未归因抽屉（紧贴矩阵，默认展开）
-//   ③ 已归因明细（可下钻；主会话与子 agent 分列、默认不合并）
-//   ④ 单次实测卡（豁免于覆盖率闸，代价是只能来自单次 transcript 解析）
-//   ⑤ 口径说明（页脚常驻）
+// Five-block structure; **the top-to-bottom order is the priority order** and must not be rearranged:
+//   ① Coverage matrix (first block of the first screen, not collapsible, not closable) — this is the page body, not the header
+//   ② Unattributed drawer (directly below the matrix, expanded by default)
+//   ③ Attributed detail (drillable; leader sessions and sub-agents listed separately, not merged by default)
+//   ④ Single-measurement card (exempt from the coverage gate; the price is that it may only come from a single transcript parse)
+//   ⑤ Metric definitions (permanent footer)
 //
-// 这是一个**内部诊断页**，不是首屏叙事材料 —— 它在侧栏靠后的位置，也刻意不塞进
-// /analytics（那里是团队产出效率，与用量归因是两种读者心智，混在一起会让覆盖率
-// 标注被稀释）。
+// This is an **internal diagnostics page**, not first-screen narrative material — it sits low in the sidebar, and is deliberately not crammed into
+// /analytics (that page is about team output efficiency — a different reader mindset from usage attribution; mixing them would dilute the coverage
+// labelling).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const WINDOWS = [0, 7, 30, 90];
@@ -42,8 +42,8 @@ export function UsagePage() {
     days,
   );
 
-  // agent→task 是全链最窄的一跳，旁支卡的标题要如实印出它 —— 端到端的 task 级
-  // 归因不可能高于这个数，藏起来就是让旁支卡看着比实际可信。
+  // agent->task is the narrowest hop in the whole chain, and the side-branch card's title must print it truthfully — end-to-end task-level
+  // attribution can never exceed that number; hiding it would make the side-branch card look more credible than it is.
   const taskHop = coverage.data?.hops.find((h) => h.edge === 'agent->task');
   const taskPct =
     taskHop && taskHop.required > 0
@@ -94,10 +94,10 @@ export function UsagePage() {
 
       {coverage.data && (
         <>
-          {/* ① 第一屏第一块 —— 不可折叠、不可关闭 */}
+          {/* ① First block of the first screen — not collapsible, not closable */}
           <CoverageMatrix report={coverage.data} onFocusPath={setDrawerPath} />
 
-          {/* ② 紧贴矩阵，默认展开 */}
+          {/* ② Directly below the matrix, expanded by default */}
           <UnattributedDrawer
             report={coverage.data}
             samples={samples.data}
@@ -105,10 +105,10 @@ export function UsagePage() {
             onPathChange={setDrawerPath}
           />
 
-          {/* ③ 已归因明细 */}
+          {/* ③ Attributed detail */}
           <AttributionDrill days={days} taskCoveragePct={taskPct} onProbe={setProbeAgentId} />
 
-          {/* ④ 单次实测 */}
+          {/* ④ Single measurement */}
           <SingleProbeCard agentId={probeAgentId} onAgentIdChange={setProbeAgentId} />
 
           <p className="text-right text-[11px] text-muted-foreground">
@@ -117,7 +117,7 @@ export function UsagePage() {
         </>
       )}
 
-      {/* ⑤ 页脚常驻 —— 取数失败时也要在，看数字的人不会去翻文档 */}
+      {/* ⑤ Permanent footer — must be present even when fetching fails; people reading numbers will not go dig through docs */}
       <MetricLegend />
     </div>
   );

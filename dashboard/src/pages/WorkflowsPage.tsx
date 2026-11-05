@@ -44,11 +44,11 @@ import {
 } from '@/api/workflows';
 import { MetricBadge } from '@/components/shared/MetricBadge';
 import { useT } from '@/i18n';
-import type { Translations } from '@/i18n/zh';
+import type { Translations } from '@/i18n';
 import { formatDateTimeSystemLocale, serverTimeMs } from '@/lib/datetime';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 格式化 helpers
+// Formatting helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 function fmtTokens(n: number | null | undefined): string {
@@ -71,7 +71,7 @@ export function fmtDuration(ms: number | null | undefined): string {
   return `${h}h ${rm}m`;
 }
 
-/** running/interrupted = live 展示口径（token 用 live_tokens 估值 + ≈ 前缀，泳道随轮询推进） */
+/** running/interrupted = the live display mode (tokens use the live_tokens estimate + an ≈ prefix; the swim lane advances with polling) */
 function isLiveStatus(status: WorkflowStatus): boolean {
   return status === 'running' || status === 'interrupted';
 }
@@ -148,7 +148,7 @@ function PhaseStepper({ phases }: { phases: WorkflowRun['phases'] }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 列表页
+// List page
 // ─────────────────────────────────────────────────────────────────────────────
 
 function WorkflowCard({ run }: { run: WorkflowRun }) {
@@ -183,8 +183,8 @@ function WorkflowCard({ run }: { run: WorkflowRun }) {
               ) : (
                 fmtTokens(run.total_tokens)
               )}
-              {/* 口径徽标（设计 §5.3）：这里的数一直是 ctx_last，v1 只把它标出来，
-                  不改数据也不改算法。完整定义见 /usage 页脚。 */}
+              {/* Metric badge (design §5.3): the number here has always been ctx_last; v1 only labels it —
+                  it changes neither the data nor the algorithm. See the /usage footer for the full definition. */}
               <MetricBadge metric="ctx_last" compact />
             </span>
             <span className="flex items-center gap-1">
@@ -310,12 +310,12 @@ export function WorkflowsPage() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 详情页
+// Detail page
 // ─────────────────────────────────────────────────────────────────────────────
 
 type SortKey = 'label' | 'model' | 'tokens' | 'tool_calls' | 'duration_ms' | 'state';
 
-// 模块级组件（不可在 AgentTable 渲染体内定义 — react-hooks/static-components）
+// Module-level component (must not be defined inside AgentTable's render body — react-hooks/static-components)
 function SortHead({
   label,
   k,
@@ -459,7 +459,7 @@ function AgentTable({ agents }: { agents: WorkflowAgent[] }) {
       <TableBody>
         {sorted.map((a) => (
           <TableRow key={a.id || a.cc_agent_id}>
-            {/* running 期 label 迟到（终态 wf json 才有）→ 回退 prompt 首行语义预览 */}
+            {/* During running, the label arrives late (only the terminal wf json has it) -> fall back to a semantic preview of the prompt's first line */}
             <TableCell className="font-medium">
               {a.label || (a.prompt_preview ? <span className="font-normal text-muted-foreground" title={a.prompt_preview}>{a.prompt_preview.slice(0, 60)}{a.prompt_preview.length > 60 ? '…' : ''}</span> : a.cc_agent_id)}
             </TableCell>
@@ -482,13 +482,13 @@ function AgentTable({ agents }: { agents: WorkflowAgent[] }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 相位泳道（纯 div/CSS，零图表库依赖——design §10.8）
-// 时间轴 t0 = min(started_at)；t1 终态取 completed_at（fallback max(started+duration)），
-// live 取 max(last_activity_at) fallback Date.now()。bar 随 15s 轮询与 workflow.* 事件
-// 失效自然右移，不做本地秒级 ticker。
+// Phase swim lane (pure div/CSS, zero chart-library dependency — design §10.8)
+// Timeline t0 = min(started_at); terminal t1 takes completed_at (fallback max(started+duration)),
+// live takes max(last_activity_at) with a Date.now() fallback. Bars move naturally right with the 15s polling and workflow.* event
+// invalidation; no local per-second ticker.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** bar 颜色沿 STATUS_STYLES 色系：done→emerald / error·failed→red / running·progress→blue / 其余→muted */
+/** Bar colors follow the STATUS_STYLES palette: done -> emerald / error·failed -> red / running·progress -> blue / everything else -> muted */
 function agentBarClass(state: string): string {
   if (state === 'done') return 'bg-emerald-500';
   if (state === 'error' || state === 'failed') return 'bg-red-500';
@@ -516,7 +516,7 @@ export function PhaseSwimLane({ run, agents }: { run: WorkflowRun; agents: Workf
   const model = useMemo(() => {
     if (agents.length === 0) return null;
 
-    // ── 时间轴端点 ──
+    // ── Timeline endpoints ──
     const starts = [toMs(run.started_at), ...agents.map((a) => toMs(a.started_at))].filter(
       (v): v is number => v != null,
     );
@@ -544,14 +544,14 @@ export function PhaseSwimLane({ run, agents }: { run: WorkflowRun; agents: Workf
         t1 = ends.length > 0 ? Math.max(...ends) : t0;
       }
     }
-    const span = Math.max(t1 - t0, 1); // 防除零（单点/时钟异常时退化为满宽 bar）
+    const span = Math.max(t1 - t0, 1); // Guard against division by zero (degrades to a full-width bar on a single point / clock anomaly)
 
-    // ── 逐 agent bar 几何 ──
+    // ── Per-agent bar geometry ──
     const rows: SwimLaneRow[] = agents.map((a) => {
       const start = toMs(a.started_at) ?? toMs(a.queued_at) ?? t0;
       let end: number;
       if (a.state === 'running' || a.state === 'progress') {
-        // live bar 右端 = 最后活动水位（随轮询推进）
+        // A live bar's right end = the last-activity watermark (advances with polling)
         end = toMs(a.last_activity_at) ?? t1;
       } else if (a.duration_ms != null) {
         end = start + a.duration_ms;
@@ -568,7 +568,7 @@ export function PhaseSwimLane({ run, agents }: { run: WorkflowRun; agents: Workf
       };
     });
 
-    // ── 按 phase_index 分组：>0 升序在前，0/缺失 =「相位待定」置底 ──
+    // ── Group by phase_index: >0 ascending first; 0/missing = "Phase TBD" at the bottom ──
     const byPhase = new Map<number, SwimLaneRow[]>();
     for (const r of rows) {
       const idx = r.agent.phase_index ?? 0;
@@ -618,7 +618,7 @@ export function PhaseSwimLane({ run, agents }: { run: WorkflowRun; agents: Workf
             {g.title}
           </p>
           {g.rows.map((r) => {
-            // running 期 label 迟到 → 回退 prompt 首行预览（泳道行宽有限截 40）
+            // During running, the label arrives late -> fall back to the prompt's first-line preview (truncated to 40 given the swim-lane row width)
             const label = r.agent.label
               || (r.agent.prompt_preview ? r.agent.prompt_preview.slice(0, 40) : '')
               || r.agent.cc_agent_id.slice(0, 8);
@@ -647,7 +647,7 @@ export function PhaseSwimLane({ run, agents }: { run: WorkflowRun; agents: Workf
           })}
         </div>
       ))}
-      {/* 底部时间刻度：0/25/50/75/100% */}
+      {/* Bottom time scale: 0/25/50/75/100% */}
       <div className="flex items-center gap-2">
         <span className="w-36 shrink-0" />
         <div className="flex flex-1 justify-between text-[10px] tabular-nums text-muted-foreground/70">
@@ -664,7 +664,7 @@ export function WorkflowDetailPage() {
   const t = useT();
   const { wfId } = useParams<{ wfId: string }>();
   const { data: run, isLoading, error } = useWorkflow(wfId ?? '');
-  // live run（running/interrupted）时 agents 挂 15s 轮询，泳道 bar 随水位自然推进
+  // For live runs (running/interrupted), agents poll every 15s and swim-lane bars advance naturally with the watermark
   const { data: agentsData } = useWorkflowAgents(
     wfId ?? '',
     run?.status === 'running' || run?.status === 'interrupted',
@@ -742,7 +742,7 @@ export function WorkflowDetailPage() {
         )}
       </div>
 
-      {/* 顶部总量条 */}
+      {/* Top totals bar */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <StatTile
           icon={<Coins className="h-3.5 w-3.5" />}
@@ -780,7 +780,7 @@ export function WorkflowDetailPage() {
         />
       </div>
 
-      {/* 运行信息 + 阶段 */}
+      {/* Run info + phases */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">{t.workflows.runInfo}</CardTitle>
@@ -812,7 +812,7 @@ export function WorkflowDetailPage() {
         </CardContent>
       </Card>
 
-      {/* 结果摘要 */}
+      {/* Result summary */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">{t.workflows.summary}</CardTitle>
@@ -832,7 +832,7 @@ export function WorkflowDetailPage() {
         </CardContent>
       </Card>
 
-      {/* 相位泳道（Phase 2：phaseIndex 分组，每 agent 一条 bar） */}
+      {/* Phase swim lane (Phase 2: grouped by phaseIndex, one bar per agent) */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-sm">
@@ -847,7 +847,7 @@ export function WorkflowDetailPage() {
         </CardContent>
       </Card>
 
-      {/* 逐-agent 表格 */}
+      {/* Per-agent table */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">{t.workflows.agentList}</CardTitle>

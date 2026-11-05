@@ -22,15 +22,15 @@ function formatDatetime(iso: string | null) {
 function StatusBadge({ status }: { status: string }) {
   switch (status) {
     case 'pending_approval':
-      return <Badge variant="destructive" className="text-[10px]">待批准</Badge>;
+      return <Badge variant="destructive" className="text-[10px]">Pending Approval</Badge>;
     case 'approved':
-      return <Badge variant="outline" className="text-[10px] border-blue-400 text-blue-600">已批准</Badge>;
+      return <Badge variant="outline" className="text-[10px] border-blue-400 text-blue-600">Approved</Badge>;
     case 'running':
-      return <Badge variant="outline" className="text-[10px] border-orange-400 text-orange-600">运行中</Badge>;
+      return <Badge variant="outline" className="text-[10px] border-orange-400 text-orange-600">Running</Badge>;
     case 'completed':
-      return <Badge variant="outline" className="text-[10px] border-green-400 text-green-600">已完成</Badge>;
+      return <Badge variant="outline" className="text-[10px] border-green-400 text-green-600">Completed</Badge>;
     case 'cancelled':
-      return <Badge variant="secondary" className="text-[10px]">已取消</Badge>;
+      return <Badge variant="secondary" className="text-[10px]">Cancelled</Badge>;
     default:
       return <Badge variant="outline" className="text-[10px]">{status}</Badge>;
   }
@@ -82,7 +82,7 @@ function BatchRow({ batch, onApprove, onCancel }: {
               className="h-7 text-xs"
               onClick={() => onApprove(batch.id)}
             >
-              批准
+              Approve
             </Button>
           )}
           {canCancel && (
@@ -92,7 +92,7 @@ function BatchRow({ batch, onApprove, onCancel }: {
               className="h-7 text-xs text-muted-foreground"
               onClick={() => onCancel(batch.id)}
             >
-              取消
+              Cancel
             </Button>
           )}
           <ChevronRight className="w-4 h-4 text-muted-foreground ml-1" />
@@ -103,8 +103,8 @@ function BatchRow({ batch, onApprove, onCancel }: {
 }
 
 /**
- * 浅扫批次列表页 — 列出所有批次，pending_approval 状态高亮，支持批准/取消操作。
- * 路由: /ecosystem/batches
+ * Shallow-scan batch list page — lists all batches, highlights the pending_approval state, and supports approve/cancel actions.
+ * Route: /ecosystem/batches
  */
 export function EcosystemBatchesPage() {
   const { data, isLoading, refetch } = useShallowBatches(50);
@@ -118,13 +118,13 @@ export function EcosystemBatchesPage() {
 
   const handleCreate = () => {
     createBatch.mutate(
-      { triggered_by: 'user', trigger_reason: '手动触发浅扫批次' },
+      { triggered_by: 'user', trigger_reason: 'Manually triggered shallow-scan batch' },
       {
         onSuccess: (res) => {
           setActionMsg(res.message);
           setTimeout(() => setActionMsg(null), 4000);
         },
-        onError: () => setActionMsg('创建批次失败，请查看后端日志'),
+        onError: () => setActionMsg('Failed to create the batch; check the backend logs'),
       },
     );
   };
@@ -134,9 +134,9 @@ export function EcosystemBatchesPage() {
       { batchId: id, approvedBy: 'user' },
       {
         onSuccess: (res) => {
-          // worker.tick() 只是把浅扫任务派进队列——真正的深度评审摘要仍需活跃 CC 会话领取
-          // dispatch intent 才会执行，这里把后端 message 和这层诚实说明一起透出（用户 2026-07-14 拍板）。
-          setActionMsg(`${res.message}；深度评审仍需活跃的 CC 会话领取 dispatch intent 才会真正执行。`);
+          // worker.tick() only enqueues the shallow-scan tasks — the real deep-review summaries still require an active CC session to claim
+          // the dispatch intent before they execute; the backend message is surfaced here together with this honest note (user decision, 2026-07-14).
+          setActionMsg(`${res.message}; Deep reviews execute only once an active CC session claims the dispatch intent.`);
           setTimeout(() => setActionMsg(null), 6000);
         },
       },
@@ -146,7 +146,7 @@ export function EcosystemBatchesPage() {
   const handleCancel = (id: string) => {
     cancelBatch.mutate(id, {
       onSuccess: () => {
-        setActionMsg('批次已取消');
+        setActionMsg('Batch cancelled');
         setTimeout(() => setActionMsg(null), 3000);
       },
     });
@@ -156,15 +156,15 @@ export function EcosystemBatchesPage() {
     <div className="p-6 space-y-4 max-w-5xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">浅扫批次</h1>
+          <h1 className="text-2xl font-bold">Shallow Scan Batches</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            管理浅扫候选仓批次 — 创建批次后批准方可触发 dispatch
+            Manage shallow-scan candidate repo batches — dispatch triggers only after a created batch is approved
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isLoading}>
             <RefreshCw className={`w-4 h-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} />
-            刷新
+            Refresh
           </Button>
           <Button size="sm" onClick={handleCreate} disabled={createBatch.isPending}>
             {createBatch.isPending ? (
@@ -172,7 +172,7 @@ export function EcosystemBatchesPage() {
             ) : (
               <Plus className="w-4 h-4 mr-1" />
             )}
-            新建批次
+            New Batch
           </Button>
         </div>
       </div>
@@ -181,7 +181,7 @@ export function EcosystemBatchesPage() {
         <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-md px-4 py-2 text-sm text-red-700 dark:text-red-400">
           <Clock className="w-4 h-4 flex-shrink-0" />
           <span>
-            有 <strong>{pendingCount}</strong> 个批次等待批准 — 点击行进入详情页批准
+            <strong>{pendingCount}</strong> batches awaiting approval — click a row to open its detail page and approve
           </span>
         </div>
       )}
@@ -195,10 +195,10 @@ export function EcosystemBatchesPage() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">
-            批次历史
+            Batch History
             {batches.length > 0 && (
               <span className="ml-2 text-sm text-muted-foreground font-normal">
-                共 {batches.length} 条
+                {batches.length} in total
               </span>
             )}
           </CardTitle>
@@ -207,11 +207,11 @@ export function EcosystemBatchesPage() {
           {isLoading ? (
             <div className="flex items-center justify-center py-12 text-muted-foreground">
               <Loader2 className="w-5 h-5 animate-spin mr-2" />
-              加载中...
+              Loading...
             </div>
           ) : batches.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground text-sm">
-              暂无批次记录，点击"新建批次"创建第一个批次
+              No batch records yet. Click "New Batch" to create the first batch
             </div>
           ) : (
             <Table>
@@ -219,11 +219,11 @@ export function EcosystemBatchesPage() {
                 <TableRow>
                   <TableHead className="w-8"></TableHead>
                   <TableHead>ID</TableHead>
-                  <TableHead>触发源</TableHead>
-                  <TableHead className="text-center">候选仓数</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>创建时间</TableHead>
-                  <TableHead>操作</TableHead>
+                  <TableHead>Trigger Source</TableHead>
+                  <TableHead className="text-center">Candidate Repos</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Created At</TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

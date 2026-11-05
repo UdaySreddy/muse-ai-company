@@ -30,8 +30,8 @@ const COLOR_OPTIONS = [
   { value: 'gray', label: 'Gray', cls: 'bg-gray-500' },
 ];
 
-// 值为 CC 层级别名（自动解析为该层级最新版），标签不写死版本号——
-// 具体可用版本清单见 SettingsPage「模型治理」（transcript 真相源自动拉取）
+// Values are CC tier aliases (auto-resolved to the latest version of that tier); labels do not hardcode version numbers —
+// See SettingsPage "Model Governance" for the concrete list of available versions (auto-discovered from the transcript source of truth)
 const MODEL_OPTIONS = [
   { value: 'fable', labelKey: 'modelFable' as const },
   { value: 'opus', labelKey: 'modelOpus' as const },
