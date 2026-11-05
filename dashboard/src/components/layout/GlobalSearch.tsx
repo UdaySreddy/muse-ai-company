@@ -19,7 +19,7 @@ const KIND_ICON: Record<string, typeof FileText> = {
   report: FileText,
 };
 
-/** 知识层 P1b — 全局统一检索框（三臂 RRF：BM25 中文原生 / 引用图谱 / 精确 ID）。 */
+/** Knowledge layer P1b — global unified search box (three-arm RRF: BM25 native / citation graph / exact ID). */
 export function GlobalSearch() {
   const t = useT();
   const [q, setQ] = useState('');
@@ -29,7 +29,7 @@ export function GlobalSearch() {
   const navigate = useNavigate();
   const boxRef = useRef<HTMLDivElement>(null);
 
-  // 防抖 300ms 查询
+  // Debounced query, 300ms
   useEffect(() => {
     if (!q.trim()) {
       setHits([]);
@@ -53,7 +53,7 @@ export function GlobalSearch() {
     return () => clearTimeout(timer);
   }, [q]);
 
-  // 点击外部关闭
+  // Close on outside click
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);

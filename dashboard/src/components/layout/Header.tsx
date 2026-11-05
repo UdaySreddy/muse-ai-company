@@ -20,7 +20,7 @@ export function Header() {
     '/usage': t.nav.usage,
   };
 
-  // ecosystem 详情页特殊处理
+  // Special handling for ecosystem detail pages
   let title = pageTitles[location.pathname] || t.nav.overview;
   if (location.pathname.startsWith('/ecosystem/')) {
     title = t.nav.ecosystem;

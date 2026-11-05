@@ -51,13 +51,13 @@ export function AppSidebar() {
     { title: t.nav.agentLive, path: '/agent-live', icon: Activity },
     { title: t.nav.reports, path: '/reports', icon: BookOpen },
     { title: t.nav.briefings, path: '/briefings', icon: Bell },
-    // pipeline 已整域退役（2026-07）：观测层 /workflows 接管侧栏位；
-    // /pipelines 仅保留路由重定向，旧书签不断链。
+    // The pipeline domain was fully retired (2026-07): the observability layer's /workflows takes over the sidebar slot;
+    // /pipelines keeps only a route redirect, so old bookmarks do not break.
     { title: t.nav.workflows, path: '/workflows', icon: Workflow },
     { title: t.nav.failures, path: '/failures', icon: AlertTriangle },
     { title: t.nav.prompts, path: '/prompts', icon: FileCode2 },
     { title: t.nav.ecosystem, path: '/ecosystem', icon: Boxes },
-    // 内部诊断页，刻意排在侧栏靠后位置（设计 §5.1）
+    // Internal diagnostics page, deliberately placed low in the sidebar (design §5.1)
     { title: t.nav.usage, path: '/usage', icon: Coins },
     { title: t.nav.settings, path: '/settings', icon: Settings },
   ];
@@ -102,7 +102,7 @@ export function AppSidebar() {
             className={`h-2 w-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}
           />
           <span>{connected ? t.status.connected : t.status.disconnected}</span>
-          {/* 版本从 /api/health 拉取（真相源 aiteam.__version__），不写死 */}
+          {/* Version is fetched from /api/health (source of truth: aiteam.__version__); never hardcoded */}
           <Badge variant="secondary" className="ml-auto text-[10px]">
             {health?.version ? `v${health.version}` : '…'}
           </Badge>
