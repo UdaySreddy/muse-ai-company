@@ -30,11 +30,11 @@ import { formatDateTime, formatDurationMs, serverTimeDiffMs, serverTimeMs } from
 
 interface DeepReviewSectionProps {
   reviews: EcosystemDeepReview[];
-  /** 浅扫摘要（profile 级，用于 stage=shallow_done 时显示，避免一堆"暂无数据"） */
+  /** Shallow-scan summary (profile level; shown when stage=shallow_done to avoid a pile of "no data") */
   shallowSummary?: string | null;
 }
 
-/** 状态徽章 */
+/** Status badge */
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { className: string; Icon: typeof CheckCircle2 }> = {
     completed: {
@@ -56,7 +56,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-/** 集成建议徽章 */
+/** Integration recommendation badge */
 function RecommendationBadge({ rec }: { rec: string | null }) {
   if (!rec) return null;
   const styles: Record<string, string> = {
@@ -68,12 +68,12 @@ function RecommendationBadge({ rec }: { rec: string | null }) {
   const label = INTEGRATION_RECOMMENDATION_LABELS[rec] ?? rec;
   return (
     <Badge variant="outline" className={`text-xs font-medium ${styles[rec] ?? ''}`}>
-      建议：{label}
+      Recommendation: {label}
     </Badge>
   );
 }
 
-/** Markdown 子节渲染 — 折叠/展开。空字段时显示"暂无数据"占位而非整段隐藏。 */
+/** Renders a markdown subsection — collapsible/expandable. Empty fields show a "no data" placeholder instead of hiding the whole section. */
 function MarkdownBlock({
   title,
   Icon,
@@ -83,7 +83,7 @@ function MarkdownBlock({
   title: string;
   Icon: typeof Building2;
   body: string;
-  /** true 时空字段彻底不渲染（用于 demo log 这类可选块），默认 false 显示占位 */
+  /** When true, empty fields are not rendered at all (for optional blocks such as demo logs); defaults to false, which shows the placeholder */
   hideWhenEmpty?: boolean;
 }) {
   const isEmpty = !body || !body.trim();
@@ -96,7 +96,7 @@ function MarkdownBlock({
       </h4>
       <div className="md-prose text-sm max-w-none pl-5">
         {isEmpty ? (
-          <p className="text-xs text-muted-foreground italic">暂无数据 — 该字段将在对应 stage 完成后填充</p>
+          <p className="text-xs text-muted-foreground italic">No data yet — this field will be filled once the corresponding stage completes</p>
         ) : (
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
         )}
@@ -105,7 +105,7 @@ function MarkdownBlock({
   );
 }
 
-/** 单条评审记录卡片（含浅扫 / 架构深扫 / 辩论 / 集成等多 stage） */
+/** A single review record card (spans multiple stages: shallow scan / architecture deep review / debate / integration) */
 function ReviewCard({
   review,
   shallowSummary,
@@ -129,8 +129,8 @@ function ReviewCard({
       minute: '2-digit',
     });
 
-  // 评审实际耗时：基于 started_at→(shallow_completed_at | completed_at) 的差值。
-  // 历史 row 的 duration_seconds 多为 0，故前端自算。
+  // Actual review elapsed time: based on the difference started_at -> (shallow_completed_at | completed_at).
+  // Historic rows mostly have duration_seconds = 0, so the frontend computes it itself.
   const formatElapsed = (
     start: string | null | undefined,
     end: string | null | undefined,
@@ -147,8 +147,8 @@ function ReviewCard({
     : null;
   const stageClass = stage ? stageBadgeClass(stage) : '';
 
-  // v1.5.2: 浅扫阶段 summary/architecture/risks/learnings 必空，shallow_summary 在 profile 上。
-  // 改用 stage 决定显示哪些字段，避免"已完成"+"一堆暂无数据"的违和感。
+  // v1.5.2: at the shallow-scan stage, summary/architecture/risks/learnings are always empty; shallow_summary lives on the profile.
+  // Use the stage to decide which fields to show, avoiding the jarring "completed" + "a pile of no-data" combination.
   const showDeepFields = !isShallowOnly;
   const hasDeepContent = useMemo(
     () =>
@@ -162,7 +162,7 @@ function ReviewCard({
     [review],
   );
 
-  // 浅扫完成时的耗时端点优先 shallow_completed_at（若 backend 没写 completed_at）
+  // For shallow-scan completion, the elapsed-time endpoint prefers shallow_completed_at (when the backend did not write completed_at)
   const elapsedEnd = isShallowOnly
     ? review.shallow_completed_at ?? review.completed_at
     : review.completed_at;
@@ -171,21 +171,21 @@ function ReviewCard({
     <div className="border rounded-md p-3 space-y-3 bg-card">
       <div className="flex flex-wrap items-center gap-2 justify-between">
         <div className="flex flex-wrap items-center gap-2">
-          {/* v1.5.2: 有 stage_status 时只显示 stage 徽章，避免 status='running'+stage='shallow_done'
-              同时显示「深扫中（spinner）」+「浅扫完成」的语义冲突。失败/集成等终态下退回 status badge。 */}
+          {/* v1.5.2: when stage_status exists, show only the stage badge, avoiding the semantic clash of status='running' + stage='shallow_done'
+              showing both "Deep review in progress (spinner)" and "Shallow scan done" at once. In terminal states such as failed/integrated, fall back to the status badge. */}
           {stageLabel ? (
-            <Badge variant="outline" className={`text-xs ${stageClass}`} title="当前 stage 进度">
+            <Badge variant="outline" className={`text-xs ${stageClass}`} title="Current stage progress">
               {stageLabel}
             </Badge>
           ) : (
             <StatusBadge status={review.status} />
           )}
           <RecommendationBadge rec={review.integration_recommendation} />
-          <span className="text-xs text-muted-foreground" title="创建时间">
+          <span className="text-xs text-muted-foreground" title="Created at">
             {formatDate(review.created_at)}
           </span>
-          <span className="text-xs text-muted-foreground" title="started_at → 当前 stage 完成时间">
-            耗时 {formatElapsed(review.started_at, elapsedEnd)}
+          <span className="text-xs text-muted-foreground" title="started_at → current stage completion time">
+            Elapsed {formatElapsed(review.started_at, elapsedEnd)}
           </span>
         </div>
         <Button
@@ -193,17 +193,17 @@ function ReviewCard({
           size="sm"
           className="h-7 px-2 text-xs"
           onClick={() => setExpanded((v) => !v)}
-          aria-label={expanded ? '收起评审详情' : '展开评审详情'}
+          aria-label={expanded ? 'Collapse review details' : 'Expand review details'}
         >
           {expanded ? (
             <>
               <ChevronUp className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
-              收起
+              Collapse
             </>
           ) : (
             <>
               <ChevronDown className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
-              展开
+              Expand
             </>
           )}
         </Button>
@@ -211,32 +211,32 @@ function ReviewCard({
 
       {expanded && (
         <div className="space-y-3">
-          {/* 浅扫阶段：直接展示 profile.shallow_summary，不显示深扫专属空字段 */}
+          {/* Shallow-scan stage: show profile.shallow_summary directly; do not show deep-review-only empty fields */}
           {isShallowOnly && shallowSummary && (
-            <MarkdownBlock title="浅扫摘要" Icon={FileSearch} body={shallowSummary} />
+            <MarkdownBlock title="Shallow Scan Summary" Icon={FileSearch} body={shallowSummary} />
           )}
           {isShallowOnly && stage !== 'queued' && (
             <p className="text-xs text-muted-foreground italic">
-              当前为浅扫阶段。架构 / 风险 / 学习要点等字段将在进入深扫后填充。
+              Currently at the shallow-scan stage. Fields such as architecture / risks / learnings will be filled after entering the deep review.
             </p>
           )}
 
-          {/* D5 收敛：在飞占位闸门统一按权威轴 stage==='queued' 判断；status 不再作
-              权威判断（'running' 仅存在于历史行，孤儿值 'pending' 后端枚举从不产生，
-              原两个 status 分支已合并删除）。注意不能再叠加 showDeepFields——
-              queued 属 shallow-only，叠加即恒假死代码（V2 评审 finding）。 */}
+          {/* D5 convergence: the in-flight placeholder gate is judged uniformly on the authoritative axis stage==='queued'; status no longer acts as
+              an authoritative signal ('running' exists only on historic rows, and the orphan value 'pending' is never produced by the backend enum;
+              the two former status branches have been merged and deleted). Note showDeepFields must not be layered on top —
+              queued is shallow-only, so layering it makes the condition permanently false dead code (V2 review finding). */}
           {!hasDeepContent && !review.report_id && stage === 'queued' && (
             <div className="flex items-start gap-2 text-xs text-blue-600 dark:text-blue-400 bg-blue-500/10 border border-blue-500/30 rounded p-2">
               <Loader2 className="h-3.5 w-3.5 mt-0.5 shrink-0 animate-spin" aria-hidden="true" />
-              <span>评审进行中 — 当前 stage 完成后，本卡片对应字段将自动填充。可稍后刷新本页查看。</span>
+              <span>Review in progress — once the current stage completes, this card's fields will be filled automatically. Refresh this page later to check.</span>
             </div>
           )}
           {showDeepFields && (
             <>
-              <MarkdownBlock title="摘要" Icon={FileSearch} body={review.summary_md} />
-              <MarkdownBlock title="架构" Icon={Building2} body={review.architecture_md} />
-              <MarkdownBlock title="风险" Icon={ShieldAlert} body={review.risks_md} />
-              <MarkdownBlock title="学习要点" Icon={Lightbulb} body={review.learnings_md} />
+              <MarkdownBlock title="Summary" Icon={FileSearch} body={review.summary_md} />
+              <MarkdownBlock title="Architecture" Icon={Building2} body={review.architecture_md} />
+              <MarkdownBlock title="Risks" Icon={ShieldAlert} body={review.risks_md} />
+              <MarkdownBlock title="Learnings" Icon={Lightbulb} body={review.learnings_md} />
             </>
           )}
 
@@ -244,7 +244,7 @@ function ReviewCard({
             <section className="space-y-1.5">
               <h4 className="text-sm font-semibold flex items-center gap-1.5">
                 <Beaker className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                Demo 运行
+                Demo Run
                 {review.demo_result && (
                   <Badge variant="outline" className="text-[10px] ml-1">
                     {review.demo_result}
@@ -269,23 +269,23 @@ function ReviewCard({
                   onClick={() => setShowFullReport(true)}
                 >
                   <ExternalLink className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
-                  查看完整报告
+                  View Full Report
                 </Button>
               ) : (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium">完整报告内容</span>
+                    <span className="text-xs font-medium">Full Report Content</span>
                     <Button
                       variant="ghost"
                       size="sm"
                       className="h-6 px-2 text-xs"
                       onClick={() => setShowFullReport(false)}
                     >
-                      收起
+                      Collapse
                     </Button>
                   </div>
                   {reportLoading ? (
-                    <p className="text-xs text-muted-foreground">加载报告中...</p>
+                    <p className="text-xs text-muted-foreground">Loading report...</p>
                   ) : reportDetail ? (
                     <div className="md-prose text-sm max-w-none border rounded p-3 bg-muted/30 max-h-96 overflow-auto">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -293,7 +293,7 @@ function ReviewCard({
                       </ReactMarkdown>
                     </div>
                   ) : (
-                    <p className="text-xs text-muted-foreground">报告加载失败</p>
+                    <p className="text-xs text-muted-foreground">Failed to load report</p>
                   )}
                 </div>
               )}
@@ -306,7 +306,7 @@ function ReviewCard({
 }
 
 /**
- * 评审记录区 — 展示该仓所有评审记录（浅/深/辩/集成多 stage 共享一行，最新优先）。
+ * Review records section — shows all review records for this repo (shallow/deep/debate/integration stages share one row, newest first).
  */
 export function DeepReviewSection({ reviews, shallowSummary }: DeepReviewSectionProps) {
   if (!reviews || reviews.length === 0) {
@@ -315,17 +315,17 @@ export function DeepReviewSection({ reviews, shallowSummary }: DeepReviewSection
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <FileSearch className="h-4 w-4" aria-hidden="true" />
-            评审记录
+            Review Records
           </CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">
-          尚未对该仓库生成评审记录。先经浅扫生成 200-400 字摘要，再按相关性进入深扫调度。
+          No review records have been generated for this repo yet. A shallow scan first produces a short summary, then deep-review scheduling follows by relevance.
         </CardContent>
       </Card>
     );
   }
 
-  // 按时间倒序
+  // In reverse chronological order
   const sorted = [...reviews].sort(
     (a, b) => serverTimeMs(b.created_at) - serverTimeMs(a.created_at),
   );
@@ -335,7 +335,7 @@ export function DeepReviewSection({ reviews, shallowSummary }: DeepReviewSection
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2">
           <FileSearch className="h-4 w-4" aria-hidden="true" />
-          评审记录 ({reviews.length})
+          Review Records ({reviews.length})
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">

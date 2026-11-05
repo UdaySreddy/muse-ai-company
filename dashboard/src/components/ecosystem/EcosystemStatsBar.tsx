@@ -8,15 +8,15 @@ import { useProject } from '@/context/ProjectContext';
 import { serverTimeMs } from '@/lib/datetime';
 
 interface EcosystemStatsBarProps {
-  /** 完整列表（filter 之前），用于计算待深扫/失活/总数 */
+  /** The full list (before filtering), used to compute pending-deep-review / inactive / totals */
   allProfiles: EcosystemRepoProfile[];
-  /** 后端 facet_counts（启用 facetCounts=true 时返回） */
+  /** Backend facet_counts (returned when facetCounts=true) */
   facetCounts?: EcosystemFacetCounts;
-  /** 后端汇报的总数（带后端筛选后的结果数） */
+  /** The total reported by the backend (result count after backend filtering) */
   total?: number;
 }
 
-/** 单个统计卡片 */
+/** A single stat card */
 function StatCard({
   Icon,
   label,
@@ -55,17 +55,17 @@ function StatCard({
 }
 
 /**
- * 统计条 — ecosystem 列表页顶部的指标视图（按当前选中项目的生态库统计）。
+ * Stats bar — the metrics view at the top of the ecosystem list page (statistics for the currently selected project's ecosystem library).
  *
- * 语义说明（Release blocker 修复）：
- *   - 已深扫 = EcosystemDeepReview.status='completed' 真实行数（不是 needs_deep_review=False）
- *   - 待深扫 = profile.needs_deep_review=True 的仓数
- *   - 失活 = is_archived=True 或 last_commit_at > 365 天
- *   - 覆盖率 = 已深扫 / 总仓数
+ * Semantics (release-blocker fix):
+ *   - Deep-reviewed = the real row count with EcosystemDeepReview.status='completed' (not needs_deep_review=False)
+ *   - Pending deep review = number of repos with profile.needs_deep_review=True
+ *   - Inactive = is_archived=True or last_commit_at > 365 days
+ *   - Coverage = deep-reviewed / total repos
  *
- * 之前的 bug：用 `profile.needs_deep_review === false` 等同于"已深扫"导致显示 163，
- * 但真实只有 3 条 completed DeepReview。"needs_deep_review" 语义是"是否需要被深扫"，
- * false 包含了"低相关性自动跳过"和"已完成"两种情况，不能等同于已深扫。
+ * Previous bug: treating `profile.needs_deep_review === false` as "deep-reviewed" displayed 163,
+ * while in reality there were only 3 completed DeepReviews. "needs_deep_review" means "needs a deep review";
+ * false covers both "auto-skipped for low relevance" and "completed", so it cannot be equated with deep-reviewed.
  */
 export function EcosystemStatsBar({
   allProfiles,
@@ -76,15 +76,15 @@ export function EcosystemStatsBar({
 
   const stats = useMemo(() => {
     const totalCount = total ?? allProfiles.length;
-    // v1.5.1：待浅扫总数用后端 facet 全量值（不被 limit=200 截断）；
-    // facet 不可用时退回到列表估算（标记为下界）。
+    // v1.5.1: the pending-shallow-scan total uses the backend facet full value (not truncated by limit=200);
+    // when facets are unavailable, fall back to a list estimate (marked as a lower bound).
     const stageFacet = facetCounts?.stage ?? {};
     const needsDeepCount =
       facetCounts?.stage !== undefined
         ? stageFacet.queued ?? 0
         : allProfiles.filter((p) => (p.stage_status ?? 'queued') === 'queued').length;
-    // v1.6.0 "已归档"：优先用 last_active_status（GitHub archived / 人工标记无价值），
-    // 缺字段则 fallback 到旧规则（is_archived || last_commit > 365 天）。
+    // v1.6.0 "Archived": prefer last_active_status (GitHub archived / manually marked worthless);
+    // when the field is missing, fall back to the old rule (is_archived || last_commit > 365 days).
     const now = Date.now();
     const hasStatusField = allProfiles.some((p) => p.last_active_status != null);
     const archivedCount = hasStatusField
@@ -99,7 +99,7 @@ export function EcosystemStatsBar({
           const days = (now - serverTimeMs(p.last_commit_at)) / (1000 * 60 * 60 * 24);
           return days > 365;
         }).length;
-    // 已深扫总数 = stage 进入 architecture_done+ 的全量
+    // Total deep-reviewed = the full count whose stage has reached architecture_done+
     const deepDoneCount =
       (stageFacet.architecture_done ?? 0) +
       (stageFacet.debated ?? 0) +
@@ -109,8 +109,8 @@ export function EcosystemStatsBar({
     return { totalCount, needsDeepCount, archivedCount, deepDoneCount, isFacetAvailable };
   }, [allProfiles, facetCounts, total]);
 
-  // v1.6.0 SST: Top 8 热门 topics（GitHub 原生 topics 维度，取代基于启发式的 category）
-  // 用 facet_counts.topics 全量统计，不被 limit 截断
+  // v1.6.0 SST: Top 8 popular topics (GitHub-native topics dimension, replacing the heuristic-based category)
+  // Uses full facet_counts.topics statistics, not truncated by limit
   const topTopics = useMemo(() => {
     if (!facetCounts?.topics) return [];
     return Object.entries(facetCounts.topics)
@@ -121,9 +121,9 @@ export function EcosystemStatsBar({
 
   return (
     <div className="flex flex-col gap-2 px-4 pt-3">
-      {/* 当前项目 chip — 让用户始终知道在看哪个项目的数据 */}
+      {/* Current-project chip — so the user always knows which project's data they are viewing */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-muted-foreground">当前视图:</span>
+        <span className="text-xs text-muted-foreground">Current view:</span>
         <Badge
           variant="outline"
           className={`text-xs gap-1 ${projectName ? 'border-primary/40 bg-primary/5 text-primary' : ''}`}
@@ -133,11 +133,11 @@ export function EcosystemStatsBar({
           ) : (
             <Folder className="h-3 w-3" aria-hidden="true" />
           )}
-          {projectName ?? '全部项目'}
+          {projectName ?? 'All Projects'}
         </Badge>
         {topTopics.length > 0 && (
           <>
-            <span className="text-xs text-muted-foreground ml-2">热门 Topics:</span>
+            <span className="text-xs text-muted-foreground ml-2">Popular Topics:</span>
             <div className="flex items-center gap-1 flex-wrap">
               {topTopics.map(([topic, n], idx) => (
                 <Badge
@@ -155,34 +155,34 @@ export function EcosystemStatsBar({
         )}
       </div>
 
-      {/* 数值卡片排（v1.5.1：用 facet stage 全量统计，不被 limit 截断）*/}
+      {/* Numeric card row (v1.5.1: uses full facet stage statistics, not truncated by limit)*/}
       <div className="flex flex-wrap gap-2">
         <StatCard
           Icon={Boxes}
-          label="当前视图"
+          label="Current View"
           value={stats.totalCount}
-          hint="所有库永久参与搜索；勾选「显示已删除」可查看删除/转私有仓"
+          hint="All repos permanently participate in search; check 'Show deleted' to view deleted / made-private repos"
           tone="default"
         />
         <StatCard
           Icon={FileSearch}
-          label="待浅扫"
+          label="Pending Shallow Scan"
           value={stats.needsDeepCount}
-          hint="浅扫=读 README/CHANGELOG/release 摘要功能与设计方向（自动批量）"
+          hint="Shallow scan = read README/CHANGELOG/releases and summarize features and design direction (automatic, batched)"
           tone="info"
         />
         <StatCard
           Icon={FileSearch}
-          label="已被研究"
+          label="Researched"
           value={stats.deepDoneCount}
-          hint="该仓被纳入过系统改动调研（卡片/详情可看研究次数与历程）"
+          hint="This repo has been included in a system-change investigation (cards/details show research count and history)"
           tone="primary"
         />
         <StatCard
           Icon={Archive}
-          label="已归档"
+          label="Archived"
           value={stats.archivedCount}
-          hint="GitHub archived 或人工标记无价值"
+          hint="GitHub-archived or manually marked worthless"
           tone="warning"
         />
       </div>

@@ -6,11 +6,11 @@ import { RELATION_TYPE_LABELS } from '@/api/ecosystem';
 import type { EcosystemRelation } from '@/api/ecosystem';
 
 interface RelationsSectionProps {
-  /** 当前仓 → 其他仓 */
+  /** Current repo → other repos */
   outgoing: EcosystemRelation[];
-  /** 其他仓 → 当前仓 */
+  /** Other repos → current repo */
   incoming: EcosystemRelation[];
-  /** 当前仓的 repo_full_name（用于标记自身节点） */
+  /** The current repo's repo_full_name (used to mark the self node) */
   currentRepoFullName: string;
 }
 
@@ -18,7 +18,7 @@ function relationLabel(rt: string): string {
   return RELATION_TYPE_LABELS[rt] ?? rt;
 }
 
-/** 单条关联行 */
+/** A single relation row */
 function RelationRow({
   relation,
   direction,
@@ -36,7 +36,7 @@ function RelationRow({
     direction === 'outgoing' ? relation.target_repo_id : relation.source_repo_id;
 
   const ArrowIcon = direction === 'outgoing' ? ArrowRight : ArrowLeft;
-  const directionLabel = direction === 'outgoing' ? '指向' : '来自';
+  const directionLabel = direction === 'outgoing' ? 'Points To' : 'From';
 
   return (
     <div className="flex items-center gap-2 py-1.5 text-xs border-b border-border/40 last:border-0">
@@ -56,14 +56,14 @@ function RelationRow({
           href={`https://github.com/${otherFullName}`}
           target="_blank"
           rel="noopener noreferrer"
-          aria-label={`在 GitHub 打开 ${otherFullName}`}
+          aria-label={`Open ${otherFullName} on GitHub`}
           className="text-muted-foreground hover:text-primary shrink-0"
           onClick={(e) => e.stopPropagation()}
         >
           <ExternalLink className="h-3 w-3" aria-hidden="true" />
         </a>
       )}
-      <span className="text-[10px] text-muted-foreground shrink-0" title="置信度">
+      <span className="text-[10px] text-muted-foreground shrink-0" title="Confidence">
         {(relation.confidence * 100).toFixed(0)}%
       </span>
       <span className="sr-only">
@@ -74,7 +74,7 @@ function RelationRow({
 }
 
 /**
- * 关联仓区 — 展示当前仓与其他仓的引用 / 衍生关系。
+ * Related repos section — shows citation / derivation relations between the current repo and other repos.
  */
 export function RelationsSection({
   outgoing,
@@ -89,11 +89,11 @@ export function RelationsSection({
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <Network className="h-4 w-4" aria-hidden="true" />
-            关联仓
+            Related Repos
           </CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">
-          暂无关联记录 — 标签器/深扫尚未识别到引用、衍生或替代关系。
+          No relations yet — the tagger/deep review has not identified any citation, derivation or replacement relations.
         </CardContent>
       </Card>
     );
@@ -104,14 +104,14 @@ export function RelationsSection({
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2">
           <Network className="h-4 w-4" aria-hidden="true" />
-          关联仓 ({total})
+          Related Repos ({total})
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {outgoing && outgoing.length > 0 && (
           <div>
             <h4 className="text-xs font-medium text-muted-foreground mb-1.5">
-              当前仓指向 ({outgoing.length})
+              Current Repo Points To ({outgoing.length})
             </h4>
             <div className="space-y-0">
               {outgoing.map((rel) => (
@@ -128,7 +128,7 @@ export function RelationsSection({
         {incoming && incoming.length > 0 && (
           <div>
             <h4 className="text-xs font-medium text-muted-foreground mb-1.5">
-              被引用于 ({incoming.length})
+              Cited By ({incoming.length})
             </h4>
             <div className="space-y-0">
               {incoming.map((rel) => (

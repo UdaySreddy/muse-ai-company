@@ -47,12 +47,12 @@ function buildTimeline(
 ): TimelineEntry[] {
   const entries: TimelineEntry[] = [];
 
-  // Stage 0 — 浅扫（profile 级，可能没有对应 deep_review）
+  // Stage 0 — shallow scan (profile level; may have no corresponding deep_review)
   if (profile.shallow_summary && profile.shallow_summary.trim().length > 0) {
     entries.push({
       key: 'shallow',
       stage: 'shallow_done',
-      title: 'Stage 0 · 浅扫完成',
+      title: 'Stage 0 · Shallow Scan Done',
       at: profile.last_shallow_refreshed_at ?? null,
       agent: null,
       body: profile.shallow_summary,
@@ -63,10 +63,10 @@ function buildTimeline(
     entries.push({
       key: 'shallow_failed',
       stage: 'shallow_failed',
-      title: 'Stage 0 · 浅扫失败',
+      title: 'Stage 0 · Shallow Scan Failed',
       at: null,
       agent: null,
-      body: profile.last_fetch_error || '抓取多次失败',
+      body: profile.last_fetch_error || 'Fetch failed multiple times',
       icon: CircleAlert,
       isFailure: true,
     });
@@ -74,7 +74,7 @@ function buildTimeline(
     entries.push({
       key: 'queued',
       stage: 'queued',
-      title: 'Stage 0 · 待浅扫',
+      title: 'Stage 0 · Pending Shallow Scan',
       at: null,
       agent: null,
       icon: Hourglass,
@@ -82,7 +82,7 @@ function buildTimeline(
     });
   }
 
-  // 按 created_at 排序所有 review
+  // Sort all reviews by created_at
   const sortedReviews = [...reviews].sort(
     (a, b) => serverTimeMs(a.created_at) - serverTimeMs(b.created_at),
   );
@@ -91,12 +91,12 @@ function buildTimeline(
     const stage = (r.stage_status as string) ?? 'queued';
     const isFail = stage.endsWith('_failed');
 
-    // Stage 1 — 架构分析
+    // Stage 1 — architecture analysis
     if (r.architecture_completed_at || r.architecture_md) {
       entries.push({
         key: `arch-${r.id}`,
         stage: 'architecture_done',
-        title: 'Stage 1 · 架构已分析',
+        title: 'Stage 1 · Architecture Analyzed',
         at: r.architecture_completed_at ?? r.created_at,
         agent: r.agent_id,
         body: r.architecture_md,
@@ -108,29 +108,29 @@ function buildTimeline(
       entries.push({
         key: `arch-fail-${r.id}`,
         stage: 'architecture_failed',
-        title: 'Stage 1 · 架构分析失败',
+        title: 'Stage 1 · Architecture Analysis Failed',
         at: r.created_at,
         agent: r.agent_id,
-        body: r.risks_md || '架构分析失败',
+        body: r.risks_md || 'Architecture analysis failed',
         icon: CircleAlert,
         isFailure: true,
       });
     }
 
-    // Stage 2 — 辩论
+    // Stage 2 — debate
     if (r.debated_at || stage === 'debated') {
       entries.push({
         key: `debate-${r.id}`,
         stage: 'debated',
-        title: 'Stage 2 · 多角度辩论结束',
+        title: 'Stage 2 · Multi-Angle Debate Finished',
         at: r.debated_at ?? r.created_at,
         agent: r.agent_id,
         body: r.integration_md || r.learnings_md || r.risks_md,
         meta: {
-          '会议 id': r.debate_meeting_id,
-          风险: r.risks_md ? '已收录' : null,
-          经验: r.learnings_md ? '已收录' : null,
-          集成建议: r.integration_recommendation,
+          'Meeting ID': r.debate_meeting_id,
+          Risks: r.risks_md ? 'Recorded' : null,
+          Learnings: r.learnings_md ? 'Recorded' : null,
+          'Integration Recommendation': r.integration_recommendation,
         },
         icon: Users,
         isFailure: isFail,
@@ -142,11 +142,11 @@ function buildTimeline(
       entries.push({
         key: `ref-${r.id}`,
         stage: stage === 'integrated' ? 'integrated' : 'referenced',
-        title: stage === 'integrated' ? 'Stage 3 · ★ 已集成' : 'Stage 3 · ✓ 标记参考',
+        title: stage === 'integrated' ? 'Stage 3 · ★ Integrated' : 'Stage 3 · ✓ Marked as Reference',
         at: r.stage3_completed_at ?? r.created_at,
         agent: r.agent_id,
         meta: {
-          '集成任务 id': r.integration_task_id,
+          'Integration Task ID': r.integration_task_id,
         },
         icon: CircleCheck,
         isFailure: false,
@@ -155,10 +155,10 @@ function buildTimeline(
       entries.push({
         key: `intg-${r.id}`,
         stage: 'integrated',
-        title: 'Stage 3 · ★ 已集成',
+        title: 'Stage 3 · ★ Integrated',
         at: r.stage3_completed_at ?? r.created_at,
         agent: r.agent_id,
-        meta: { '集成任务 id': r.integration_task_id },
+        meta: { 'Integration Task ID': r.integration_task_id },
         icon: CircleCheck,
         isFailure: false,
       });
@@ -244,8 +244,8 @@ function TimelineNode({ entry, isLast }: { entry: TimelineEntry; isLast: boolean
 }
 
 /**
- * 研究历程 timeline — 显示一个仓在漏斗各 stage 的推进。
- * v1.5.0-E §8.2: Stage 0 浅扫 → Stage 1 架构 → Stage 2 辩论 → Stage 3 reference/integrate。
+ * Research history timeline — shows one repo's progression through the funnel stages.
+ * v1.5.0-E §8.2: Stage 0 shallow scan → Stage 1 architecture → Stage 2 debate → Stage 3 reference/integrate.
  */
 export function ResearchTimeline({ profile, reviews }: ResearchTimelineProps) {
   const entries = useMemo(() => buildTimeline(profile, reviews), [profile, reviews]);
@@ -256,12 +256,12 @@ export function ResearchTimeline({ profile, reviews }: ResearchTimelineProps) {
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <Activity className="h-4 w-4" aria-hidden="true" />
-            研究历程 ({entries.length} 个事件)
+            Research History ({entries.length} events)
           </CardTitle>
         </CardHeader>
         <CardContent>
           {entries.length === 0 ? (
-            <p className="text-sm text-muted-foreground">暂无 stage 事件</p>
+            <p className="text-sm text-muted-foreground">No stage events yet</p>
           ) : (
             <div>
               {entries.map((e, i) => (
@@ -272,25 +272,25 @@ export function ResearchTimeline({ profile, reviews }: ResearchTimelineProps) {
         </CardContent>
       </Card>
 
-      {/* shallow_summary 历史快照（暂时显示当前值，未来由 EcosystemRepoStatusSnapshot 提供） */}
+      {/* shallow_summary history snapshot (currently shows the current value; will be provided by EcosystemRepoStatusSnapshot in the future) */}
       {profile.shallow_summary && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Sparkles className="h-4 w-4" aria-hidden="true" />
-              浅扫摘要快照
+              Shallow Scan Summary Snapshot
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span>最近刷新：{fmtDate(profile.last_shallow_refreshed_at)}</span>
+                <span>Last refreshed: {fmtDate(profile.last_shallow_refreshed_at)}</span>
               </div>
               <p className="text-sm whitespace-pre-wrap leading-relaxed">
                 {profile.shallow_summary}
               </p>
               <p className="text-[10px] text-muted-foreground italic mt-2">
-                历史快照由 EcosystemRepoStatusSnapshot 表 append-only 保留，下个版本将在此展开。
+                History snapshots are kept append-only in the EcosystemRepoStatusSnapshot table; a future version will expand them here.
               </p>
             </div>
           </CardContent>

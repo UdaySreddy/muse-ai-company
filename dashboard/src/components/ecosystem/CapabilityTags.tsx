@@ -7,28 +7,28 @@ interface CapabilityTagsProps {
   tags: EcosystemTag[];
 }
 
-/** 标签分类的色彩 + 图标映射 */
+/** Color + icon mapping for tag categories */
 function categoryStyle(category: string): { className: string; label: string; Icon: typeof Tag } {
   switch (category) {
     case 'capability':
       return {
         className:
           'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/40 dark:text-blue-300 dark:border-blue-800',
-        label: '能力',
+        label: 'Capability',
         Icon: Sparkles,
       };
     case 'maturity':
       return {
         className:
           'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-300 dark:border-emerald-800',
-        label: '成熟度',
+        label: 'Maturity',
         Icon: Award,
       };
     case 'risk':
       return {
         className:
           'bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/40 dark:text-rose-300 dark:border-rose-800',
-        label: '风险',
+        label: 'Risk',
         Icon: ShieldAlert,
       };
     default:
@@ -40,16 +40,16 @@ function categoryStyle(category: string): { className: string; label: string; Ic
   }
 }
 
-/** 来源中文映射 */
+/** Source labels */
 const SOURCE_LABELS: Record<string, string> = {
   github_topic: 'GitHub Topic',
-  auto_rule: '自动规则',
-  llm: 'LLM 推断',
-  manual: '人工标注',
+  auto_rule: 'Auto Rule',
+  llm: 'LLM Inferred',
+  manual: 'Manual',
 };
 
 /**
- * 能力标签展示 — 按 category 分组，confidence 决定不透明度。
+ * Capability tag display — grouped by category; confidence determines opacity.
  */
 export function CapabilityTags({ tags }: CapabilityTagsProps) {
   if (!tags || tags.length === 0) {
@@ -58,24 +58,24 @@ export function CapabilityTags({ tags }: CapabilityTagsProps) {
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <Tag className="h-4 w-4" aria-hidden="true" />
-            能力标签
+            Capability Tags
           </CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground flex items-center gap-2">
           <Info className="h-4 w-4 shrink-0" aria-hidden="true" />
-          暂无能力标签 — 等待 ecosystem-tagger 处理。
+          No capability tags yet — waiting for ecosystem-tagger to process.
         </CardContent>
       </Card>
     );
   }
 
-  // 按 category 分组
+  // Group by category
   const grouped = tags.reduce<Record<string, EcosystemTag[]>>((acc, t) => {
     (acc[t.category] ??= []).push(t);
     return acc;
   }, {});
 
-  // 分类显示顺序
+  // Category display order
   const categoryOrder = ['capability', 'maturity', 'risk'];
   const sortedCategories = Object.keys(grouped).sort((a, b) => {
     const ai = categoryOrder.indexOf(a);
@@ -88,7 +88,7 @@ export function CapabilityTags({ tags }: CapabilityTagsProps) {
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2">
           <Tag className="h-4 w-4" aria-hidden="true" />
-          能力标签 ({tags.length})
+          Capability Tags ({tags.length})
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -110,7 +110,7 @@ export function CapabilityTags({ tags }: CapabilityTagsProps) {
                       variant="outline"
                       className={`text-xs border ${className}`}
                       style={{ opacity }}
-                      title={`${tag.description ?? tag.name} · ${sourceLabel} · 置信度 ${(tag.confidence * 100).toFixed(0)}%`}
+                      title={`${tag.description ?? tag.name} · ${sourceLabel} · Confidence ${(tag.confidence * 100).toFixed(0)}%`}
                     >
                       {tag.name}
                       <span className="ml-1 text-[10px] opacity-70">
