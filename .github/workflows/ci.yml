@@ -42,7 +42,7 @@ jobs:
         run: |
           pip install pytest pytest-asyncio pytest-cov
           pip install fastapi uvicorn sqlalchemy aiosqlite greenlet pydantic pydantic-settings pyyaml anyio typer rich alembic
-          pip install fastmcp || true
+          pip install "fastmcp>=3.4.5,<4" || true
           pip install langgraph langchain-anthropic langchain-core || true
 
       - name: Run unit tests
