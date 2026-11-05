@@ -104,9 +104,12 @@ class TaskHorizon(enum.StrEnum):
 class MemoryScope(enum.StrEnum):
     """Memory scope.
 
-    方向层（记忆系统 v2 P1）语义收窄为 global / project / user——跨任务长寿命的
-    偏好/纠正/约束/设计意图。task 级只影响单个任务的记录属情景层，走 task_memos。
-    TEAM / AGENT 为历史遗留分区（团队知识库 / agent 经验），不属方向层。
+    The direction layer (memory system v2 P1) is semantically narrowed to global / project / user — cross-task,
+    long-lived
+    preferences/corrections/constraints/design intent. Records at task level that affect only a single task belong to
+    the episodic layer and go through task_memos.
+    TEAM / AGENT are legacy partitions (team knowledge base / agent experience) and do not belong to the direction
+    layer.
     """
 
     GLOBAL = "global"
@@ -123,10 +126,13 @@ class EventType(enum.StrEnum):
     TEAM_CREATED = "team.created"
     TEAM_DELETED = "team.deleted"
     TEAM_MODE_CHANGED = "team.mode_changed"
-    # completed 团队因新成员注册/会话恢复自动复活（hook_translator auto-revive；
-    # 2026-07-22 补录：先例 _resolve_cc_team 一直在发此事件但枚举缺席=潜伏 ValueError）
+    # a completed team is automatically revived by a new member registration / session resumption (hook_translator
+    # auto-revive;
+    # recorded 2026-07-22: the precedent _resolve_cc_team had been emitting this event all along while the enum member
+    # was absent = a latent ValueError)
     TEAM_AUTO_REVIVED = "team.auto_revived"
-    # 过期会话容器队被 reaper 扫走（与用户手动删队区分开，便于事后追溯是谁删的）
+    # an expired session container team is swept away by the reaper (distinguished from a user manually deleting a team,
+    # for later tracing of who deleted it)
     TEAM_CONTAINER_PURGED = "team.container_purged"
 
     # Agent events
@@ -139,8 +145,9 @@ class EventType(enum.StrEnum):
     TASK_STARTED = "task.started"
     TASK_COMPLETED = "task.completed"
     TASK_FAILED = "task.failed"
-    # 失败诊断留痕：分析跑过但结果只回给调用方、不进事件流，等于没跑过——
-    # 事后既查不到诊断做没做，也无法统计诊断覆盖率。
+    # Failure-diagnosis trace: if the analysis ran but the result only goes back to the caller and never enters the
+    # event stream, it is as if it never ran —
+    # afterwards you can neither check whether the diagnosis was done nor count diagnosis coverage.
     TASK_FAILURE_ANALYZED = "task.failure_analyzed"
     TASK_FAILURE_DIAGNOSED = "task.failure_diagnosed"
 
@@ -161,38 +168,50 @@ class EventType(enum.StrEnum):
     CC_TOOL_COMPLETE = "cc.tool_complete"
     CC_SESSION_START = "cc.session_start"
     CC_SESSION_END = "cc.session_end"
-    # CC 自己的队友空闲信号（TeammateIdle hook）。只观察不改状态——CC 的 idle
-    # 是"这一轮说完了"，OS 的 offline 是"人没了"，两者不能划等号。
+    # CC's own teammate idle signal (the TeammateIdle hook). Observe only, never change state — CC's idle
+    # means "this round has finished speaking", while the OS's offline means "the person is gone"; the two cannot be
+    # equated.
     CC_TEAMMATE_IDLE = "cc.teammate_idle"
-    # CC 队友私信（SendMessage）的只读镜像。刻意不写进 channel_messages ——
-    # 那张表是 OS 自有广播频道（已规划未启用）的地盘，镜像只进事件流。
+    # A read-only mirror of CC teammate direct messages (SendMessage). Deliberately not written into channel_messages —
+    # that table is the territory of the OS's own broadcast channel (planned but not enabled); the mirror goes only into
+    # the event stream.
     CC_MESSAGE_SENT = "cc.message_sent"
-    # 存活判据双轨观察（C13）：transcript mtime 与 CC 会话注册表意见不一致时
-    # 落一条，供日后决定是否换主判据。判定本身仍只由 mtime 出。
+    # Dual-track liveness-criterion observation (C13): when the transcript mtime and the CC session registry disagree,
+    # record one entry, for a later decision on whether to switch the primary criterion. The judgment itself still comes
+    # from mtime alone.
     SESSION_LIVENESS_DIVERGENCE = "session.liveness_divergence"
-    # 压缩检查点：PreCompact 定格 OS 侧作战态，压缩后的 SessionStart 递回。
+    # Compaction checkpoint: PreCompact freezes the OS-side operational state, and the post-compaction SessionStart
+    # hands it back.
     SESSION_COMPACT_CHECKPOINT = "session.compact_checkpoint"
-    # PostCompact 回执：压缩真的发生了（PreCompact 触发后压缩仍可能取消）。
+    # PostCompact receipt: compaction really happened (after a PreCompact trigger, compaction can still be cancelled).
     SESSION_COMPACT_COMPLETED = "session.compact_completed"
-    # Leader 主会话用量采集抛异常。只在**真异常**时落（节流跳过绝不进这张表）——
-    # 日志随进程重启被截断，事件不会，事后一条 SQL 就能回答"那次 PostCompact
-    # 到底采没采到"（2026-08-03 排查花两小时都答不上来，故补此留痕）。
+    # The Leader main-session usage collection raised an exception. Recorded only on **genuine anomalies** (throttling
+    # skips never enter this table) —
+    # logs get truncated on process restart but events do not, so afterwards a single SQL query can answer "did that
+    # PostCompact
+    # actually capture anything" (the 2026-08-03 investigation spent two hours unable to answer it, hence this trace).
     LEADER_USAGE_CAPTURE_FAILED = "leader.usage_capture_failed"
-    # 隔离工作区出生/消失（本仓多会话并行纪律要求用 git worktree 隔离，此前 OS 无感）
+    # Isolated workspace birth/disappearance (this repo's multi-session parallel discipline requires git worktree
+    # isolation; the OS was previously unaware)
     CC_WORKTREE_CREATED = "cc.worktree_created"
     CC_WORKTREE_REMOVED = "cc.worktree_removed"
-    # CC 原生任务的观测面。桥（cc_task_bridge）只在 TaskCompleted 上记账，而该
-    # 事件此前没有并挂遥测，于是"桥触发过几次、滤掉几条"查无实据。这三个事件
-    # **只观测不记账**，上墙逻辑仍归桥。
+    # The observation surface for CC-native tasks. The bridge (cc_task_bridge) does bookkeeping only on TaskCompleted,
+    # and that
+    # event previously had no telemetry attached alongside, so "how many times the bridge fired and how many entries it
+    # filtered" had no evidence. These three events
+    # **only observe, never bookkeep**; the on-wall logic still belongs to the bridge.
     CC_TASK_CREATED = "cc.task_created"
     CC_TASK_COMPLETED = "cc.task_completed"
-    # 中止侧 CC 不给 hook（不存在 TaskStop/TaskAborted 事件，Esc 打断也无声），
-    # 只能把 TaskStop **工具调用**从工具事件洪流里拎成一等事件——实测中止才是
-    # 主路径（TaskStop 40 次且持续在用，TaskCreate 14 次且早已归零）。
+    # On the abort side CC provides no hook (there is no TaskStop/TaskAborted event, and an Esc interruption is silent
+    # too),
+    # so the only option is to lift the TaskStop **tool call** out of the tool-event flood into a first-class event —
+    # measured in practice, aborts are
+    # the main path (TaskStop 40 times and still in use; TaskCreate 14 times and long since zero).
     CC_TASK_STOPPED = "cc.task_stopped"
 
-    # HTTP 请求级账本的小时聚合行（api/request_ledger.py）。给"零调用"判断补第
-    # 二个口径：MCP 工具面看不见的调用（Dashboard/hook/脚本/别的会话）都在这里。
+    # Hourly aggregate rows of the HTTP request-level ledger (api/request_ledger.py). They give the "zero calls"
+    # judgment a second
+    # caliber: calls invisible to the MCP tool surface (Dashboard/hooks/scripts/other sessions) are all here.
     API_REQUEST_ROLLUP = "api.request_rollup"
 
     # File events
@@ -218,8 +237,9 @@ class EventType(enum.StrEnum):
     DECISION_AGENT_SELECTED = "decision.agent_selected"
     DECISION_AGENT_CREATED = "decision.agent_created"
     DECISION_MEETING_STARTED = "decision.meeting_started"
-    # 决策现场原文（低频高价值，与被停写的心跳正好相反）：
-    # ExitPlanMode 的方案正文 / AskUserQuestion 的问答对
+    # The original text of decision scenes (low-frequency, high-value — the exact opposite of the heartbeats whose
+    # writing was stopped):
+    # ExitPlanMode's plan body / AskUserQuestion's question-answer pairs
     DECISION_PLAN_PRESENTED = "decision.plan_presented"
     DECISION_USER_ASKED = "decision.user_asked"
 
@@ -237,84 +257,101 @@ class EventType(enum.StrEnum):
     CHANNEL_MESSAGE = "channel.message"
 
     # Workflow observability events (I3a — CC ultracode/Workflow observation layer)
-    # append-only: 一旦有历史数据写入不可再删（读端 EventType(x) 会崩）。
-    WORKFLOW_PLANNED = "workflow.planned"  # PreToolUse(Workflow) 静态计划就绪
-    WORKFLOW_STARTED = "workflow.started"  # PostToolUse(Workflow) 回执骨架就绪
-    WORKFLOW_COMPLETED = "workflow.completed"  # 文件对账落最终遥测
-    # Phase 2 live 追踪（兑现上方预留；每 run 每 tick 聚合发送，绝不逐 agent 逐条发）
-    WORKFLOW_AGENT_UPDATED = "workflow.agent_updated"  # live tail：本 tick 有 agent 增量
-    WORKFLOW_RUN_INGESTED = "workflow.run_ingested"  # run 级 live 水位 / killed·failed 首次终态 / interrupted 打标
+    # append-only: once historical data is written it can never be deleted (the read side's EventType(x) would crash).
+    WORKFLOW_PLANNED = "workflow.planned"  # PreToolUse(Workflow) static plan ready
+    WORKFLOW_STARTED = "workflow.started"  # PostToolUse(Workflow) receipt skeleton ready
+    WORKFLOW_COMPLETED = "workflow.completed"  # file reconciliation lands the final telemetry
+    # Phase 2 live tracking (fulfilling the reservation above; aggregated per run per tick, never emitted per agent)
+    WORKFLOW_AGENT_UPDATED = "workflow.agent_updated"  # live tail: this tick has agent increments
+    WORKFLOW_RUN_INGESTED = "workflow.run_ingested"  # run-level live watermark / killed·failed first terminal state /
+    # interrupted marking
 
-    # 工具渐进式加载 P1 — alwaysLoad 动态轮换审计（会话启动期每次重算落一行；
-    # 该行同时是下期迟滞基线，状态与审计合一。append-only，历史写入后不可删。）
+    # Progressive tool loading P1 — alwaysLoad dynamic rotation audit (one row recorded per recomputation during session
+    # startup;
+    # that row is also the next period's hysteresis baseline, unifying state and audit. append-only; after historical
+    # writes it cannot be deleted.)
     TOOL_ALWAYSLOAD_ROTATION = "tool.alwaysload.rotation"
 
-    # 治理租约易主（A2-obs，辩论 503e07f1 议题A）：前任 holder 还挂在行上、租约已过期，
-    # 被另一个实例抢走。只在这一条分支上发——续约、无主认领、主动让出后接手都不算交替。
-    # 目的是先回答"这事到底发生过没有"：观测期内一条都没有，A2-impl（epoch 列）就不必做。
+    # Governance lease change of hands (A2-obs, debate 503e07f1 topic A): the previous holder still hangs on the row
+    # with its lease expired,
+    # and another instance snatches it. Emitted only on this branch — renewals, ownerless claims, and takeovers after an
+    # active yield do not count as handovers.
+    # The purpose is first to answer "has this ever happened": if there is not a single one in the observation period,
+    # A2-impl (the epoch column) need not be done.
     GOVERNANCE_LEASE_TAKEN_OVER = "governance.lease_taken_over"
 
 
 # ============================================================
-# Token 口径（token 用量归因 v1，阶段 0「口径正名」）
+# Token calibers (token usage attribution v1, stage 0 "caliber rectification")
 # ============================================================
-# 一个 token 数值脱离口径就没有意义。本库同时存在两个正交的 token 口径，实测相差
-# 5~25 倍（同一批 agent：117,800 vs 632,504 … 127,089 vs 3,236,088）。把它们相加、
-# 并列、或塞进同一个"总 token"，就是本仓刚在时间戳上栽过的同类事故——混口径。
-# 规格见 docs/token-attribution-v1-design.md §0.2 / §1.1。
+# A token number without a caliber is meaningless. This DB holds two orthogonal token calibers simultaneously, differing
+# by a measured
+# 5~25× (the same batch of agents: 117,800 vs 632,504 … 127,089 vs 3,236,088). Adding them,
+# juxtaposing them, or stuffing them into one "total tokens" is the same class of accident this repo just suffered with
+# timestamps — caliber mixing.
+# See docs/token-attribution-v1-design.md §0.2 / §1.1 for the spec.
 
 
 class TokenMetric(enum.StrEnum):
-    """token 数值的口径 —— 归因层的一等维度，与覆盖率并列。
+    """The caliber of a token number — a first-class dimension of the attribution layer, on par with coverage.
 
-    只有这两个成员，因为只有这两个口径在回答"用量"问题。取值语义：
+    There are only these two members because only these two calibers answer the "usage" question. Value semantics:
 
-    * ``USAGE_SUM``：一份 transcript 内按 ``requestId`` 分组、每组取最后一条 usage
-      快照、再跨组累加的四层 token。回答"这段工作一共用掉多少"。
-    * ``CTX_LAST``：最后一条 assistant 消息的四字段和，是一个**瞬时上下文水位快照**，
-      不是消耗量。回答"这个 agent 结束时上下文有多满"。
+    * ``USAGE_SUM``: the four-layer tokens obtained by grouping one transcript by ``requestId``, taking the last usage
+    snapshot
+      of each group, then accumulating across groups. Answers "how much did this work use in total".
+    * ``CTX_LAST``: the sum of the four fields of the last assistant message — an **instantaneous context watermark
+    snapshot**,
+      not a consumption amount. Answers "how full was this agent's context when it ended".
 
-    两者**永不相加**。
+    The two are **never added together**.
     """
 
     USAGE_SUM = "usage_sum"
     CTX_LAST = "ctx_last"
 
 
-# 第三个已存在的 token 口径：上下文水位（``agents.ctx_tokens`` / ``ctx_pct``，由
-# ``agent_context.measure`` 产出，服务于 agent 复用治理）。它**刻意不是 TokenMetric
-# 成员**——TokenMetric 覆盖的是"用量归因"这一个问题域，而水位口径与用量无关（§1.1）。
-# 但它仍需一个可标注的名字：呈现面上任何 token 数值都必须挂口径，包括不参与归因的。
-# 三个口径互不相加。
+# A third existing token caliber: the context watermark (``agents.ctx_tokens`` / ``ctx_pct``, produced by
+# ``agent_context.measure``, serving agent reuse governance). It is **deliberately not a TokenMetric
+# member** — TokenMetric covers the single problem domain of "usage attribution", while the watermark caliber is
+# unrelated to usage (§1.1).
+# But it still needs a labelable name: every token number on the presentation surface must carry a caliber, including
+# those not participating in attribution.
+# The three calibers are never added to each other.
 CTX_WATERMARK_METRIC = "ctx_watermark"
 
-# 全部合法口径标签 —— 呈现面标注与机检（I13）共用的封闭集合。
+# All legitimate caliber labels — the closed set shared by presentation-surface labeling and machine checks (I13).
 TOKEN_METRIC_LABELS: frozenset[str] = frozenset(
     {TokenMetric.USAGE_SUM.value, TokenMetric.CTX_LAST.value, CTX_WATERMARK_METRIC}
 )
 
-# 口径 → (中文短名, 产出者, 一句话定义)。呈现面的口径徽标与页脚说明取自这里，
-# 避免同一段解释在页面、文档、注释里各写一版然后各自漂移。
+# caliber → (short name, producer, one-sentence definition). The presentation surface's caliber badges and footer notes
+# are taken from here,
+# avoiding the same explanation being written once each in pages, docs, and comments and then drifting apart.
 TOKEN_METRIC_SPECS: dict[str, tuple[str, str, str]] = {
     TokenMetric.USAGE_SUM.value: (
-        "用量累加",
-        "services/token_attribution.parse_transcript_usage → agents 五列",
-        "按 requestId 分组取末条快照后跨组累加的四层 token；回答一共用掉多少。",
+        "Usage total",
+        "services/token_attribution.parse_transcript_usage → the agents five columns",
+        "Four-layer tokens accumulated across groups after taking each group's last snapshot by requestId; answers how "
+        "much was used in total.",
     ),
     TokenMetric.CTX_LAST.value: (
-        "末轮上下文水位",
+        "Final-round context watermark",
         "api/workflow_ingest._last_assistant_ctx_tokens → workflow_agents.tokens",
-        "最后一条 assistant 消息的四字段和；是瞬时水位快照，不是消耗量。",
+        "The sum of the four fields of the last assistant message; an instantaneous watermark snapshot, not a "
+        "consumption amount.",
     ),
     CTX_WATERMARK_METRIC: (
-        "上下文水位（复用治理）",
+        "Context watermark (reuse governance)",
         "api/agent_context.measure → agents.ctx_tokens / ctx_pct",
-        "agent 当前占了多少上下文；服务于复用决策，与用量归因无关。",
+        "How much context an agent currently occupies; serves reuse decisions and is unrelated to usage attribution.",
     ),
 }
 
-# token 用量的四层 —— "总量"实测 95.6% 是 cache_read，只报总量等于只报缓存读取量，
-# 跨模型/跨派工路径的比较会被系统性带偏。因此四层必须始终可分列（§1.2）。
+# The four layers of token usage — a measured 95.6% of the "total" is cache_read, so reporting only the total equals
+# reporting only the cache-read amount,
+# and cross-model/cross-dispatch-path comparisons would be systematically skewed. The four layers must therefore always
+# be separately presentable (§1.2).
 TOKEN_LAYERS: tuple[str, ...] = (
     "input_tokens",
     "output_tokens",
@@ -324,24 +361,27 @@ TOKEN_LAYERS: tuple[str, ...] = (
 
 
 class TokenSource(enum.StrEnum):
-    """``agents.tokens_source`` 的取值 —— 这一行的 token 数是怎么来的。
+    """The values of ``agents.tokens_source`` — how this row's token numbers came to be.
 
-    列为 NULL 表示**尚未采集**，既不是 transcript 定真也不是别名兜底——no-data 与
-    zero 必须分得开（§2.6）。
+    A NULL column means **not yet collected** — neither transcript-verified nor alias-fallback-derived — and no-data and
+    zero must be distinguishable (§2.6).
     """
 
-    TRANSCRIPT = "transcript"  # 从 transcript 逐行解析定真
-    ALIAS_FALLBACK = "alias_fallback"  # transcript 已灭失，读侧按别名台账兜底推得
+    TRANSCRIPT = "transcript"  # parsed line by line from the transcript and verified
+    ALIAS_FALLBACK = "alias_fallback"  # the transcript is lost; derived on the read side via the alias ledger fallback
 
 
 class AttributionScope(enum.StrEnum):
-    """一次归因查询问的是"哪一段工作"。
+    """One attribution query asks "which segment of work".
 
-    前四档沿归因链自上而下（§2.1），每一档的分母都是**该档内的派工数**，不是
-    "该档内已测到的派工数"——后者会让覆盖率恒等于 100%（§4.1）。
+    The first four levels go down the attribution chain from the top (§2.1), and each level's denominator is **the
+    dispatch count within that level**, not
+    "the measured dispatch count within that level" — the latter would make coverage always 100% (§4.1).
 
-    ``TASK`` 是旁支而非第五级：task 边靠寄生在记账行为上采得（§2.4），实测覆盖率
-    接近 0，与前四档不是一个量级的可信度，任何呈现都必须单独标注。
+    ``TASK`` is a side branch, not a fifth level: task edges are collected parasitically on bookkeeping actions (§2.4),
+    with a measured coverage
+    close to 0 — not the same order of credibility as the first four levels, and any presentation must label it
+    separately.
     """
 
     PROJECT = "project"
@@ -352,119 +392,142 @@ class AttributionScope(enum.StrEnum):
 
 
 class AttributionMethod(enum.StrEnum):
-    """这一次归因的数是**怎么来的** —— 与 ``TokenSource`` 是行级/查询级的关系。
+    """How this attribution's numbers **came to be** — in a row-level/query-level relationship with ``TokenSource``.
 
-    ``TokenSource`` 记的是"agents 某一行的四层数从哪来"，随行持久化；本枚举记的是
-    "这一次聚合查询整体走的是哪条路"，随查询结果返回。二者同名不同层，别混用。
+    ``TokenSource`` records "where an agents row's four-layer numbers come from" and persists with the row; this enum
+    records
+    "which path this aggregation query as a whole took" and returns with the query result. The two share names but live
+    at different levels — do not mix them.
     """
 
-    TRANSCRIPT_PARSE = "transcript_parse"  # 由 transcript 逐行解析定真（usage_sum 正路）
-    SELF_REPORT = "self_report"  # 采自 workflow JSON / journal 的自报值（ctx_last 正路）
-    ALIAS_FALLBACK = "alias_fallback"  # transcript 已灭失，读侧按别名台账兜底
+    TRANSCRIPT_PARSE = "transcript_parse"  # parsed line by line from the transcript and verified (the usage_sum main
+    # path)
+    SELF_REPORT = "self_report"  # self-reported values from the workflow JSON / journal (the ctx_last main path)
+    ALIAS_FALLBACK = "alias_fallback"  # the transcript is lost; read-side fallback via the alias ledger
 
 
 class UnattributedReason(enum.StrEnum):
-    """未归因不是一种状态，是几种，处置方式各不相同（§3.4）。
+    """Unattributed is not one state but several, each handled differently (§3.4).
 
-    这张表存在的唯一理由是**让"覆盖率 78%"变成一句可行动的话**——看的人应当据此
-    知道剩下 22% 能不能救。所以"救不回来"与"还没去救"必须分开标，把前者并进后者
-    会让这个枚举失去全部价值。
+    This table's sole reason to exist is **to turn "78% coverage" into an actionable statement** — the reader should be
+    able to tell from it
+    whether the remaining 22% can be rescued. So "unrecoverable" and "not yet attempted" must be labeled separately;
+    merging the former into the latter
+    would make this enum lose all its value.
 
-    前四个是 §3.4 的原表。后两个是具名扩展，因为 §3.4 那张表是按 usage_sum 的子
-    agent 路径写的，硬套到另外两条路径上就会说谎：
+    The first four are §3.4's original table. The last two are named extensions, because §3.4's table was written for
+    usage_sum's sub-
+    agent path, and force-fitting it onto the other two paths would lie:
 
-    * ``SELF_REPORT_ABSENT`` —— ctx_last 侧的 ``workflow_agents.tokens`` 为 0 时，
-      原因是那次 run 的 JSON 从头就没带遥测（数据源只有请求规格）。它不是
-      ``NOT_YET_MEASURED``：没有任何"再跑一次采集"能把它补回来。
-    * ``MULTI_TASK_UNSPLITTABLE`` —— agent 在多个 task 上都留过账时，它的四层数是
-      **整个生命周期的一个合计**，没有逐区间用量可供按边的时间序切分。§2.4 定死
-      这种情况如实计未归因，**禁止平均分摊**（分摊会造出无法证伪的数字）。
+    * ``SELF_REPORT_ABSENT`` — when the ctx_last side's ``workflow_agents.tokens`` is 0,
+      the reason is that run's JSON never carried telemetry from the start (the data source holds only request specs).
+      It is not
+      ``NOT_YET_MEASURED``: no "run collection once more" can recover it.
+    * ``MULTI_TASK_UNSPLITTABLE`` — when an agent left bookkeeping entries on multiple tasks, its four-layer numbers are
+      **a single total over its whole lifecycle**, with no per-interval usage to split by edge in time order. §2.4 fixes
+      that this case is honestly counted as unattributed, with **averaging allocation forbidden** (allocation would
+      fabricate unfalsifiable numbers).
 
-    ``BY_DESIGN`` 是 §3.4 的第四码，但它描述的是**工具调用级**（``agent_activities``
-    52,119 条无 token 字段，是主动选择不采）。工具调用与派工不是同一个单位，所以它
-    只作呈现面上的一行标签，**绝不进** :attr:`TokenAttribution.unattributed_reasons`
-    ——那个 dict 与 ``dispatches_total`` 同单位，混进活动数就是混量纲。
+    ``BY_DESIGN`` is §3.4's fourth code, but it describes the **tool-call level** (``agent_activities``'
+    52,119 records have no token field — a deliberate choice not to collect). Tool calls and dispatches are not the same
+    unit, so it
+    serves only as a one-line label on the presentation surface and **never enters**
+    :attr:`TokenAttribution.unattributed_reasons`
+    — that dict is in the same unit as ``dispatches_total``, and mixing activity counts into it would mix dimensions.
     """
 
-    NO_TRANSCRIPT_PATH = "no_transcript_path"  # 行从未登记 transcript 路径（历史行，救不回）
-    TRANSCRIPT_GONE = "transcript_gone"  # 路径有但文件已不在（随时间只增不减，救不回）
-    NOT_YET_MEASURED = "not_yet_measured"  # 路径在、文件在，只是还没跑过采集（可救）
-    BY_DESIGN = "by_design"  # 设计上不采集（工具调用级）——见类文档，不进 dict
-    SELF_REPORT_ABSENT = "self_report_absent"  # ctx_last 侧自报值缺失（救不回）
-    MULTI_TASK_UNSPLITTABLE = "multi_task_unsplittable"  # task 级切不开，如实计未归因
+    NO_TRANSCRIPT_PATH = "no_transcript_path"  # the row never registered a transcript path (historical row,
+    # unrecoverable)
+    TRANSCRIPT_GONE = "transcript_gone"  # the path exists but the file is gone (only grows over time, unrecoverable)
+    NOT_YET_MEASURED = "not_yet_measured"  # path present, file present, collection just has not run yet (recoverable)
+    BY_DESIGN = "by_design"  # not collected by design (tool-call level) — see the class docs; does not enter the dict
+    SELF_REPORT_ABSENT = "self_report_absent"  # the ctx_last side's self-reported value is absent (unrecoverable)
+    MULTI_TASK_UNSPLITTABLE = "multi_task_unsplittable"  # cannot be split at task level; honestly counted as
+    # unattributed
 
 
 class TokenAttribution(BaseModel):
-    """一次归因查询的完整答案 —— 数值与其分母、口径同生共死。
+    """The complete answer to one attribution query — the numbers live and die with their denominator and caliber.
 
-    没有 ``total`` 这个字段，也没有任何方法返回它。调用方要渲染数值，就必须同时
-    拿到 ``dispatches_total`` 与 ``metric`` —— 分母和口径是数据的一部分，不是可选
-    的装饰。这条**必须落在类型层**：页面标注是软约束，三个月后的自己会忽略它
-    （§2.5，此结构由 I13 机检钉住）。
+    There is no ``total`` field, and no method returns one. To render a number, a caller must simultaneously
+    obtain ``dispatches_total`` and ``metric`` — the denominator and caliber are part of the data, not optional
+    decoration. This **must live at the type layer**: page labeling is a soft constraint that one's future self three
+    months later will ignore
+    (§2.5; this structure is pinned by the I13 machine check).
 
-    **为什么没有合计字段**：实测四层里 ``cache_read`` 占 95.6%，任何"总量"实际上
-    是"缓存读取量"的同义词；只报总量会让跨模型、跨派工路径的比较被系统性带偏
-    （§1.2）。四层必须始终可分列，合计要算由调用方自己负责并自己承担解释责任。
+    **Why there is no total field**: a measured 95.6% of the four layers is ``cache_read``, so any "total" is actually
+    a synonym for "cache-read amount"; reporting only the total would systematically skew cross-model and
+    cross-dispatch-path comparisons
+    (§1.2). The four layers must always be separately presentable; if a total is computed, the caller computes it and
+    bears the interpretation responsibility.
 
-    **口径（metric）无默认值**是刻意的：不标注口径就构造不出对象。本库同时存在
-    ``usage_sum``（用量累加）与 ``ctx_last``（末轮上下文水位）两个正交口径，实测
-    差 5~25 倍；把它们相加或并列，就是本仓刚在时间戳上栽过的同类事故（§0.2 / R1）。
-    本结构两种口径都能承载，**判断依据永远是 metric 字段本身**，不是字段名。
+    **The caliber (metric) having no default** is deliberate: without labeling the caliber, the object cannot be
+    constructed. This DB holds both
+    ``usage_sum`` (usage total) and ``ctx_last`` (final-round context watermark), two orthogonal calibers differing by a
+    measured
+    5~25×; adding or juxtaposing them is the same class of accident this repo just suffered with timestamps (§0.2 / R1).
+    This structure can carry both calibers; **the basis of judgment is always the metric field itself**, not field
+    names.
 
-    不变量（有契约测试钉住，见 tests/unit/test_token_attribution_contract.py）：
+    Invariants (pinned by contract tests, see tests/unit/test_token_attribution_contract.py):
 
-    * 不存在 ``total`` / ``total_tokens`` 字段或属性；
-    * ``dispatches_attributed`` + Σ``unattributed_reasons`` == ``dispatches_total``；
-    * ``unattributed_reasons`` 的单位是**派工数**，与分母同单位。
+    * no ``total`` / ``total_tokens`` field or attribute exists;
+    * ``dispatches_attributed`` + Σ``unattributed_reasons`` == ``dispatches_total``;
+    * ``unattributed_reasons`` is in units of **dispatch count**, the same unit as the denominator.
     """
 
     model_config = {"frozen": True}
 
     scope: AttributionScope  # project / session / workflow_run / agent / task
     scope_id: str
-    metric: TokenMetric  # usage_sum | ctx_last —— 强制标注，无默认值
-    input_tokens: int  # 四层分列，不提供合计字段
+    metric: TokenMetric  # usage_sum | ctx_last — mandatory labeling, no default
+    input_tokens: int  # four layers presented separately; no total field provided
     output_tokens: int
     cache_creation_tokens: int
     cache_read_tokens: int
-    dispatches_attributed: int  # 分子：本 scope 内已测到用量的派工数
-    dispatches_total: int  # 分母：本 scope 内的派工总数
-    unattributed_reasons: dict[str, int]  # 未归因派工按原因分类计数（§3.4）
+    dispatches_attributed: int  # numerator: dispatches within this scope whose usage has been measured
+    dispatches_total: int  # denominator: the total dispatch count within this scope
+    unattributed_reasons: dict[str, int]  # unattributed dispatches counted by reason category (§3.4)
     measured_window: tuple[datetime, datetime] | None
     method: AttributionMethod  # transcript_parse | self_report | alias_fallback
 
 
 class DispatchPopulation(enum.StrEnum):
-    """派工路径 —— 覆盖率矩阵的行（§5.2），也是聚合查询的必填维度之一。
+    """Dispatch path — a row of the coverage matrix (§5.2), and one of the aggregation query's required dimensions.
 
-    为什么它必须是查询维度而不是事后分组：三条路径的量级差着数量级（实测单个
-    Leader 会话 8.5 亿 token，远超全部子 agent 之和），混进一个排行榜里子 agent
-    的归因结果会被彻底淹没。§3.3 因此定死"主会话与子 agent 必须分列呈现，且默认
-    不合并" —— 把它做成必填参数，合并就得先显式发起两次查询再自己动手加，加的人
-    要自己承担这个动作。
+    Why it must be a query dimension rather than a post-hoc grouping: the three paths' magnitudes differ by orders of
+    magnitude (measured: a single
+    Leader session at 850M tokens, far exceeding the sum of all sub-agents); mixed into one leaderboard, sub-agents'
+    attribution results would be completely drowned. §3.3 therefore fixes that "the main session and sub-agents must be
+    presented in separate columns, and by default
+    not merged" — making it a required parameter means merging requires explicitly issuing two queries first and then
+    adding by hand, and the person adding
+    bears that action themselves.
     """
 
-    SUBAGENT = "subagent"  # agents 表 role != 'leader' —— 派工（usage_sum）
-    LEADER_SESSION = "leader_session"  # agents 表 role == 'leader' —— 主会话（usage_sum）
-    WORKFLOW_SELF_REPORT = "workflow_self_report"  # workflow_agents 自报（ctx_last，仅覆盖率）
-    TOOL_CALL = "tool_call"  # agent_activities 工具调用级 —— 设计上不采集（§3.2）
+    SUBAGENT = "subagent"  # agents table role != 'leader' — dispatches (usage_sum)
+    LEADER_SESSION = "leader_session"  # agents table role == 'leader' — main sessions (usage_sum)
+    WORKFLOW_SELF_REPORT = "workflow_self_report"  # workflow_agents self-report (ctx_last, coverage only)
+    TOOL_CALL = "tool_call"  # agent_activities tool-call level — not collected by design (§3.2)
 
 
 class UsageCoverageRow(BaseModel):
-    """覆盖率矩阵的一行 —— 分子、分母、口径，**刻意零 token 数值字段**。
+    """One row of the coverage matrix — numerator, denominator, caliber, with **deliberately zero token value fields**.
 
-    §4.3 与 §5.2 那两张表本来就是覆盖率表：列是"派工数 / 已测量 / 覆盖率 / 口径"，
-    没有一列是 token 数。这一点让 ``ctx_last`` 路径也能如实上表——它的四层分解从
-    未被保存过（``workflow_agents.tokens`` 在 ingest 时已是四字段之和），进不了
-    :class:`TokenAttribution`，但它的分子分母是实打实的。
+    The two tables in §4.3 and §5.2 are coverage tables to begin with: their columns are "dispatch count / measured /
+    coverage / caliber",
+    and not one column is a token number. This lets the ``ctx_last`` path also appear honestly — its four-layer
+    decomposition was
+    never stored (``workflow_agents.tokens`` is already the sum of the four fields at ingest time), so it cannot enter
+    :class:`TokenAttribution`, but its numerator and denominator are real.
 
-    ``dispatches_total`` / ``dispatches_attributed`` 可为 None，专给"设计上不采集"
-    那一行用：**空白会被读成 bug，0 会被读成"真的一次都没有"**，而事实是这个问题
-    在这条路径上不适用（§5.2：「设计上不采集」是一个正式取值，不是空白）。
+    ``dispatches_total`` / ``dispatches_attributed`` may be None, specifically for the "not collected by design"
+    row: **a blank would be read as a bug, and 0 would be read as "truly never once"**, while in fact this question
+    does not apply on this path (§5.2: "not collected by design" is a formal value, not a blank).
     """
 
     path: DispatchPopulation
-    metric: str  # TokenMetric 取值 或 ""（该路径不产出用量数值）
+    metric: str  # a TokenMetric value or "" (this path produces no usage numbers)
     dispatches_total: int | None
     dispatches_attributed: int | None
     unattributed_reasons: dict[str, int] = Field(default_factory=dict)
@@ -472,33 +535,36 @@ class UsageCoverageRow(BaseModel):
 
 
 class EdgeCoverage(BaseModel):
-    """归因链上一跳的可解析率 C_hop（§4.1）。
+    """The resolvability rate C_hop of one hop on the attribution chain (§4.1).
 
-    端到端覆盖率是各跳的乘积，用一个标量表达会掩盖真正的瓶颈——实测瓶颈不在
-    token 采集而在 ``agent→task`` 这一跳（0.8%），只看总覆盖率永远看不出来。
+    End-to-end coverage is the product of the hops; expressing it as one scalar would hide the real bottleneck —
+    measured: the bottleneck is not in
+    token collection but in the ``agent→task`` hop (0.8%), which total coverage alone would never reveal.
     """
 
-    edge: str  # 如 "agent->session"
-    resolvable: int  # 分子：该边可解析的行数
-    required: int  # 分母：需要该边的行数
+    edge: str  # e.g. "agent->session"
+    resolvable: int  # numerator: the number of rows for which this edge is resolvable
+    required: int  # denominator: the number of rows needing this edge
     note: str = ""
 
 
 class UsageCoverageReport(BaseModel):
-    """覆盖率向量的完整答案 —— 页面第一屏第一块的数据源（§5.2 ①②）。
+    """The complete answer of the coverage vector — the data source of the page's first block on the first screen (§5.2
+    items 1-2).
 
-    刻意**不含任何 token 数值**：本结构回答"测到了多少比例"，token 值一律走
-    :class:`TokenAttribution`（那里每个数字都自带分母）。因此它不进
-    ``scripts/usage_surface.py`` 的 PY_SURFACES —— 那张注册表管的是 token 呈现面，
-    而这里一个 token 字段都没有。
+    Deliberately **contains no token values**: this structure answers "what proportion was measured", and token values
+    uniformly go through
+    :class:`TokenAttribution` (where every number carries its own denominator). Therefore it does not enter
+    ``scripts/usage_surface.py``'s PY_SURFACES — that registry governs token presentation surfaces,
+    while here there is not a single token field.
 
-    ``rows`` 刻意不提供合计行：``usage_sum`` 与 ``ctx_last`` 两个口径实测差 5~25 倍，
-    任何跨行合计都是混口径（§0.2 / §5.2）。
+    ``rows`` deliberately provides no total row: the ``usage_sum`` and ``ctx_last`` calibers differ by a measured 5~25×,
+    and any cross-row total mixes calibers (§0.2 / §5.2).
     """
 
     rows: list[UsageCoverageRow]
     hops: list[EdgeCoverage]
-    window: tuple[datetime, datetime] | None  # 按 created_at 落窗，不是 tokens_measured_at
+    window: tuple[datetime, datetime] | None  # windowed on created_at, not tokens_measured_at
     generated_at: datetime = Field(default_factory=utc_now)
 
 
@@ -551,9 +617,11 @@ class Team(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
     completed_at: datetime | None = None
-    # 拥有此容器队的 CC 进程。**派生字段，不落库**：由 API 在响应时解析，供展示层
-    # 把同一进程的历史 + 当前容器队合成一组。证不出来就是 None（绝不猜），非容器
-    # 队恒为 None。
+    # The CC process owning this container team. **A derived field, not persisted**: resolved by the API at response
+    # time, for the display layer
+    # to combine the same process's history + current container teams into one group. When it cannot be proven it is
+    # None (never guess); non-container
+    # teams are always None.
     cc_pid: int | None = None
 
 
@@ -565,9 +633,10 @@ class Agent(BaseModel):
     name: str
     role: str
     system_prompt: str = ""
-    # 模型未知即留空（展示为 --）：默认烘焙具体型号曾在四层（此处/ORM 列默认/
-    # to_pydantic 读注入/工具参数）反复冒出误导展示，真实值由 transcript 尾读
-    # (Leader)/wf 终态(workflow agent)回填。
+    # When the model is unknown, leave it empty (displayed as --): baking a specific model in as the default once
+    # surfaced misleading displays at four layers (here / the ORM column default /
+    # to_pydantic read injection / tool parameters); the real value is backfilled by transcript tail-reads
+    # (Leader) / wf terminal state (workflow agents).
     model: str = ""
     status: AgentStatus = AgentStatus.WAITING
     config: dict[str, Any] = Field(default_factory=dict)
@@ -584,22 +653,24 @@ class Agent(BaseModel):
     # Populated from the sub-agent transcript on SubagentStop + reaper backfill;
     # reuse_domain is provisioned for the P2 decision layer (not written in P1).
     # See docs/agent-reuse-design.md section 4.
-    # 口径: CTX_WATERMARK_METRIC（上下文水位，不参与用量归因，与下面四层不相加）
+    # Caliber: CTX_WATERMARK_METRIC (context watermark; does not participate in usage attribution and is not added to
+    # the four layers below)
     ctx_tokens: int | None = None  # last measured context token total (D1 formula)
     ctx_window: int | None = None  # detected window size (e.g. 1_000_000)
     ctx_pct: float | None = None  # ctx_tokens / ctx_window * 100
     transcript_path: str | None = None  # sub-agent transcript pointer (resume/re-read anchor)
     ctx_measured_at: datetime | None = None  # when the watermark was last measured
     reuse_domain: str | None = None  # most-recent task domain tag (P2 decision layer)
-    # 口径: TokenMetric.USAGE_SUM（用量累加，四层分列）。与上面的 ctx_* 水位是两回事，
-    # 两者不相加。None = 尚未采集到，不等于 0 —— no-data 与 zero 必须分得开。
+    # Caliber: TokenMetric.USAGE_SUM (usage total, four layers presented separately). A different thing from the ctx_*
+    # watermark above;
+    # the two are not added. None = not yet collected, not equal to 0 — no-data and zero must be distinguishable.
     input_tokens: int | None = None
     output_tokens: int | None = None
     cache_creation_tokens: int | None = None
     cache_read_tokens: int | None = None
     tokens_measured_at: datetime | None = None
-    # 这一行的四层数是怎么来的：transcript 定真 / 别名兜底。None = 未采集。
-    # 只做审计溯源，不参与任何计算（§2.6 本设计新增的唯一一列）。
+    # How this row's four-layer numbers came to be: transcript-verified / alias fallback. None = not collected.
+    # Audit provenance only; participates in no computation (§2.6, the only column this design adds).
     tokens_source: TokenSource | None = None
 
 
@@ -623,8 +694,9 @@ class Task(BaseModel):
     horizon: TaskHorizon = TaskHorizon.SHORT
     tags: list[str] = Field(default_factory=list)
     config: dict[str, Any] = Field(default_factory=dict)
-    # CC 原生任务的 id（TaskCompleted 载荷的 task_id）。只有由 cc_task_bridge
-    # 镜像进来的行才有值，是镜像的幂等键——同一个 CC 任务重复完成不会建第二行。
+    # The id of a CC-native task (the task_id in the TaskCompleted payload). Only rows mirrored in by cc_task_bridge
+    # have a value; it is the mirror's idempotency key — the same CC task completing repeatedly will not create a second
+    # row.
     cc_task_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     started_at: datetime | None = None
@@ -634,30 +706,32 @@ class Task(BaseModel):
 class Memory(BaseModel):
     """Memory data model.
 
-    方向层（记忆系统 v2 P1）：低频·高价值密度·跨任务长寿命的偏好/纠正/约束/
-    设计意图。scope 语义 global/project/user；矛盾/更新时用 supersedes 置旧条失效
-    （Zep 失效语义，不删除）。source_refs 回指 memo/report/meeting id（④溯源）。
+    Direction layer (memory system v2 P1): low-frequency, high value-density, cross-task long-lived
+    preferences/corrections/constraints/
+    design intent. Scope semantics: global/project/user; on contradiction/update, supersedes invalidates the old entry
+    (Zep invalidation semantics, no deletion). source_refs point back to memo/report/meeting ids (item 4 provenance).
     """
 
     id: str = Field(default_factory=_new_id)
     scope: MemoryScope
     scope_id: str
     content: str
-    # preference(偏好) / directive(指令·工作方式) / constraint(约束) / design(设计意图)
+    # preference / directive (working style) / constraint / design (design intent)
     kind: str = "preference"
     metadata: dict[str, Any] = Field(default_factory=dict)
-    source_refs: list[str] = Field(default_factory=list)  # ④ 溯源：memo/report/meeting id
-    invalid_at: datetime | None = None  # ① 失效轴（NULL=有效）
-    invalidated_by: str | None = None  # 取代者 memory id
+    source_refs: list[str] = Field(default_factory=list)  # item 4 provenance: memo/report/meeting id
+    invalid_at: datetime | None = None  # item 1 invalidation axis (NULL = valid)
+    invalidated_by: str | None = None  # the superseding memory id
     created_at: datetime = Field(default_factory=utc_now)
     accessed_at: datetime = Field(default_factory=utc_now)
 
 
 class TaskMemo(BaseModel):
-    """情景层 task memo（记忆系统 v2 P0：从 tasks.config JSON 数组升为独立表）。
+    """Episodic-layer task memo (memory system v2 P0: promoted from a tasks.config JSON array to its own table).
 
-    行级真 ID（可被 knowledge_links 引用）+ 失效轴（invalid_at/invalidated_by，
-    Zep 失效语义：矛盾时置失效不删除）。写入接口保持兼容，字段对齐设计 §2。
+    A row-level real ID (referenceable by knowledge_links) + an invalidation axis (invalid_at/invalidated_by,
+    Zep invalidation semantics: on contradiction, invalidate without deleting). The write interface stays compatible;
+    fields align with design §2.
     """
 
     id: str = Field(default_factory=_new_id)
@@ -666,11 +740,11 @@ class TaskMemo(BaseModel):
     author: str = "leader"
     memo_type: str = "progress"  # progress / decision / issue / summary
     content: str
-    scope_path: str = ""  # ② 路径作用域 /project/ecosystem/research
-    quality_score: int | None = None  # ⑧ 质量分（NULL=未评，整理时补）
-    invalid_at: datetime | None = None  # ① 失效轴（NULL=有效）
-    invalidated_by: str | None = None  # 取代者 memo id
-    meta: dict[str, Any] = Field(default_factory=dict)  # entities/topics（整理时补）
+    scope_path: str = ""  # item 2 path scope /project/ecosystem/research
+    quality_score: int | None = None  # item 8 quality score (NULL = not yet rated; filled in during organization)
+    invalid_at: datetime | None = None  # item 1 invalidation axis (NULL = valid)
+    invalidated_by: str | None = None  # the superseding memo id
+    meta: dict[str, Any] = Field(default_factory=dict)  # entities/topics (filled in during organization)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -820,105 +894,116 @@ class Report(BaseModel):
 
 
 class WorkflowRun(BaseModel):
-    """Workflow 运行档案 — CC ultracode/Workflow 一次运行的可查询投影。
+    """Workflow run profile — the queryable projection of one CC ultracode/Workflow run.
 
-    定位：`wf_<id>.json` 富快照的「可重建缓存」，按自然键 `wf_id` UPSERT 单调推进
-    （planned→running→completed / interrupted），绝不删行。审计轨仍走 events 表。
+    Positioning: the "rebuildable cache" of the `wf_<id>.json` rich snapshot, advanced monotonically by UPSERT on the
+    natural key `wf_id`
+    (planned→running→completed / interrupted), never deleting rows. The audit trail still goes through the events table.
     """
 
     id: str = Field(default_factory=_new_id)
-    wf_id: str  # wf_<id>，幂等主锚
-    project_id: str = ""  # 绑 launching Leader 项目，走 _apply_project_filter
-    team_id: str | None = None  # 既有 workflow-<wf_id> 团队；OS 离线期无团队时留 None
-    session_id: str | None = None  # 启动 Leader 会话
-    cc_task_id: str | None = None  # 回执里的 Task ID（≠ OS task_id）
-    name: str = ""  # run 名（回执/脚本 meta）
+    wf_id: str  # wf_<id>, the idempotency primary anchor
+    project_id: str = ""  # bound to the launching Leader's project; goes through _apply_project_filter
+    team_id: str | None = None  # the existing workflow-<wf_id> team; None when there is no team during the OS's offline
+    # period
+    session_id: str | None = None  # the launching Leader session
+    cc_task_id: str | None = None  # the Task ID in the receipt (≠ OS task_id)
+    name: str = ""  # the run name (receipt/script meta)
     status: str = "planned"  # planned / running / completed / interrupted / killed / failed
-    source: str = "hook"  # 数据面溯源：hook / file / hook+file
+    source: str = "hook"  # data-plane provenance: hook / file / hook+file
     phases: list[dict[str, Any]] = Field(default_factory=list)  # [{index,title}]
-    planned_agent_count: int = 0  # 静态解析 literal_agent_count
-    dynamic_nodes: int = 0  # 静态解析动态节点数
-    agent_count: int = 0  # 实际（快照 agentCount）
-    # 口径: TokenMetric.CTX_LAST —— 快照 totalTokens = Σ 各 agent 的末轮上下文水位，
-    # **不是**这次 run 一共烧了多少。与 agents 五列（USAGE_SUM）实测差 5~25 倍，
-    # 永不相加。本阶段只正名，数据与算法一概不动（§5.3 / §6.4-1）。
-    total_tokens: int = 0  # 快照 totalTokens
-    total_tool_calls: int = 0  # 快照 totalToolCalls
-    duration_ms: int | None = None  # 快照 durationMs
-    summary: str = ""  # run 结果摘要
-    result: dict[str, Any] | None = None  # 终端 StructuredOutput（截断防膨胀）
-    script_path: str = ""  # 脚本 .js 路径，供下钻
-    # 跨项目修复A：回执 Transcript dir 持久化——live/终态直接寻址，摆脱「项目必须
-    # 已注册」的依赖（未注册项目的 run 曾因 slug 扫不到而误判 interrupted/live 全盲）。
+    planned_agent_count: int = 0  # statically parsed literal_agent_count
+    dynamic_nodes: int = 0  # statically parsed dynamic node count
+    agent_count: int = 0  # actual (snapshot agentCount)
+    # Caliber: TokenMetric.CTX_LAST — the snapshot totalTokens = Σ each agent's final-round context watermark,
+    # **not** how much this run burned in total. It differs from the agents five columns (USAGE_SUM) by a measured
+    # 5~25×,
+    # and is never added to them. This stage only rectifies names; data and algorithms are untouched (§5.3 / §6.4-1).
+    total_tokens: int = 0  # snapshot totalTokens
+    total_tool_calls: int = 0  # snapshot totalToolCalls
+    duration_ms: int | None = None  # snapshot durationMs
+    summary: str = ""  # the run result summary
+    result: dict[str, Any] | None = None  # terminal StructuredOutput (truncated, anti-bloat)
+    script_path: str = ""  # the script .js path, for drill-down
+    # Cross-project fix A: the receipt's Transcript dir is persisted — live/terminal states address it directly,
+    # escaping the "the project must
+    # be registered" dependency (runs of unregistered projects were once misjudged as interrupted / fully blind while
+    # live because the slug could not be scanned).
     transcript_dir: str = ""
     started_at: datetime | None = None  # startTime
     completed_at: datetime | None = None  # startTime + durationMs
-    # Phase2 live 水位列 —— None=本次 upsert 不改；显式 0/''=复位（水位语义，
-    # 见 repository.upsert_workflow_run 独立分支，绝不套「新非零胜出」）。
-    journal_offset: int | None = None  # journal.jsonl 已消费字节水位（只前进到最后 \n）
-    source_fingerprint: str | None = None  # wf_<id>.json 的 "mtime_ns:size"，reconcile 廉价跳过
-    # 口径: TokenMetric.CTX_LAST（同 total_tokens，只是运行期的那一版估值）
-    live_tokens: int | None = None  # 运行期估值 = Σ agents lastCtx（cached 记 0）；终态 UI 用 total_tokens
-    last_activity_at: datetime | None = None  # max(journal+agent jsonl mtime)；单调取 max
+    # Phase2 live watermark columns — None = this upsert does not change them; explicit 0/'' = reset (watermark
+    # semantics,
+    # see the separate branch in repository.upsert_workflow_run; never apply "new non-zero wins").
+    journal_offset: int | None = None  # the consumed-byte watermark of journal.jsonl (advances only to the last \n)
+    source_fingerprint: str | None = None  # wf_<id>.json's "mtime_ns:size"; reconcile skips cheaply
+    # Caliber: TokenMetric.CTX_LAST (same as total_tokens, just the running-period version of the estimate)
+    live_tokens: int | None = None  # running-period estimate = Σ agents lastCtx (cached counts as 0); the
+    # terminal-state UI uses total_tokens
+    last_activity_at: datetime | None = None  # max(journal + agent jsonl mtime); monotonically takes max
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
 
 class KnowledgeLink(BaseModel):
-    """跨域引用边 — 知识层 P1a（docs/knowledge-layer-design.md）。
+    """Cross-domain reference edge — knowledge layer P1a (docs/knowledge-layer-design.md).
 
-    从 memo/report 文本用零 LLM 正则抽取 OS 原生 ID 引用（wf_id/commit/
-    task-uuid/[[memory]]），append-only，UNIQUE 五元组去重。图谱=派生视图，
-    可从源文本随时重建（文件真相源哲学）。
+    Extracts OS-native ID references (wf_id/commit/
+    task-uuid/[[memory]]) from memo/report text with zero-LLM regexes; append-only, deduplicated by a UNIQUE quintuple.
+    The graph is a derived view,
+    rebuildable from the source text at any time (the file-source-of-truth philosophy).
     """
 
-    id: int | None = None  # 自增，插入前为 None
+    id: int | None = None  # auto-increment; None before insertion
     from_kind: str  # task_memo / report / task
     from_id: str  # memo: "<task_id>#<ts>"; report/task: uuid
     to_kind: str  # run / task / commit / memory / report
     to_id: str  # wf_id / uuid / short-hash / memory-slug
     link_type: str = "references"  # references / fixes
-    context: str = ""  # 命中点 ±120 字证据快照
+    context: str = ""  # an evidence snapshot of ±120 characters around the hit point
     link_source: str = ""  # regex-memo / regex-report / manual
     project_id: str = ""
     created_at: datetime = Field(default_factory=utc_now)
 
 
-# ``agent --worked_on--> task`` 边的词汇（§2.4）。写侧寄生在 task_memo_add /
-# task_update / report_save 三个**已经必然发生**的记账动作里，读侧在归因聚合里按它
-# 筛选。两侧必须共用同一份字面量：写错一个字，边照样写进去、查询照样返回空，
-# 而且不会有任何报错 —— 只会表现为"task 级归因覆盖率永远是 0"，一个看起来像是
-# 数据问题的代码问题。
+# The vocabulary of the ``agent --worked_on--> task`` edge (§2.4). The write side parasitizes the task_memo_add /
+# task_update / report_save — three bookkeeping actions that **already necessarily happen**; the read side filters by it
+# in attribution aggregation.
+# The two sides must share the same literal: write one character wrong and the edge still gets written while the query
+# still returns empty,
+# with no error whatsoever — it would only manifest as "task-level attribution coverage is forever 0", a code problem
+# that looks like a data problem.
 AGENT_TASK_LINK_FROM_KIND = "agent"
 AGENT_TASK_LINK_TO_KIND = "task"
 AGENT_TASK_LINK_TYPE = "worked_on"
-# 这条边的语义边界（写进代码是因为它极易被读成另一个意思）：它说的是"这个 agent
-# 在这个 task 上留过账"，**不是**"这个 agent 的全部 token 都属于这个 task"。
+# This edge's semantic boundary (written into the code because it is extremely easy to misread): it says "this agent
+# left bookkeeping entries on this task", **not** "all of this agent's tokens belong to this task".
 AGENT_TASK_LINK_SOURCE = "ledger-parasite"
 
 
 class WorkflowAgent(BaseModel):
-    """逐-agent 遥测 — 一个 run 一个 fan-out agent 一行。
+    """Per-agent telemetry — one row per run per fan-out agent.
 
-    upsert by (wf_id, cc_agent_id)。数据 100% 现成，来自
-    `wf_<id>.json.workflowProgress[]` 的 type=workflow_agent 条，无需自聚合。
+    upsert by (wf_id, cc_agent_id). The data is 100% ready-made, from
+    `wf_<id>.json.workflowProgress[]` type=workflow_agent entries; no self-aggregation needed.
     """
 
     id: str = Field(default_factory=_new_id)
     run_id: str  # = workflow_runs.wf_id
-    wf_id: str  # 冗余便于直查
-    project_id: str = ""  # 隔离
-    cc_agent_id: str = ""  # 快照 agentId，与 run_id 组唯一去重键
-    os_agent_id: str | None = None  # 链既有成员：agents.cc_tool_use_id == cc_agent_id
-    label: str = ""  # 如 map:mcp
+    wf_id: str  # redundant, for direct querying
+    project_id: str = ""  # isolation
+    cc_agent_id: str = ""  # the snapshot agentId; forms the unique dedup key together with run_id
+    os_agent_id: str | None = None  # links an existing member: agents.cc_tool_use_id == cc_agent_id
+    label: str = ""  # e.g. map:mcp
     phase_index: int = 0
     phase_title: str = ""
-    model: str = ""  # 如 claude-opus-4-8[1m]
+    model: str = ""  # e.g. claude-opus-4-8[1m]
     state: str = ""  # queued / running / done
-    # 口径: TokenMetric.CTX_LAST —— 末轮上下文水位快照，不是这个 agent 的消耗量。
-    # 同一 agent 的 USAGE_SUM 走 os_agent_id 关联到 agents 五列去取，**绝不覆写本列**
-    # （§6.4-1：用关联解决，不用覆写解决）。0 在本列兼表"未采到"，是 ctx_last 侧的
-    # 历史遗产，本阶段不动数据也不动算法，由 I13 记在案（§5.3）。
+    # Caliber: TokenMetric.CTX_LAST — a final-round context watermark snapshot, not this agent's consumption.
+    # The same agent's USAGE_SUM is fetched via the os_agent_id association to the agents five columns and **never
+    # overwrites this column**
+    # (§6.4-1: solve by association, not by overwriting). 0 in this column also means "not captured" — a ctx_last-side
+    # historical legacy; this stage touches neither the data nor the algorithm, and I13 has it on record (§5.3).
     tokens: int = 0
     tool_calls: int = 0
     duration_ms: int | None = None
@@ -928,13 +1013,14 @@ class WorkflowAgent(BaseModel):
     result_preview: str = ""
     started_at: datetime | None = None
     queued_at: datetime | None = None
-    last_activity_at: datetime | None = None  # Phase2: 该 agent jsonl 的 mtime（泳道右端 + 跳过水位）
+    last_activity_at: datetime | None = None  # Phase2: this agent jsonl's mtime (the swimlane's right end + skip
+    # watermark)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
 
 class StageTransition(BaseModel):
-    """Pipeline stage 转换事件。存独立表 pipeline_stage_history（append-only）。
+    """Pipeline stage transition event. Stored in its own table pipeline_stage_history (append-only).
 
     RETAINED (pipeline subsystem retired 2026-07): the pipeline runtime is gone and
     nothing writes this table any more, but the table itself is append-only history
@@ -964,9 +1050,9 @@ class ChannelMessage(BaseModel):
 
 
 class EcosystemRepoProfile(BaseModel):
-    """Claude 生态仓档案 — 广索引检索 + 周期更新。
+    """Claude ecosystem repo profile — broad index search + periodic updates.
 
-    项目隔离: project_id=None 表示全局/未归属，每个项目拥有独立的快照行。
+    Project isolation: project_id=None means global/unowned; each project has its own snapshot row.
     """
 
     id: str = Field(default_factory=_new_id)
@@ -987,20 +1073,22 @@ class EcosystemRepoProfile(BaseModel):
     one_line_summary: str | None = None
     last_scanned_at: datetime = Field(default_factory=utc_now)
     first_seen_at: datetime = Field(default_factory=utc_now)
-    # Stage B 扩展字段
-    pushed_at: datetime | None = None  # GitHub 仓最后 push 时间，用于判活跃度
-    is_archived: bool = False  # > 365 天未 push 标记为 deprecated
-    scan_run_id: str | None = None  # 关联到扫描批次 EcosystemScanRun.id
-    description_excerpt: str = ""  # 描述摘要，用于二次相关性过滤
-    # v1.5.0-A 扩展：渐进式漏斗 Stage 0 浅扫 + 失败追踪 + 活跃集
-    shallow_summary: str = ""  # Stage 0 agent 浅扫总结（200-400 字，区分 description_excerpt）
-    last_shallow_refreshed_at: datetime | None = None  # 上次浅扫刷新时间
-    is_deleted: bool = False  # GitHub 端仓被删（API 404）
-    is_private_now: bool = False  # GitHub 端仓被设私密（API 403 forbidden, not rate limit）
-    last_fetch_error: str = ""  # 最近一次抓取错误的短消息
-    fetch_failure_count: int = 0  # 累计失败次数
-    is_active: bool = True  # DEPRECATED v1.6.0 P1.A: 请用 last_active_status 代替。此字段仅向后兼容保留。
-    active_rank: int | None = None  # 当前项目内排名（按 stars，None=不在 top_n）
+    # Stage B extension fields
+    pushed_at: datetime | None = None  # the GitHub repo's last push time, used to judge activity
+    is_archived: bool = False  # no push for > 365 days marks it deprecated
+    scan_run_id: str | None = None  # associated with the scan batch EcosystemScanRun.id
+    description_excerpt: str = ""  # description excerpt, used for secondary relevance filtering
+    # v1.5.0-A extension: progressive funnel Stage 0 shallow scan + failure tracking + active set
+    shallow_summary: str = ""  # Stage 0 agent shallow-scan summary (200-400 characters, distinct from
+    # description_excerpt)
+    last_shallow_refreshed_at: datetime | None = None  # the last shallow-scan refresh time
+    is_deleted: bool = False  # the repo was deleted on the GitHub side (API 404)
+    is_private_now: bool = False  # the repo was made private on the GitHub side (API 403 forbidden, not rate limit)
+    last_fetch_error: str = ""  # a short message of the most recent fetch error
+    fetch_failure_count: int = 0  # cumulative failure count
+    is_active: bool = True  # DEPRECATED v1.6.0 P1.A: use last_active_status instead. This field is kept only for
+    # backward compatibility.
+    active_rank: int | None = None  # rank within the current project (by stars; None = not in top_n)
     # v1.6.0-P0.4: NormalizedSignal fields (written by index_update)
     canonical_id: str | None = None  # "github/owner/repo" cross-source dedup key
     source_kind: str = "github"  # which data source produced this profile
@@ -1016,19 +1104,20 @@ class EcosystemRepoProfile(BaseModel):
     # v1.6.0-P1.C-1: JSON array of query strings that discovered this repo
     discovered_via_queries: list[str] = Field(default_factory=list)
     # v1.6.1 multi-source: list of source entries [{kind,id,stars/likes,url,last_seen_at}, ...]
-    # 一个 profile 多个来源（GitHub + HF Space + GitLab）合并显示，不再为同项目建多 profile
+    # One profile merges multiple sources (GitHub + HF Space + GitLab) for display, instead of building multiple
+    # profiles for the same project
     sources: list[dict] = Field(default_factory=list)
     # v1.6.1 primary source — decides canonical URL/title; default 'github' for legacy rows
     primary_source: str = "github"
 
 
 # ============================================================
-# Ecosystem 扩展模型 (Stage B)
+# Ecosystem extension models (Stage B)
 # ============================================================
 
 
 class EcosystemDeepReviewStatus(enum.StrEnum):
-    """深扫报告状态。"""
+    """Deep-scan report status."""
 
     QUEUED = "queued"
     RUNNING = "running"
@@ -1037,7 +1126,7 @@ class EcosystemDeepReviewStatus(enum.StrEnum):
 
 
 class IntegrationRecommendation(enum.StrEnum):
-    """集成建议级别。"""
+    """Integration recommendation level."""
 
     INTEGRATE = "integrate"
     REFERENCE = "reference"
@@ -1046,7 +1135,7 @@ class IntegrationRecommendation(enum.StrEnum):
 
 
 class DemoResult(enum.StrEnum):
-    """Demo 运行结果。"""
+    """Demo run result."""
 
     SUCCESS = "success"
     FAIL = "fail"
@@ -1054,7 +1143,7 @@ class DemoResult(enum.StrEnum):
 
 
 class EcosystemTagCategory(enum.StrEnum):
-    """生态标签分类。"""
+    """Ecosystem tag category."""
 
     CAPABILITY = "capability"
     TECH_STACK = "tech_stack"
@@ -1063,10 +1152,10 @@ class EcosystemTagCategory(enum.StrEnum):
 
 
 class EcosystemTagSource(enum.StrEnum):
-    """标签来源。
+    """Tag source.
 
-    v1.5.0-A 新增 LIFECYCLE — 用于漏斗 Stage 3 标记 reference / integrated /
-    deleted / private_now / evaluating，由 ecosystem lifecycle 自动写入。
+    v1.5.0-A adds LIFECYCLE — used by funnel Stage 3 to mark reference / integrated /
+    deleted / private_now / evaluating, written automatically by the ecosystem lifecycle.
     """
 
     GITHUB_TOPIC = "github_topic"
@@ -1077,11 +1166,11 @@ class EcosystemTagSource(enum.StrEnum):
 
 
 class EcosystemStageStatus(enum.StrEnum):
-    """生态仓深扫漏斗 stage 状态 (v1.5.0)。
+    """Ecosystem repo deep-scan funnel stage status (v1.5.0).
 
-    渐进式累加：queued → shallow_done → architecture_done → debated →
-    referenced / integrated。每个 *_failed 子状态表示该阶段重试 5 次仍失败，
-    不影响其他 stage 推进。
+    Progressive accumulation: queued → shallow_done → architecture_done → debated →
+    referenced / integrated. Each *_failed sub-state means that stage failed even after 5 retries,
+    without affecting other stages' advancement.
     """
 
     QUEUED = "queued"
@@ -1130,7 +1219,7 @@ def derive_status_from_stage(
 
 
 class EcosystemRelationType(enum.StrEnum):
-    """仓与仓的关联类型。"""
+    """Repo-to-repo relation type."""
 
     INSPIRED_BY = "inspired_by"
     FORKS = "forks"
@@ -1140,7 +1229,7 @@ class EcosystemRelationType(enum.StrEnum):
 
 
 class EcosystemScanStrategy(enum.StrEnum):
-    """扫描策略。"""
+    """Scan strategy."""
 
     INCREMENTAL = "incremental"
     FULL = "full"
@@ -1176,9 +1265,9 @@ class RepoActiveStatus(enum.StrEnum):
 
 
 class EcosystemShallowBatch(BaseModel):
-    """浅扫批次 — 聚合一次批量浅扫的元信息与候选仓快照。
+    """Shallow-scan batch — aggregates the meta information and candidate repo snapshot of one batch shallow scan.
 
-    状态流转: pending_approval → (approved → running → completed) / cancelled
+    State flow: pending_approval → (approved → running → completed) / cancelled
     """
 
     id: str = Field(default_factory=_new_id)
@@ -1200,17 +1289,17 @@ class EcosystemShallowBatch(BaseModel):
 
 
 class EcosystemDeepReview(BaseModel):
-    """生态仓深扫报告 — 针对单个仓的结构化分析。
+    """Ecosystem repo deep-scan report — a structured analysis of a single repo.
 
-    FK 关系：repo_id → EcosystemRepoProfile.id (CASCADE)，report_id → Report.id (可选)。
-    项目隔离: project_id=None 表示全局/未归属，深扫报告归属于发起项目。
+    FK relations: repo_id → EcosystemRepoProfile.id (CASCADE), report_id → Report.id (optional).
+    Project isolation: project_id=None means global/unowned; a deep-scan report belongs to the initiating project.
     """
 
     id: str = Field(default_factory=_new_id)
     project_id: str | None = None
     repo_id: str  # FK -> EcosystemRepoProfile.id
     status: EcosystemDeepReviewStatus = EcosystemDeepReviewStatus.QUEUED
-    agent_id: str | None = None  # 执行此次深扫的 agent
+    agent_id: str | None = None  # the agent that executed this deep scan
     summary_md: str = ""
     architecture_md: str = ""
     demo_result: DemoResult | None = None
@@ -1224,31 +1313,31 @@ class EcosystemDeepReview(BaseModel):
     completed_at: datetime | None = None
     duration_seconds: float = 0.0
     created_at: datetime = Field(default_factory=utc_now)
-    # v1.5.0-A 扩展：渐进式漏斗 stage 状态机 + 关联会议/集成任务
-    stage_status: EcosystemStageStatus = EcosystemStageStatus.QUEUED  # 漏斗 stage 状态
-    integration_md: str = ""  # Stage 2 详细集成建议（不只是 enum）
-    shallow_completed_at: datetime | None = None  # Stage 0 完成时间
-    architecture_completed_at: datetime | None = None  # Stage 1 完成时间
-    debated_at: datetime | None = None  # Stage 2 辩论结束时间
-    stage3_completed_at: datetime | None = None  # Stage 3 referenced/integrated 完成时间
-    debate_meeting_id: str | None = None  # FK -> Meeting.id (Stage 2 触发会议)
-    integration_task_id: str | None = None  # FK -> Task.id (Stage 3 integrate 派任务)
-    # v1.5.3: worker pool claim 字段
-    claimed_by: str | None = None  # worker_id 字符串，认领中则非 None
-    claimed_at: datetime | None = None  # 认领时间戳
-    quality_score: int | None = None  # 0-100 审查质量分
-    quality_notes: str | None = None  # 审查理由
-    reviewed_by: str | None = None  # 质量审查者 worker_id
-    reviewed_at: datetime | None = None  # 质量审查完成时间
-    # v1.7.0: 关联浅扫批次
+    # v1.5.0-A extension: progressive funnel stage state machine + associated meeting/integration task
+    stage_status: EcosystemStageStatus = EcosystemStageStatus.QUEUED  # funnel stage status
+    integration_md: str = ""  # Stage 2 detailed integration suggestion (not just an enum)
+    shallow_completed_at: datetime | None = None  # Stage 0 completion time
+    architecture_completed_at: datetime | None = None  # Stage 1 completion time
+    debated_at: datetime | None = None  # Stage 2 debate end time
+    stage3_completed_at: datetime | None = None  # Stage 3 referenced/integrated completion time
+    debate_meeting_id: str | None = None  # FK -> Meeting.id (the Stage 2 triggering meeting)
+    integration_task_id: str | None = None  # FK -> Task.id (the Stage 3 integrate dispatch task)
+    # v1.5.3: worker pool claim fields
+    claimed_by: str | None = None  # worker_id string; non-None while claimed
+    claimed_at: datetime | None = None  # claim timestamp
+    quality_score: int | None = None  # 0-100 review quality score
+    quality_notes: str | None = None  # review rationale
+    reviewed_by: str | None = None  # the quality reviewer's worker_id
+    reviewed_at: datetime | None = None  # quality review completion time
+    # v1.7.0: associated shallow-scan batch
     batch_id: str | None = None  # FK -> EcosystemShallowBatch.id
 
 
 class EcosystemTag(BaseModel):
-    """能力标签字典 — 描述生态仓的能力 / 技术栈 / 成熟度 / 定位。"""
+    """Capability tag dictionary — describes an ecosystem repo's capabilities / tech stack / maturity / positioning."""
 
     id: str = Field(default_factory=_new_id)
-    name: str  # unique，如 "memory_system"
+    name: str  # unique, e.g. "memory_system"
     aliases: list[str] = Field(default_factory=list)
     category: EcosystemTagCategory
     description: str = ""
@@ -1256,11 +1345,11 @@ class EcosystemTag(BaseModel):
 
 
 class EcosystemRepoTag(BaseModel):
-    """仓-标签多对多关联。
+    """Repo-tag many-to-many association.
 
-    FK 关系：repo_id → EcosystemRepoProfile.id (CASCADE)，tag_id → EcosystemTag.id (RESTRICT)。
-    Unique constraint: (repo_id, tag_id)。
-    项目隔离: project_id 跟随 repo_id 所属项目。
+    FK relations: repo_id → EcosystemRepoProfile.id (CASCADE), tag_id → EcosystemTag.id (RESTRICT).
+    Unique constraint: (repo_id, tag_id).
+    Project isolation: project_id follows the project owning repo_id.
     """
 
     id: str = Field(default_factory=_new_id)
@@ -1269,15 +1358,15 @@ class EcosystemRepoTag(BaseModel):
     tag_id: str  # FK -> EcosystemTag.id
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     source: EcosystemTagSource = EcosystemTagSource.MANUAL
-    agent_id: str | None = None  # 打标人
+    agent_id: str | None = None  # the tagger
     created_at: datetime = Field(default_factory=utc_now)
 
 
 class EcosystemRelation(BaseModel):
-    """仓与仓的引用 / 衍生关系。
+    """Repo-to-repo reference / derivation relation.
 
-    FK 关系：from_repo_id / to_repo_id → EcosystemRepoProfile.id (CASCADE)。
-    项目隔离: 项目内部的研究产出，不跨项目共享。
+    FK relations: from_repo_id / to_repo_id → EcosystemRepoProfile.id (CASCADE).
+    Project isolation: research output internal to a project, not shared across projects.
     """
 
     id: str = Field(default_factory=_new_id)
@@ -1285,16 +1374,16 @@ class EcosystemRelation(BaseModel):
     from_repo_id: str  # FK -> EcosystemRepoProfile.id
     to_repo_id: str  # FK -> EcosystemRepoProfile.id
     relation_type: EcosystemRelationType
-    evidence: str = ""  # 来源说明
+    evidence: str = ""  # source note
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     agent_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
 
 class EcosystemScanRun(BaseModel):
-    """扫描批次记录 — 一次扫描任务的执行元数据与统计。
+    """Scan batch record — the execution metadata and statistics of one scan task.
 
-    项目隔离: 扫描历史归属于发起扫描的项目。
+    Project isolation: scan history belongs to the project that initiated the scan.
     """
 
     id: str = Field(default_factory=_new_id)
@@ -1315,39 +1404,40 @@ class EcosystemScanRun(BaseModel):
 
 
 class EcosystemRepoStatusSnapshot(BaseModel):
-    """每次 scan 的仓状态快照 (v1.5.0-A 决策 D — append-only 永不清理)。
+    """Per-scan repo state snapshot (v1.5.0-A decision D — append-only, never cleaned up).
 
-    用于追踪 stars 涨跌、push 频率、激活/退出活跃集等历史变化。
-    每次 scan 跑完为活跃集中每个仓写一行；用户可通过 UI 看历史 timeline。
+    Used to track historical changes such as star rises/falls, push frequency, and entering/leaving the active set.
+    After each scan, one row is written for every repo in the active set; users can view the historical timeline in the
+    UI.
     """
 
     id: str = Field(default_factory=_new_id)
     project_id: str | None = None
     repo_id: str  # FK -> EcosystemRepoProfile.id
-    scan_run_id: str  # FK -> EcosystemScanRun.id (触发的扫描批次)
+    scan_run_id: str  # FK -> EcosystemScanRun.id (the triggering scan batch)
     snapshot_at: datetime = Field(default_factory=utc_now)
     stars: int = 0
     pushed_at: datetime | None = None
-    is_archived: bool = False  # GitHub archived 状态
-    is_active: bool = True  # 当时是否在项目活跃集
-    summary_at_time: str = ""  # 当时的 shallow_summary (供历史比对)
+    is_archived: bool = False  # GitHub archived state
+    is_active: bool = True  # whether it was in the project's active set at the time
+    summary_at_time: str = ""  # the shallow_summary at the time (for historical comparison)
 
 
 class EcosystemProjectSettings(BaseModel):
-    """每个项目的 ecosystem 配置 (v1.5.0-A 决策 C — 项目自定义阈值)。
+    """Each project's ecosystem config (v1.5.0-A decision C — project-customized thresholds).
 
-    项目首次访问 ecosystem 时由系统自动创建默认行；
-    AI Team OS 项目使用更严格的默认值 (min_stars=5000, top_n=200)。
+    When a project first accesses the ecosystem, the system automatically creates a default row;
+    the AI Team OS project uses stricter defaults (min_stars=5000, top_n=200).
     """
 
-    project_id: str  # 主键 — 一项目一行
-    min_stars: int = 1000  # 入档阈值
-    top_n: int = 200  # 活跃集大小（按 stars 排序前 N）
-    refresh_interval_days: int = 7  # 浅扫刷新间隔
-    auto_shallow_on_archive: bool = True  # 入档时是否自动跑 Stage 0
-    focus_topics: list[str] = Field(default_factory=list)  # 关注 topic 白名单（空=全 topic）
-    focus_languages: list[str] = Field(default_factory=list)  # 关注语言白名单（空=全语言）
-    # 决策 F：测试驱动调整的并发配置
+    project_id: str  # primary key — one row per project
+    min_stars: int = 1000  # archiving threshold
+    top_n: int = 200  # active set size (top N sorted by stars)
+    refresh_interval_days: int = 7  # shallow-scan refresh interval
+    auto_shallow_on_archive: bool = True  # whether Stage 0 runs automatically on archiving
+    focus_topics: list[str] = Field(default_factory=list)  # followed-topic whitelist (empty = all topics)
+    focus_languages: list[str] = Field(default_factory=list)  # followed-language whitelist (empty = all languages)
+    # Decision F: test-driven adjusted concurrency config
     shallow_concurrency: int = 5
     deep_concurrency: int = 3
     # v1.6.1 Phase 2: migrated from scan_profile.alert_thresholds.max_new_per_scan
