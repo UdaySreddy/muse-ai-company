@@ -1,20 +1,22 @@
-"""HuggingFace Spaces fetcher — 多源生态档案补充。
+"""HuggingFace Spaces fetcher — multi-source ecosystem profile supplement.
 
-设计哲学（v1.6.1）：
-- HF Space 跟 GitHub repo 是**平行项目托管平台**，不是分发渠道
-- 同项目跨源时**合并到一个 profile**（sources 多源列表），不创建两份独立行
-- 通过 HF 公开 HTTP API（无需 token / SDK）抓取
+Design philosophy (v1.6.1):
+- An HF Space and a GitHub repo are **parallel project-hosting platforms**, not distribution channels
+- The same project across sources is **merged into one profile** (a multi-source sources list); no two independent rows
+are created
+- Fetched via the public HF HTTP API (no token / SDK needed)
 
-接入流程：
-    1. list_spaces(filter_tags=...) → 拿候选列表
-    2. get_space_detail(id) → 取 cardData + tags
-    3. extract_linked_github(readme) → 解析 GitHub URL（README 文本搜索）
+Integration flow:
+    1. list_spaces(filter_tags=...) → get the candidate list
+    2. get_space_detail(id) → get cardData + tags
+    3. extract_linked_github(readme) → parse the GitHub URL (README text search)
     4. merge_or_create_profile(repo, space, gh_url):
-       - 有 gh_url 且 github profile 存在 → append source 到现有
-       - 有 gh_url 但 github profile 不存在 → 反查 gh API 建 github profile + 双源
-       - 无 gh_url → 建独立 hf_space profile
+       - gh_url present and the github profile exists → append the source to the existing one
+       - gh_url present but the github profile does not exist → reverse-lookup the gh API to create a github profile +
+       dual sources
+       - No gh_url → create an independent hf_space profile
 
-API endpoints（公开，无需认证）：
+API endpoints (public, no auth):
 - GET https://huggingface.co/api/spaces?search=...&sort=likes&limit=N
 - GET https://huggingface.co/api/spaces/{owner}/{space}
 - GET https://huggingface.co/{owner}/{space}/raw/main/README.md
@@ -40,14 +42,14 @@ HF_API_BASE = "https://huggingface.co/api"
 HF_HUB_BASE = "https://huggingface.co"
 
 
-# 链接到 GitHub repo 的正则（兼容 https/http、有无 trailing slash / .git）
+# Regex for links to a GitHub repo (handles https/http, with or without trailing slash / .git)
 _GITHUB_URL_RE = re.compile(
     r"https?://github\.com/([A-Za-z0-9_.\-]+)/([A-Za-z0-9_.\-]+?)(?:\.git)?(?:/|$|\s|\")",
     re.IGNORECASE,
 )
 
 
-# Claude/Agent/MCP 生态相关的 HF tag 白名单（用于初步筛选，降低噪音）
+# Whitelist of Claude/Agent/MCP ecosystem-related HF tags (for preliminary filtering, reducing noise)
 DEFAULT_FILTER_TAGS = (
     "agent",
     "agents",
@@ -65,7 +67,7 @@ DEFAULT_FILTER_TAGS = (
 
 @dataclass
 class HfSpaceCandidate:
-    """单个 HF Space 候选记录（从 list API 拿到的轻量元数据）。"""
+    """A single HF Space candidate record (lightweight metadata from the list API)."""
 
     space_id: str  # "owner/space"
     likes: int
@@ -85,7 +87,7 @@ class HfSpaceCandidate:
 
 @dataclass
 class HfSpaceDetail:
-    """完整的 HF Space 详情（含 cardData + linked github URL）。"""
+    """The complete HF Space details (including cardData + the linked github URL)."""
 
     space_id: str
     likes: int
@@ -100,12 +102,12 @@ class HfSpaceDetail:
     private: bool
     host: str | None  # demo url
     linked_github: str | None = None  # "owner/repo" if found in README
-    readme_excerpt: str = ""  # 前 400 字
+    readme_excerpt: str = ""  # First 400 characters
     raw: dict[str, Any] = field(default_factory=dict)
 
 
 def _http_get(url: str, timeout: float = 15.0) -> str:
-    """GET 文本（用 urllib 避免额外依赖）。"""
+    """GET text (using urllib to avoid extra dependencies)."""
     req = Request(url, headers={"User-Agent": "ai-team-os/v1.6.1 ecosystem-hf-fetcher"})
     with urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8", errors="replace")
@@ -119,25 +121,25 @@ def _parse_iso8601(s: str | None) -> datetime | None:
     if not s:
         return None
     try:
-        # HF 返回 "2025-06-10T23:16:21.000Z" 格式
+        # HF returns the "2025-06-10T23:16:21.000Z" format
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
     except Exception:
         return None
 
 
 def extract_linked_github(readme_text: str) -> str | None:
-    """从 README 文本中提取首个 github.com/owner/repo 链接，返回 "owner/repo"。
+    """Extract the first github.com/owner/repo link from the README text, returning "owner/repo".
 
-    跳过 huggingface 自家无关链接、anchor、user-only URL。
+    Skips huggingface's own unrelated links, anchors, and user-only URLs.
     """
     if not readme_text:
         return None
     for m in _GITHUB_URL_RE.finditer(readme_text):
         owner, repo = m.group(1), m.group(2)
-        # 过滤明显不是 repo 的（如 github.com/sponsors/...）
+        # Filter things obviously not repos (e.g. github.com/sponsors/...)
         if owner.lower() in {"sponsors", "issues", "marketplace", "settings"}:
             continue
-        # 过滤 awesome-list 自我引用噪音（owner+repo 都太短或非 ASCII 异常）
+        # Filter awesome-list self-reference noise (owner+repo both too short, or non-ASCII anomalies)
         if len(repo) < 2:
             continue
         return f"{owner}/{repo}"
@@ -145,7 +147,7 @@ def extract_linked_github(readme_text: str) -> str | None:
 
 
 # ============================================================
-# 公开 API
+# Public API
 # ============================================================
 
 
@@ -155,9 +157,10 @@ def list_spaces_by_search(
     limit: int = 50,
     sort: str = "likes",
 ) -> list[HfSpaceCandidate]:
-    """调用 HF list API 拿候选列表。
+    """Call the HF list API to get the candidate list.
 
-    HF API 不支持 OR 多 tag 单次查询，需要每个 tag 单独请求再合并去重。
+    The HF API does not support OR multi-tag queries in a single call; each tag must be requested separately, then
+    merged and deduplicated.
     """
     seen_ids: set[str] = set()
     results: list[HfSpaceCandidate] = []
@@ -194,13 +197,13 @@ def list_spaces_by_search(
                     created_at=entry.get("createdAt"),
                 )
             )
-    # 按 likes 降序排
+    # Sort by likes descending
     results.sort(key=lambda c: c.likes, reverse=True)
     return results
 
 
 def get_space_detail(space_id: str, fetch_readme: bool = True) -> HfSpaceDetail | None:
-    """拿单个 Space 的详情 + 可选 README 解析 github 链接。"""
+    """Get a single Space's details + optionally parse the github link from the README."""
     try:
         d = _http_get_json(f"{HF_API_BASE}/spaces/{space_id}")
     except Exception as e:
@@ -219,7 +222,7 @@ def get_space_detail(space_id: str, fetch_readme: bool = True) -> HfSpaceDetail 
             readme_excerpt = readme[:400]
             linked_gh = extract_linked_github(readme)
         except Exception:
-            # README 可能不存在，不视为错误
+            # The README may not exist; not treated as an error
             pass
 
     return HfSpaceDetail(
@@ -242,7 +245,7 @@ def get_space_detail(space_id: str, fetch_readme: bool = True) -> HfSpaceDetail 
 
 
 def build_hf_source_entry(detail: HfSpaceDetail) -> dict[str, Any]:
-    """构造 sources 列表中的一个条目（HF Space 视角）。"""
+    """Build one entry of the sources list (HF Space perspective)."""
     return {
         "kind": "hf_space",
         "id": detail.space_id,
@@ -255,7 +258,7 @@ def build_hf_source_entry(detail: HfSpaceDetail) -> dict[str, Any]:
 
 
 def build_github_source_entry(repo_full_name: str, stars: int = 0) -> dict[str, Any]:
-    """构造 sources 列表中的一个条目（GitHub 视角，HF 关联到的）。"""
+    """Build one entry of the sources list (GitHub perspective, linked from HF)."""
     return {
         "kind": "github",
         "id": repo_full_name,
@@ -275,9 +278,9 @@ def dry_run_scan(
     tags: list[str] | None = None,
     limit: int = 20,
 ) -> dict[str, Any]:
-    """探索性扫描，返回候选 + 链接分析，不写库。
+    """Exploratory scan: returns candidates + link analysis, without writing to the DB.
 
-    用于 PoC #49 验证去重逻辑能否有效命中 github 项目。
+    Used by PoC #49 to verify the dedup logic can effectively hit github projects.
     """
     candidates = list_spaces_by_search(search=search, tags=tags, limit=limit)
     details: list[HfSpaceDetail] = []
@@ -305,7 +308,7 @@ def dry_run_scan(
 
 
 if __name__ == "__main__":
-    # 单文件 PoC 入口
+    # Single-file PoC entry point
     import sys
 
     if len(sys.argv) > 1 and sys.argv[1] == "dry_run":

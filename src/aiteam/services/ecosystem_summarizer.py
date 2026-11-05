@@ -110,12 +110,12 @@ class EcosystemSummarizer:
         repo: StorageRepository,
         project_id: str = "",
     ) -> None:
-        """初始化简报服务。
+        """Initialize the briefing service.
 
         Args:
-            repo: 数据访问层。
-            project_id: 可选项目作用域；空时透传 repo._project_scope。
-                所有读取均限定于此项目。
+            repo: the data access layer.
+            project_id: optional project scope; when empty, passes through repo._project_scope.
+                All reads are limited to this project.
         """
         self._repo = repo
         self._project_id = project_id or repo._project_scope or ""
@@ -193,7 +193,7 @@ class EcosystemSummarizer:
         if not tag:
             return _empty_section(
                 title="Ecosystem — By Tag",
-                reason="必须提供 tag 名称",
+                reason="A tag name must be provided",
             )
 
         profiles, _ = await self._repo.search_ecosystem_profiles_extended(
@@ -211,7 +211,7 @@ class EcosystemSummarizer:
         if not profiles:
             return _empty_section(
                 title=f"Ecosystem — Tag `{tag}`",
-                reason=f"没有仓被标注为 `{tag}`（include_archived={include_archived}）",
+                reason=f"No repository was tagged `{tag}` (include_archived={include_archived})",
             )
 
         # Pull deep-review IDs in a single batch — N+1-free fetch
@@ -259,8 +259,8 @@ class EcosystemSummarizer:
             return _empty_section(
                 title="Ecosystem — Top N",
                 reason=(
-                    f"没有匹配仓库（category={category or '(all)'}, "
-                    f"sort={sort}, n={n}）"
+                    f"No matching repositories (category={category or '(all)'}, "
+                    f"sort={sort}, n={n})"
                 ),
             )
 
@@ -376,25 +376,25 @@ def _render_weekly(stats: WeeklyStats) -> str:
     lines.append("# Ecosystem Weekly Briefing")
     lines.append("")
     lines.append(
-        f"_窗口: {_iso_date(stats.window_start)} → {_iso_date(stats.window_end)} "
-        f"({stats.window_days} 天)_"
+        f"_Window: {_iso_date(stats.window_start)} → {_iso_date(stats.window_end)} "
+        f"({stats.window_days} days)_"
     )
     lines.append("")
     lines.append("## Highlights")
     lines.append("")
-    lines.append(f"- 新入档: **{len(stats.new_profiles)}** 仓")
-    lines.append(f"- 更新扫描: **{len(stats.updated_profiles)}** 仓")
-    lines.append(f"- 完成深扫: **{len(stats.completed_deep_reviews)}** 仓")
-    lines.append(f"- 失活仓总数: **{len(stats.archived_profiles)}** 仓")
-    lines.append(f"- 扫描批次: **{len(stats.scan_runs)}** 次")
+    lines.append(f"- Newly archived: **{len(stats.new_profiles)}**")
+    lines.append(f"- Updated scans: **{len(stats.updated_profiles)}**")
+    lines.append(f"- Completed deep scans: **{len(stats.completed_deep_reviews)}**")
+    lines.append(f"- Total inactive repositories: **{len(stats.archived_profiles)}**")
+    lines.append(f"- Scan batches: **{len(stats.scan_runs)}**")
     lines.append("")
 
-    lines.append("## Top Movers (按 stars 排序，本周新增)")
+    lines.append("## Top Movers (sorted by stars, new this week)")
     lines.append("")
     if not stats.top_movers:
-        lines.append("_本周无新增仓库_")
+        lines.append("_No new repositories this week_")
     else:
-        lines.append("| Stars | Repo | Language | 一句话定位 |")
+        lines.append("| Stars | Repo | Language | One-line summary |")
         lines.append("|-------|------|----------|-----------|")
         for p in stats.top_movers:
             lines.append(
@@ -403,10 +403,10 @@ def _render_weekly(stats: WeeklyStats) -> str:
             )
     lines.append("")
 
-    lines.append("## 完成深扫 (本周)")
+    lines.append("## Completed Deep Scans (this week)")
     lines.append("")
     if not stats.completed_deep_reviews:
-        lines.append("_本周无深扫完成_")
+        lines.append("_No deep scans completed this week_")
     else:
         for r in stats.completed_deep_reviews:
             lines.append(
@@ -415,10 +415,10 @@ def _render_weekly(stats: WeeklyStats) -> str:
             )
     lines.append("")
 
-    lines.append("## 扫描批次")
+    lines.append("## Scan Batches")
     lines.append("")
     if not stats.scan_runs:
-        lines.append("_本周未触发扫描_")
+        lines.append("_No scans triggered this week_")
     else:
         lines.append("| started_at | strategy | added | updated | skipped | duration |")
         lines.append("|------------|----------|-------|---------|---------|----------|")
@@ -444,10 +444,10 @@ def _render_by_tag(
     lines.append(f"# Ecosystem — Tag `{tag}`")
     lines.append("")
     lines.append(
-        f"_共 **{len(profiles)}** 仓 · include_archived={include_archived}_"
+        f"_**{len(profiles)}** repositories in total · include_archived={include_archived}_"
     )
     lines.append("")
-    lines.append("| Stars | Repo | Language | 一句话定位 | DeepReview |")
+    lines.append("| Stars | Repo | Language | One-line summary | DeepReview |")
     lines.append("|-------|------|----------|-----------|------------|")
     for p in profiles:
         review = deep_review_map.get(p.id)
@@ -474,19 +474,19 @@ def _render_top_n(
     lines.append(f"# Ecosystem Top {len(profiles)} — sort=`{sort}`")
     lines.append("")
     lines.append(
-        f"_category={title_cat} · 备选池={total_pool} · 实际展示={len(profiles)}_"
+        f"_category={title_cat} · candidate pool={total_pool} · shown={len(profiles)}_"
     )
     lines.append("")
     if sort == "pushed_at":
-        lines.append("| # | Repo | PushedAt | Stars | Language | 一句话定位 |")
+        lines.append("| # | Repo | PushedAt | Stars | Language | One-line summary |")
         lines.append("|---|------|----------|-------|----------|-----------|")
     elif sort == "scan_freshness":
         lines.append(
-            "| # | Repo | LastScannedAt | Stars | Language | 一句话定位 |"
+            "| # | Repo | LastScannedAt | Stars | Language | One-line summary |"
         )
         lines.append("|---|------|---------------|-------|----------|-----------|")
     else:  # stars
-        lines.append("| # | Repo | Stars | Language | 一句话定位 |")
+        lines.append("| # | Repo | Stars | Language | One-line summary |")
         lines.append("|---|------|-------|----------|-----------|")
 
     for idx, p in enumerate(profiles, start=1):
@@ -526,39 +526,39 @@ def _render_health(stats: HealthStats) -> str:
     lines: list[str] = []
     lines.append("# Ecosystem Platform Health")
     lines.append("")
-    lines.append("## 数据规模")
+    lines.append("## Data Scale")
     lines.append("")
-    lines.append(f"- 仓档案总数: **{stats.total_profiles}**")
-    lines.append(f"- 标签字典: **{stats.total_tags_in_dictionary}** 项")
-    lines.append(f"- 扫描批次: **{stats.total_scan_runs}** 次")
-    lines.append(f"- 深扫报告: **{stats.total_deep_reviews}** 份")
+    lines.append(f"- Total repository profiles: **{stats.total_profiles}**")
+    lines.append(f"- Tag dictionary: **{stats.total_tags_in_dictionary}** entries")
+    lines.append(f"- Scan batches: **{stats.total_scan_runs}**")
+    lines.append(f"- Deep-scan reports: **{stats.total_deep_reviews}**")
     if stats.deep_reviews_by_status:
         breakdown = ", ".join(
             f"{k}={v}" for k, v in sorted(stats.deep_reviews_by_status.items())
         )
-        lines.append(f"  - 状态分布: {breakdown}")
+        lines.append(f"  - Status distribution: {breakdown}")
     lines.append("")
-    lines.append("## 健康度")
+    lines.append("## Health")
     lines.append("")
-    lines.append(f"- 失活仓占比: **{archive_pct}%** ({stats.archived_profiles}/{stats.total_profiles})")
+    lines.append(f"- Inactive repository share: **{archive_pct}%** ({stats.archived_profiles}/{stats.total_profiles})")
     lines.append(
-        f"- 0 标签仓占比: **{zero_tag_pct}%** "
+        f"- Zero-tag repository share: **{zero_tag_pct}%** "
         f"({stats.profiles_with_zero_tags}/{stats.total_profiles})"
     )
-    lines.append(f"- 平均标签数 / 仓: **{stats.avg_tags_per_profile}**")
+    lines.append(f"- Average tags per repository: **{stats.avg_tags_per_profile}**")
     if stats.last_scan_run_at:
         age = utc_now() - _ensure_tz(stats.last_scan_run_at)
         lines.append(
-            f"- 最近一次扫描: {_iso_dt(stats.last_scan_run_at)} "
-            f"({int(age.total_seconds() / 3600)} 小时前)"
+            f"- Most recent scan: {_iso_dt(stats.last_scan_run_at)} "
+            f"({int(age.total_seconds() / 3600)} hours ago)"
         )
     else:
-        lines.append("- 最近一次扫描: _无_")
+        lines.append("- Most recent scan: _none_")
     lines.append("")
     if stats.top_tags:
-        lines.append("## Top 标签 (按关联仓数)")
+        lines.append("## Top Tags (by number of associated repositories)")
         lines.append("")
-        lines.append("| 标签 | 关联仓数 |")
+        lines.append("| Tag | Associated repositories |")
         lines.append("|------|---------|")
         for name, count in stats.top_tags:
             lines.append(f"| `{name}` | {count} |")

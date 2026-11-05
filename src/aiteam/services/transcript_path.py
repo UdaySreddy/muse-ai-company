@@ -1,27 +1,33 @@
-"""transcript 路径派生器 —— 把归因链的前四段从文件路径里读出来。
+"""Transcript path deriver — reads the first four segments of the attribution chain out of a file path.
 
-CC 把每一份 transcript 放在一个**结构化**的位置上，路径本身就编码了归因链：
+CC places every transcript in a **structured** location, and the path itself encodes the attribution chain:
 
-    ~/.claude/projects/<slug>/<session_id>.jsonl                              主会话
-    ~/.claude/projects/<slug>/<session_id>/subagents/agent-<cc_id>.jsonl      直派子 agent
+    ~/.claude/projects/<slug>/<session_id>.jsonl                              main session
+    ~/.claude/projects/<slug>/<session_id>/subagents/agent-<cc_id>.jsonl      directly dispatched sub-agent
     ~/.claude/projects/<slug>/<session_id>/subagents/workflows/wf_<id>/agent-<cc_id>.jsonl
 
-也就是说 ``project_slug / session_id / wf_id / cc_agent_id`` 四段**不需要新增任何
-采集**，解析路径即可得到。这与 ``hook_translator._extract_workflow_run_id`` 已在用
-的招式同源——那里只取了 wf_id，本模块把同一条信息用满。
+That is, the four segments ``project_slug / session_id / wf_id / cc_agent_id`` **need no new
+collection** — parsing the path yields them. This is from the same origin as the trick
+``hook_translator._extract_workflow_run_id`` already uses
+— that place took only the wf_id; this module uses the same information to the full.
 
-两条必须写死的边界：
+Two boundaries that must be written in stone:
 
-* **slug 只作交叉校验，绝不用于判定项目归属。** slug 是 ``re.sub(r'[^a-zA-Z0-9]',
-  '-', root_path)`` 的产物，是**有损**的：``~/Desktop/文档`` 与 ``~/Desktop/资料``
-  会塌成同一个 ``-Users-x-Desktop---``。生产库实测 6 个 slug 里就有两个是这种非
-  ASCII 塌缩形态（525 行 + 191 行）。归属一律以 ``agents.project_id`` 为准，slug
-  只用来在回填报告里标出"路径与登记项目对不上"的行供人审。
-* **解析不出就返回 None。** 不猜、不兜底、不填默认值——no-data 与 zero 必须分得开
-  （Council 纪律①）。
+* **The slug serves only for cross-checking, never for judging project ownership.** The slug is the product of
+``re.sub(r'[^a-zA-Z0-9]',
+  '-', root_path)`` and is **lossy**: two different Chinese directory names under ``~/Desktop/``
+  would collapse into the same ``-Users-x-Desktop---``. Measured in the production DB, 2 of 6 slugs are exactly this
+  kind of non-
+  ASCII collapsed shape (525 rows + 191 rows). Ownership uniformly follows ``agents.project_id``; the slug
+  is used only to mark, in the backfill report, the rows whose "path does not match the registered project", for human
+  review.
+* **When it cannot be parsed, return None.** No guessing, no fallback, no default filling — no-data and zero must be
+distinguishable
+  (Council discipline 1).
 
-纯函数、无 IO：本模块只看字符串，不碰磁盘。文件是否还在由调用方按需自己判断，
-这样解析器可以被单测钉死，也能在没有那些文件的机器上跑。
+Pure functions, no IO: this module looks only at strings and never touches the disk. Whether a file still exists is
+judged by the caller as needed,
+so the parser can be pinned by unit tests and can also run on machines without those files.
 """
 
 from __future__ import annotations
@@ -29,12 +35,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-# session 目录名就是 CC 的 session uuid。写成宽松的 36 字符十六进制/连字符形态而不是
-# 严格 UUID v4：CC 近期的会话 id 里已经出现 ``019f8b2f-1617-71d1-...`` 这种 v7 风格
-# （生产库实测），按 v4 的版本位卡会把它们判死。
+# The session directory name is CC's session uuid. It is written as a loose 36-character hex/hyphen shape rather than
+# a strict UUID v4: recent CC session ids already include v7-style ones like ``019f8b2f-1617-71d1-...``
+# (measured in the production DB); gating on the v4 version bits would condemn them.
 _SESSION_RE = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 
-# 子 agent（含 workflow 扇出）的完整形态。wf 段可选。
+# The complete shape for sub-agents (including workflow fan-out). The wf segment is optional.
 _SUBAGENT_RE = re.compile(
     r"/projects/(?P<slug>[^/]+)"
     rf"/(?P<session_id>{_SESSION_RE})"
@@ -43,7 +49,7 @@ _SUBAGENT_RE = re.compile(
     r"agent-(?P<cc_agent_id>[^/]+)\.jsonl$"
 )
 
-# 主会话：<slug>/<session_id>.jsonl，顶层直挂，没有 subagents 段。
+# Main session: <slug>/<session_id>.jsonl, hung directly at the top level, with no subagents segment.
 _MAIN_RE = re.compile(
     r"/projects/(?P<slug>[^/]+)"
     rf"/(?P<session_id>{_SESSION_RE})\.jsonl$"
@@ -52,29 +58,33 @@ _MAIN_RE = re.compile(
 
 @dataclass(frozen=True)
 class TranscriptRef:
-    """一份 transcript 的路径派生结果。
+    """The path-derivation result of one transcript.
 
-    ``kind`` 区分主会话与子 agent —— 两者的用量量级差两三个数量级（单个主会话实测
-    8.5 亿 vs 子 agent 中位百万级），混在一个榜里子 agent 会被彻底淹没，所以口径上
-    必须能分开（设计 §3.3）。
+    ``kind`` distinguishes main sessions from sub-agents — the two's usage magnitudes differ by two to three orders of
+    magnitude (a single main session measured
+    850M vs a sub-agent median in the millions); mixed into one leaderboard, sub-agents would be completely drowned, so
+    the caliber
+    must be able to separate them (design §3.3).
     """
 
     kind: str  # "main" | "subagent"
     project_slug: str
     session_id: str
-    wf_id: str | None  # 仅 workflow 扇出的子 agent 有值
-    cc_agent_id: str | None  # 仅子 agent 有值
+    wf_id: str | None  # only workflow fan-out sub-agents have a value
+    cc_agent_id: str | None  # only sub-agents have a value
 
 
 def parse_transcript_path(path: str | None) -> TranscriptRef | None:
-    """从 transcript 路径派生 (slug, session_id, wf_id, cc_agent_id)。
+    """Derive (slug, session_id, wf_id, cc_agent_id) from a transcript path.
 
-    认三种形态（见模块 docstring）。任何一种都不匹配时返回 None —— 包括空串、
-    不含 ``/projects/`` 的路径、以及 session 段不是 uuid 形态的路径。
+    Recognizes three shapes (see the module docstring). Returns None when none match — including empty strings,
+    paths not containing ``/projects/``, and paths whose session segment is not uuid-shaped.
 
-    Windows 反斜杠先归一成正斜杠再匹配（与 ``_extract_workflow_run_id`` 同一处理）。
-    路径**不必**位于 ``~/.claude/projects`` 之下：只要含 ``/projects/<slug>/...``
-    的相对形状即可，这样测试与副本目录都能解析。
+    Windows backslashes are first normalized to forward slashes before matching (the same handling as
+    ``_extract_workflow_run_id``).
+    The path **need not** be under ``~/.claude/projects``: it only needs the relative shape containing
+    ``/projects/<slug>/...``,
+    so tests and replica directories can both be parsed.
     """
     if not path:
         return None
@@ -104,23 +114,27 @@ def parse_transcript_path(path: str | None) -> TranscriptRef | None:
 
 
 def derive_session_id(path: str | None) -> str | None:
-    """只要 session_id 的窄入口（SubagentStop 顺手写这一列时用）。"""
+    """A narrow entry point for session_id only (used when SubagentStop writes this column on the side)."""
     ref = parse_transcript_path(path)
     return ref.session_id if ref else None
 
 
 def slug_matches_root(slug: str, root_path: str | None) -> bool:
-    """交叉校验：路径里的 slug 是否与登记项目的 root_path 相符。
+    """Cross-check: whether the slug in the path matches the registered project's root_path.
 
-    **只回答"对不对得上"，不回答"属于谁"。** slug 是有损映射，多个不同目录可以
-    塌成同一个 slug，所以 True 不构成归属证据；False 才有信息量——它说明这一行的
-    ``project_id`` 与它 transcript 的实际落点不一致，值得人看一眼（回填报告里以
-    ``slug_mismatch`` 标出，但不因此改写任何归属列）。
+    **Answers only "does it match", not "whose is it".** The slug is a lossy mapping: multiple different directories can
+    collapse into the same slug, so True does not constitute ownership evidence; False is the informative one — it shows
+    this row's
+    ``project_id`` disagrees with its transcript's actual landing spot and is worth a human look (in the backfill report
+    it is
+    marked with ``slug_mismatch``, but no ownership column is rewritten because of it).
 
-    slug 的算法**不在这里复写**：函数内延迟 import ``session_probe.project_slug``，
-    因为 CC 的命名规则一变就得跟着改，两处各写一份必然漂移（§1.3 已在合成行过滤上
-    吃过同样的亏）。延迟 import 是为了不让 services 层在 import 期把 api 层整个拖
-    进来。
+    The slug algorithm is **not rewritten here**: the function lazily imports ``session_probe.project_slug``,
+    because when CC's naming rules change it must change with them, and two separately written copies inevitably drift
+    (§1.3 already suffered the same
+    on synthetic-row filtering). The lazy import exists so the services layer does not drag the whole api layer in at
+    import time.
+
     """
     if not slug or not root_path:
         return False

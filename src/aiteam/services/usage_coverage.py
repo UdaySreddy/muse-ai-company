@@ -1,12 +1,13 @@
-"""覆盖率的分母定义与未归因分类 —— token 用量归因 v1 §4.1 / §3.4。
+"""The coverage denominator definition and the unattributed classification — token usage attribution v1 §4.1 / §3.4.
 
-**为什么单独一个模块**：这两样东西必须能被 storage 层直接引用，而同域的
-``services/token_attribution.py`` 为了共用合成行常量 import 了 ``api.session_probe``
-（阶段 0 刻意为之，见那边注释），顺着 api 层一路 import 回 ``storage.repository``
-形成环。分母的定义不该为了住在"看起来更对"的文件里而变成延迟导入 —— 它是这套
-东西里最需要一眼看见的一段。
+**Why a separate module**: these two things must be directly referenceable by the storage layer, while the same-domain
+``services/token_attribution.py`` imports ``api.session_probe`` to share the synthetic-row constants
+(deliberate in stage 0, see the comments there), and following the api layer back imports ``storage.repository``,
+forming a cycle. The denominator definition should not become a lazy import just to live in the file that "looks more
+right" — within this set of
+things, it is the segment that most needs to be visible at a glance.
 
-本模块只依赖 ``pathlib`` 与 ``aiteam.types``，任何时候都能被安全导入。
+This module depends only on ``pathlib`` and ``aiteam.types``, and can be safely imported at any time.
 """
 
 from __future__ import annotations
@@ -17,33 +18,39 @@ from pathlib import Path
 from aiteam.types import UnattributedReason
 
 # ---------------------------------------------------------------------------
-# 分母（§4.1）
+# Denominator (§4.1)
 # ---------------------------------------------------------------------------
-# 分母是唯一能被悄悄做假的地方（R2）：把没数据的行移出分母，覆盖率就恒等于 100%，
-# 数字会变好看而且完全说得通。所以它只在这里定义一次，由 repository 的聚合方法
-# 引用，并有单测逐条钉住取值。
+# The denominator is the only place that can be quietly faked (R2): move the no-data rows out of the denominator and
+# coverage is permanently 100%,
+# the numbers look better and it all sounds entirely plausible. So it is defined only once, here, and referenced by the
+# repository's aggregation methods,
+# with unit tests pinning each value.
 #
-# 判据：``agents.role`` 不等于这个字面量即算一次派工。全库实测 2,451 行，其中
-# 2,343 行（96%）是 workflow 派生的 ``workflow-subagent``。
+# Criterion: ``agents.role`` not equal to this literal counts as one dispatch. Measured across the whole DB: 2,451 rows,
+# of which
+# 2,343 rows (96%) are the workflow-derived ``workflow-subagent``.
 #
-# **刻意不采纳** ``api/agent_reuse.py`` 的 ``_EXCLUDED_ROLES``（那里把
-# ``workflow-subagent`` 一并排除）：那是"谁能被复用"的治理口径，排除的是不由人
-# 管理的行。而在归因口径里，workflow 派工**就是派工** —— 它烧掉的 token 一点不比
-# 直派的少。把占 96% 的群体移出分母，覆盖率立刻从 78% 跳到很好看的数字，而那正是
-# R2 点名要防的形态。
+# **Deliberately not adopted**: ``api/agent_reuse.py``'s ``_EXCLUDED_ROLES`` (which also
+# excludes ``workflow-subagent``): that is the "who may be reused" governance caliber, excluding rows not managed
+# by people. In the attribution caliber, a workflow dispatch **is a dispatch** — the tokens it burns are no fewer than
+# a direct dispatch's. Moving the group that makes up 96% out of the denominator makes coverage jump from 78% to a very
+# pretty number at once — and that is exactly
+# the shape R2 names as the thing to guard against.
 LEADER_ROLE = "leader"
 
 
 # ---------------------------------------------------------------------------
-# 未归因分类（§3.4）
+# Unattributed classification (§3.4)
 # ---------------------------------------------------------------------------
 
 
 def transcript_exists(path: str) -> bool:
-    """transcript 文件今天还在不在磁盘上。
+    """Whether the transcript file is still on disk today.
 
-    单独成函数是为了让测试能替换它：未归因分类要区分"救得回"与"救不回"，而这个
-    区分完全取决于文件系统的即时状态 —— 不测这条分支等于不测这张表。
+    It is a separate function so tests can replace it: the unattributed classification must distinguish "recoverable"
+    from "unrecoverable", and this
+    distinction depends entirely on the file system's instantaneous state — not testing this branch equals not testing
+    this table.
     """
     if not path:
         return False
@@ -58,15 +65,16 @@ def classify_unattributed(
     *,
     file_probe: Callable[[str], bool] = transcript_exists,
 ) -> str:
-    """一行没测到用量的派工，属于 §3.4 四类未归因里的哪一类。
+    """Which of §3.4's four unattributed classes a dispatch whose usage was not measured belongs to.
 
-    只回答"为什么没测到"，不回答"要不要测" —— 调用方已经确认这一行的
-    ``tokens_measured_at`` 是 NULL 才会问到这里。
+    It answers only "why was it not measured", not "should it be measured" — the caller has already confirmed this row's
+    ``tokens_measured_at`` is NULL before asking here.
 
-    三个返回值的处置完全不同，这正是这张表存在的理由（§3.4：让"覆盖率 78%"变成
-    一句可行动的话）。``NOT_YET_MEASURED`` 跑一次回采就能补上；另外两个补不上，
-    而且 ``TRANSCRIPT_GONE`` 随时间只增不减 —— 回采的窗口正在关闭（R6）。把它们
-    合并成一个"未归因"数字，看的人就无从判断该不该现在动手。
+    The three return values are handled completely differently, which is exactly why this table exists (§3.4: turning
+    "coverage 78%" into
+    one actionable sentence). ``NOT_YET_MEASURED`` is made up by one re-collection run; the other two cannot be made up,
+    and ``TRANSCRIPT_GONE`` only grows over time — the re-collection window is closing (R6). Merging them
+    into a single "unattributed" number leaves the reader unable to judge whether to act now.
     """
     if not transcript_path:
         return UnattributedReason.NO_TRANSCRIPT_PATH.value

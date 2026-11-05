@@ -1,38 +1,39 @@
 """Ecosystem lifecycle trigger service (v1.5.0-C).
 
-Implements Stage 1/2/3 漏斗 trigger primitives described in
+Implements the Stage 1/2/3 funnel trigger primitives described in
 ``docs/v1.5.0-progressive-deep-review-design.md`` §2.2 / §2.3 / §2.4.
 
-Design principle (用户决策 A): **ecosystem 不重做工作流，只触发现有系统**.
-- Stage 2 辩论 → 走现有 meeting/debate_start (本服务返回会议 payload，
-  由 MCP 工具/Leader 调 ``debate_start``)。
-- Stage 3 集成 → 走现有 task_create (本服务返回 task payload，由 MCP 工具
-  调 ``/api/projects/{id}/tasks``)。
+Design principle (user decision A): **the ecosystem does not redo workflows; it only triggers the existing systems**.
+- Stage 2 debate → goes through the existing meeting/debate_start (this service returns the meeting payload,
+  and the MCP tool/Leader calls ``debate_start``).
+- Stage 3 integration → goes through the existing task_create (this service returns the task payload, and the MCP tool
+  calls ``/api/projects/{id}/tasks``).
 
 Service operations
 ------------------
-1. ``request_deep_review_batch`` — Stage 1 启动: 按 tags 拉候选 → 每仓建
-   ``EcosystemDeepReview`` row + 推进 stage_status=QUEUED → 返回 backend-architect
-   sub-agent 的 ``DispatchIntent`` 列表 (architecture_md 写回路径)。
-2. ``apply_architecture_md`` — agent 回写 architecture markdown 后推进
-   ``stage_status=architecture_done``，记 ``architecture_completed_at``。
-3. ``trigger_debate`` — Stage 2 启动: 候选 review 必须处于 architecture_done。
-   返回 ``DebateDispatchIntent`` (含 debate_start 参数 + 关联 review_ids)，
-   由 MCP 工具/Leader 调 ``debate_start`` 后再调 ``link_debate_meeting`` 写回。
-4. ``link_debate_meeting`` — 关联会议 id 到所有相关 review，便于 hook 反向写回。
-5. ``apply_debate_result`` — Stage 2 结论回写: agent 写 risks/learnings/integration
-   后推进 ``stage_status=debated``。
-6. ``mark_as_reference`` — Stage 3 reference 路径: 加 lifecycle:reference tag +
-   推进 ``stage_status=referenced``。
-7. ``start_integration`` — Stage 3 integrate 路径: 返回 ``TaskDispatchIntent``
-   (task_create 参数)，由 MCP 工具调 ``/api/projects/{id}/tasks`` 后再调
-   ``link_integration_task`` 写回。
+1. ``request_deep_review_batch`` — Stage 1 launch: pulls candidates by tags → creates for each repo
+   an ``EcosystemDeepReview`` row + advances stage_status=QUEUED → returns the backend-architect
+   sub-agent's ``DispatchIntent`` list (the architecture_md write-back path).
+2. ``apply_architecture_md`` — after the agent writes back the architecture markdown, advances
+   ``stage_status=architecture_done`` and records ``architecture_completed_at``.
+3. ``trigger_debate`` — Stage 2 launch: candidate reviews must be at architecture_done.
+   Returns a ``DebateDispatchIntent`` (including the debate_start parameters + the associated review_ids),
+   and after the MCP tool/Leader calls ``debate_start``, ``link_debate_meeting`` writes it back.
+4. ``link_debate_meeting`` — Associates the meeting id to all related reviews, so hooks can write back in reverse.
+5. ``apply_debate_result`` — Stage 2 conclusion write-back: after the agent writes risks/learnings/integration,
+   advances ``stage_status=debated``.
+6. ``mark_as_reference`` — Stage 3 reference path: adds the lifecycle:reference tag +
+   advances ``stage_status=referenced``.
+7. ``start_integration`` — Stage 3 integrate path: returns a ``TaskDispatchIntent``
+   (task_create parameters); after the MCP tool calls ``/api/projects/{id}/tasks``, it then calls
+   ``link_integration_task`` to write back.
 
 Dispatch pattern
 ----------------
-Service 不 spawn agent / 不创建会议 / 不创建任务，而是返回 *Intent* dataclass
-让上层 (MCP 工具或 Leader) 实际触发，与 Stage 0 worker (``DispatchIntent``)
-保持一致，便于单元测试。
+The Service does not spawn agents / create meetings / create tasks; instead it returns *Intent* dataclasses
+for the upper layer (MCP tools or the Leader) to actually trigger, consistent with the Stage 0 worker
+(``DispatchIntent``),
+which facilitates unit testing.
 """
 
 from __future__ import annotations
@@ -62,7 +63,7 @@ logger = logging.getLogger(__name__)
 # Stage 1 timeout per design §3.1.
 STAGE1_TIMEOUT_SECONDS = 1800  # 30 min
 
-# Lifecycle seed tag names (设计稿 §4.5 — 5 个 lifecycle tags)
+# Lifecycle seed tag names (design draft §4.5 — 5 lifecycle tags)
 LIFECYCLE_TAG_REFERENCE = "reference"
 LIFECYCLE_TAG_INTEGRATED = "integrated"
 LIFECYCLE_TAG_EVALUATING = "evaluating"
@@ -79,21 +80,20 @@ LIFECYCLE_TAGS: tuple[str, ...] = (
 
 # Lifecycle tag descriptions for ensure-on-demand seeding.
 _LIFECYCLE_TAG_DESCRIPTIONS: dict[str, str] = {
-    LIFECYCLE_TAG_REFERENCE: "已被项目作为架构参考",
-    LIFECYCLE_TAG_INTEGRATED: "已被项目集成实施",
-    LIFECYCLE_TAG_EVALUATING: "正在评估辩论中",
-    LIFECYCLE_TAG_DELETED: "GitHub 端已删除",
-    LIFECYCLE_TAG_PRIVATE_NOW: "GitHub 端已设为私密",
+    LIFECYCLE_TAG_REFERENCE: "Used by the project as an architecture reference",
+    LIFECYCLE_TAG_INTEGRATED: "Integrated and implemented by the project",
+    LIFECYCLE_TAG_EVALUATING: "Under evaluation debate",
+    LIFECYCLE_TAG_DELETED: "Deleted on the GitHub side",
+    LIFECYCLE_TAG_PRIVATE_NOW: "Made private on the GitHub side",
 }
 
-# Keywords that hint a meeting is ecosystem-related (反向写入 hook 用).
+# Keywords that hint a meeting is ecosystem-related (used by the reverse-write hook).
 ECOSYSTEM_KEYWORDS: tuple[str, ...] = (
     "ecosystem",
-    "生态",
-    "生态库",
-    "生态仓",
+    "ecosystem library",
+    "ecosystem repo",
     "deep review",
-    "深扫",
+    "deep scan",
     "deep_review",
 )
 
@@ -103,9 +103,9 @@ ECOSYSTEM_KEYWORDS: tuple[str, ...] = (
 # ============================================================
 
 ARCHITECTURE_AGENT_PROMPT = """\
-你是 ecosystem Stage 1 architecture-analysis sub-agent (backend-architect)。
+You are an ecosystem Stage 1 architecture-analysis sub-agent (backend-architect).
 
-## 目标仓
+## Target repo
 - repo_full_name: {repo_full_name}
 - repo_id: {repo_id}
 - deep_review_id: {deep_review_id}
@@ -113,28 +113,28 @@ ARCHITECTURE_AGENT_PROMPT = """\
 - shallow_summary:
 {shallow_summary}
 
-## 研究目标
+## Research goal
 {research_goal}
 
-## 任务（800-1500 字中文 markdown）
+## Task (800-1500 words of English markdown)
 git clone --depth=1 https://github.com/{repo_full_name} /tmp/ecosystem-arch/{repo_id}
-分析仓的架构关键点，回答：
-1. **架构概览** — 核心分层、模块划分、入口在哪
-2. **关键文件清单** — 5-10 个最有研究价值的文件 + 一句话说明
-3. **核心模块** — 每个核心模块的职责、对外接口、依赖
-4. **集成切入点** — 我们若要借鉴/集成，从哪入手风险最小
+Analyze the repo's architecture key points and answer:
+1. **Architecture overview** — the core layering, module division, and where the entry points are
+2. **Key file list** — the 5-10 files most worth studying + a one-sentence note for each
+3. **Core modules** — each core module's responsibilities, external interfaces, and dependencies
+4. **Integration entry points** — if we want to learn from / integrate it, where to start with the least risk
 
-## 完成后调用
+## On completion, call
 ecosystem_apply_architecture_md(
     deep_review_id="{deep_review_id}",
-    architecture_md="<800-1500 字中文 markdown>",
+    architecture_md="<800-1500 words of English markdown>",
 )
 
-## 约束
-- 用 --depth=1 浅克隆节省空间。
-- 不要 commit / push 该仓代码到我们项目。
-- 不能完成时 (clone 失败 / 编码错)：调 ecosystem_apply_architecture_md 时
-  把 architecture_md 留空，加 error_message 字段，OS 会走 failed 分类。
+## Constraints
+- Use a --depth=1 shallow clone to save space.
+- Do not commit / push that repo's code into our project.
+- When you cannot complete it (clone failure / encoding error): when calling ecosystem_apply_architecture_md,
+  leave architecture_md empty and add an error_message field; the OS will take the failed classification.
 """
 
 
@@ -147,7 +147,7 @@ ecosystem_apply_architecture_md(
 class DeepReviewBatchIntent:
     """Stage 1 batch dispatch intent.
 
-    每个 entry 对应一个候选仓的 backend-architect agent dispatch。
+    Each entry corresponds to one candidate repo's backend-architect agent dispatch.
     """
 
     repo_id: str
@@ -162,9 +162,9 @@ class DeepReviewBatchIntent:
 class DebateDispatchIntent:
     """Stage 2 debate dispatch intent.
 
-    Returned by ``trigger_debate`` so the caller (MCP 工具/Leader) 可调用现有
-    ``debate_start`` MCP 工具或 ``meeting_create``。包含建议参与者和讨论 topic
-    模板，但具体角色/参会者由 Leader 在调用时决定。
+    Returned by ``trigger_debate`` so the caller (MCP tool/Leader) can call the existing
+    ``debate_start`` MCP tool or ``meeting_create``. Includes suggested participants and a discussion topic
+    template, but the concrete roles/participants are decided by the Leader at call time.
     """
 
     review_ids: list[str]
@@ -182,8 +182,8 @@ class TaskDispatchIntent:
     """Stage 3 integration task dispatch intent.
 
     Returned by ``start_integration`` so the caller can POST to
-    ``/api/projects/{project_id}/tasks``. 上层调完任务后调
-    ``link_integration_task`` 把 task.id 写回 review。
+    ``/api/projects/{project_id}/tasks``. After the upper layer creates the task, it calls
+    ``link_integration_task`` to write task.id back to the review.
     """
 
     review_id: str
@@ -226,12 +226,12 @@ class EcosystemLifecycleService:
         *,
         project_id: str = "",
     ) -> None:
-        """初始化生命周期服务。
+        """Initialize the lifecycle service.
 
         Args:
-            repo: 数据访问层。
-            project_id: 显式项目作用域；空时回退到 ``repo._project_scope``。
-                所有写回操作都限定于该项目。
+            repo: the data access layer.
+            project_id: explicit project scope; when empty, falls back to ``repo._project_scope``.
+                All write-back operations are limited to that project.
         """
         self._repo = repo
         self._project_id = project_id or repo._project_scope or ""
@@ -248,25 +248,25 @@ class EcosystemLifecycleService:
         limit: int = 20,
         research_goal: str = "",
     ) -> list[DeepReviewBatchIntent]:
-        """Stage 1 候选派遣：拉 active+shallow_done+tags 的仓 → 创建 review row。
+        """Stage 1 candidate dispatch: pull repos that are active+shallow_done+tags → create review rows.
 
         Args:
-            tags: 必填候选筛选标签列表（AND 语义）。空则报错。
-            min_stars: 项目设置的 min_stars 默认；显式传则覆盖。
-            limit: 最多拉多少候选 (默认 20)。
-            research_goal: 研究目标短语，注入 sub-agent prompt。
+            tags: the required candidate-filter tag list (AND semantics). Empty is an error.
+            min_stars: the project setting's min_stars default; an explicit value overrides it.
+            limit: how many candidates to pull at most (default 20).
+            research_goal: the research-goal phrase, injected into the sub-agent prompt.
 
         Returns:
-            每个候选仓一个 ``DeepReviewBatchIntent``，调用方据此 spawn
-            backend-architect agent。
+            One ``DeepReviewBatchIntent`` per candidate repo; the caller spawns from these
+            backend-architect agent.
 
         Raises:
-            ValueError: tags 为空时。
+            ValueError: when tags is empty.
         """
         if not tags:
-            raise ValueError("tags 不能为空：Stage 1 必须按标签筛选候选")
+            raise ValueError("tags must not be empty: Stage 1 must filter candidates by tags")
 
-        # 解析 min_stars 默认 (项目 settings)
+        # Resolve the min_stars default (project settings)
         if min_stars is None and self._project_id:
             settings = await self._repo.get_ecosystem_project_settings(
                 self._project_id
@@ -276,7 +276,7 @@ class EcosystemLifecycleService:
         if min_stars is None:
             min_stars = 1000
 
-        # 拉候选 — 必须 active + shallow_done + 包含所有 tags
+        # Pull candidates — must be active + shallow_done + contain all tags
         profiles, _ = await self._repo.search_ecosystem_profiles_extended(
             min_stars=min_stars,
             tags=list(tags),
@@ -290,10 +290,10 @@ class EcosystemLifecycleService:
         for p in profiles:
             if not p.is_active or p.is_deleted or p.is_private_now:
                 continue
-            # 必须有 shallow_summary 才进入 Stage 1
+            # A shallow_summary is required to enter Stage 1
             if not p.shallow_summary:
                 continue
-            # 同仓已有未完成 architecture review 则跳过
+            # Skip when the same repo already has an unfinished architecture review
             existing = await self._repo.list_deep_reviews_by_stage(
                 EcosystemStageStatus.ARCHITECTURE_DONE,
                 repo_id=p.id,
@@ -301,13 +301,15 @@ class EcosystemLifecycleService:
             )
             if existing:
                 continue
-            # D5 收敛：在飞判据只看权威轴 stage_status（status 已停写 running，
-            # 旧 status∈{QUEUED,RUNNING} 条件对新行恒假会导致重复派遣）。
-            # 两种在飞形态：
-            #   ① stage=queued —— Stage 0 浅扫仍在飞；
-            #   ② stage=shallow_done 且 architecture_md 为空且 claimed_by 非空
-            #      —— 本方法此前派出的 Stage 1 架构评审在飞（建行即带
-            #      claimed_by，stage 推进时由 choke point 自动释放）。
+            # D5 convergence: the in-flight criterion looks only at the authoritative axis stage_status (status has
+            # stopped being written as running,
+            # and the old status∈{QUEUED,RUNNING} condition being constantly false for new rows would cause duplicate
+            # dispatches).
+            # Two in-flight shapes:
+            #   1) stage=queued — the Stage 0 shallow scan is still in flight;
+            #   2) stage=shallow_done with architecture_md empty and claimed_by non-empty
+            #      — a Stage 1 architecture review dispatched earlier by this method is in flight (the row carries
+            #      claimed_by from creation; the choke point releases it automatically on stage advancement).
             in_flight = False
             current = await self._repo.list_deep_reviews(
                 repo_id=p.id, project_id=self._project_id or None
@@ -326,9 +328,10 @@ class EcosystemLifecycleService:
             if in_flight:
                 continue
 
-            # D5：不传 status（由 create_deep_review 按 stage 派生为 completed，
-            # 与回填 F1 映射一致），建行原子携带 claimed_by 表达 Stage 1 在飞，
-            # 同时堵住 claim_next_review_repo 对在飞行的双认领。
+            # D5: do not pass status (create_deep_review derives it from the stage as completed,
+            # consistent with the backfill F1 mapping); the row atomically carries claimed_by to express Stage 1 in
+            # flight,
+            # simultaneously plugging claim_next_review_repo's double claim on in-flight rows.
             now = utc_now()
             review = EcosystemDeepReview(
                 project_id=self._project_id or None,
@@ -346,7 +349,7 @@ class EcosystemLifecycleService:
                 deep_review_id=review.id,
                 research_goal=research_goal,
             )
-            # D5: 停写 status=RUNNING —— status 为派生只读视图。
+            # D5: stop writing status=RUNNING — status is a derived read-only view.
             await self._repo.update_deep_review(
                 review.id,
                 _project_id=self._project_id or None,
@@ -378,21 +381,21 @@ class EcosystemLifecycleService:
         architecture_md: str,
         agent_id: str | None = None,
     ) -> EcosystemDeepReview | None:
-        """Stage 1 写回：agent 提交 architecture_md → 推进 architecture_done。
+        """Stage 1 write-back: the agent submits architecture_md → advances to architecture_done.
 
         Args:
-            deep_review_id: 目标 review id。
-            architecture_md: 800-1500 字中文 markdown。空字符串触发错误。
-            agent_id: 可选 — 写入 review.agent_id 便于追溯。
+            deep_review_id: the target review id.
+            architecture_md: 800-1500 words of English markdown. An empty string triggers an error.
+            agent_id: optional — written into review.agent_id for traceability.
 
         Returns:
-            更新后的 review，找不到 → None。
+            The updated review; not found → None.
 
         Raises:
-            ValueError: architecture_md 为空时。
+            ValueError: when architecture_md is empty.
         """
         if not architecture_md or not architecture_md.strip():
-            raise ValueError("architecture_md 不能为空")
+            raise ValueError("architecture_md must not be empty")
 
         review = await self._repo.get_deep_review(
             deep_review_id, project_id=self._project_id or None
@@ -400,8 +403,8 @@ class EcosystemLifecycleService:
         if review is None:
             return None
 
-        # D5: 不再旁写 status=COMPLETED / completed_at —— 随后的
-        # update_deep_review_stage(ARCHITECTURE_DONE) 派生补齐。
+        # D5: no longer side-writes status=COMPLETED / completed_at — the subsequent
+        # update_deep_review_stage(ARCHITECTURE_DONE) derives and fills them in.
         update_kwargs: dict = {
             "_project_id": self._project_id or None,
             "architecture_md": architecture_md.strip(),
@@ -429,22 +432,22 @@ class EcosystemLifecycleService:
         suggested_critic: str = "code-reviewer",
         suggested_judge: str = "team-lead",
     ) -> DebateDispatchIntent:
-        """Stage 2 触发：拉 architecture_done 的 review，生成 debate dispatch payload。
+        """Stage 2 trigger: pull the architecture_done reviews and generate the debate dispatch payload.
 
         Args:
-            repo_ids: 选中的 finalist 仓 id 列表 (1-5 个为宜)。
-            research_goal: 研究目标，用于会议 topic。
-            suggested_advocate / critic / judge: 推荐角色，调用方可覆盖。
+            repo_ids: the selected finalist repo id list (1-5 is appropriate).
+            research_goal: the research goal, used for the meeting topic.
+            suggested_advocate / critic / judge: recommended roles; the caller may override them.
 
         Returns:
-            ``DebateDispatchIntent``，调用方据此调 ``debate_start`` MCP 工具
-            或直接 POST 到 ``/api/teams/{team}/meetings``。
+            A ``DebateDispatchIntent``; the caller uses it to call the ``debate_start`` MCP tool
+            or POST directly to ``/api/teams/{team}/meetings``.
 
         Raises:
-            ValueError: repo_ids 为空，或没有任何对应的 architecture_done review。
+            ValueError: repo_ids is empty, or there is no corresponding architecture_done review.
         """
         if not repo_ids:
-            raise ValueError("repo_ids 不能为空：Stage 2 必须指定 finalists")
+            raise ValueError("repo_ids must not be empty: Stage 2 must specify finalists")
 
         review_ids: list[str] = []
         repo_full_names: list[str] = []
@@ -461,7 +464,7 @@ class EcosystemLifecycleService:
                     repo_id,
                 )
                 continue
-            # 取最新一条 architecture_done review
+            # Take the latest architecture_done review
             review = reviews[0]
             review_ids.append(review.id)
             profile = await self._repo.get_ecosystem_profile_by_id(
@@ -474,8 +477,8 @@ class EcosystemLifecycleService:
 
         if not review_ids:
             raise ValueError(
-                "没有任何 repo_ids 对应 architecture_done review，"
-                "无法触发辩论。请先完成 Stage 1。"
+                "No repo_ids correspond to an architecture_done review; "
+                "cannot trigger a debate. Please complete Stage 1 first."
             )
 
         topic = self._build_debate_topic(
@@ -498,17 +501,17 @@ class EcosystemLifecycleService:
         review_ids: list[str],
         meeting_id: str,
     ) -> int:
-        """会议创建后回写 meeting_id 到所有相关 review 行。
+        """After the meeting is created, write meeting_id back to all related review rows.
 
-        与 trigger_debate 配套：trigger_debate 返回 review_ids → 调用方调
-        debate_start 创建会议 → 把 meeting.id + review_ids 一并传给本方法。
+        Pairs with trigger_debate: trigger_debate returns review_ids → the caller calls
+        debate_start to create the meeting → passes meeting.id + review_ids together to this method.
 
         Args:
-            review_ids: 关联的 review id 列表。
-            meeting_id: 创建出的 meeting id。
+            review_ids: the associated review id list.
+            meeting_id: the created meeting id.
 
         Returns:
-            实际更新的 review 行数。
+            The number of review rows actually updated.
         """
         if not review_ids or not meeting_id:
             return 0
@@ -533,26 +536,26 @@ class EcosystemLifecycleService:
         integration_recommendation: str = "",
         agent_id: str | None = None,
     ) -> EcosystemDeepReview | None:
-        """Stage 2 写回：辩论结论 → 推进 stage_status=debated。
+        """Stage 2 write-back: debate conclusion → advances stage_status=debated.
 
         Args:
-            deep_review_id: 目标 review id。
-            risks_md: 风险点 markdown。
-            learnings_md: 借鉴点 markdown。
-            integration_md: 集成建议 markdown。
-            integration_recommendation: enum 字符串 (integrate/reference/learn/skip)。
-            agent_id: 可选——写入 review.agent_id。
+            deep_review_id: the target review id.
+            risks_md: the risk-points markdown.
+            learnings_md: the learnings markdown.
+            integration_md: the integration-suggestion markdown.
+            integration_recommendation: an enum string (integrate/reference/learn/skip).
+            agent_id: optional — written into review.agent_id.
 
         Returns:
-            更新后的 review，找不到 → None。
+            The updated review; not found → None.
 
         Raises:
-            ValueError: 三个 *_md 全空 (至少一个非空才算有效结论)。
+            ValueError: all three *_md are empty (at least one non-empty counts as a valid conclusion).
         """
         non_empty = [s for s in (risks_md, learnings_md, integration_md) if s.strip()]
         if not non_empty:
             raise ValueError(
-                "risks_md / learnings_md / integration_md 至少需提供一个非空"
+                "At least one of risks_md / learnings_md / integration_md must be non-empty"
             )
 
         review = await self._repo.get_deep_review(
@@ -573,7 +576,7 @@ class EcosystemLifecycleService:
         if agent_id:
             update_kwargs["agent_id"] = agent_id
 
-        # 处理 integration_recommendation
+        # Handle integration_recommendation
         from aiteam.types import IntegrationRecommendation
 
         if integration_recommendation:
@@ -605,15 +608,15 @@ class EcosystemLifecycleService:
         agent_id: str | None = None,
         confidence: float = 1.0,
     ) -> EcosystemDeepReview | None:
-        """Stage 3 reference：加 lifecycle:reference tag + 推进 referenced。
+        """Stage 3 reference: adds the lifecycle:reference tag + advances to referenced.
 
         Args:
-            deep_review_id: 目标 review id。
-            agent_id: 可选 — 写入 EcosystemRepoTag.agent_id。
-            confidence: tag 置信度 (默认 1.0 — manual 决策)。
+            deep_review_id: the target review id.
+            agent_id: optional — written into EcosystemRepoTag.agent_id.
+            confidence: the tag confidence (default 1.0 — a manual decision).
 
         Returns:
-            更新后的 review，找不到 → None。
+            The updated review; not found → None.
         """
         review = await self._repo.get_deep_review(
             deep_review_id, project_id=self._project_id or None
@@ -643,47 +646,47 @@ class EcosystemLifecycleService:
         horizon: str = "mid",
         extra_tags: list[str] | None = None,
     ) -> TaskDispatchIntent:
-        """Stage 3 integrate：返回 task_create payload，由调用方实际创建任务。
+        """Stage 3 integrate: returns the task_create payload; the caller actually creates the task.
 
-        本方法只构建 ``TaskDispatchIntent`` (不直接调 task_create) 并推进
-        review.stage_status=INTEGRATED。调用方负责调 ``/api/projects/{id}/tasks``
-        创建任务后再调 ``link_integration_task`` 把 task.id 写回 review。
+        This method only builds the ``TaskDispatchIntent`` (it does not call task_create directly) and advances
+        review.stage_status=INTEGRATED. The caller is responsible for calling ``/api/projects/{id}/tasks``
+        to create the task, then calling ``link_integration_task`` to write task.id back to the review.
 
         Args:
-            deep_review_id: 目标 review id。
-            title: 任务标题，空时自动生成 ``Integrate {repo_full_name}: {summary}``。
-            description: 任务描述，空时自动汇总 review 的 architecture/integration_md。
-            priority / horizon: 任务优先级与时间维度。
-            extra_tags: 追加 tag 列表（默认会附加 ``ecosystem-integration``）。
+            deep_review_id: the target review id.
+            title: the task title; when empty, auto-generated as ``Integrate {repo_full_name}: {summary}``.
+            description: the task description; when empty, auto-assembled from the review's architecture/integration_md.
+            priority / horizon: the task priority and time horizon.
+            extra_tags: additional tags (``ecosystem-integration`` is appended by default).
 
         Returns:
-            ``TaskDispatchIntent``，调用方按字段 POST 到任务 API。
+            A ``TaskDispatchIntent``; the caller POSTs its fields to the task API.
 
         Raises:
-            ValueError: review 不存在或未到 debated 状态。
+            ValueError: the review does not exist or has not reached the debated state.
         """
         review = await self._repo.get_deep_review(
             deep_review_id, project_id=self._project_id or None
         )
         if review is None:
-            raise ValueError(f"deep_review id={deep_review_id} 不存在")
+            raise ValueError(f"deep_review id={deep_review_id} not found")
         if review.stage_status not in (
             EcosystemStageStatus.DEBATED,
             EcosystemStageStatus.ARCHITECTURE_DONE,
             EcosystemStageStatus.REFERENCED,
         ):
             raise ValueError(
-                f"deep_review stage_status={review.stage_status.value}，"
-                "需先到 architecture_done / debated / referenced 才能集成"
+                f"deep_review stage_status={review.stage_status.value}, "
+                "It must first reach architecture_done / debated / referenced before integration"
             )
 
         profile = await self._repo.get_ecosystem_profile_by_id(
             review.repo_id, project_id=self._project_id or None
         )
         if profile is None:
-            raise ValueError(f"repo profile id={review.repo_id} 不存在")
+            raise ValueError(f"repo profile id={review.repo_id} not found")
 
-        # 标 lifecycle:integrated tag
+        # Mark the lifecycle:integrated tag
         await self._ensure_lifecycle_tag_applied(
             repo_id=review.repo_id,
             tag_name=LIFECYCLE_TAG_INTEGRATED,
@@ -691,7 +694,7 @@ class EcosystemLifecycleService:
             confidence=1.0,
         )
 
-        # 构造 task payload
+        # Build the task payload
         repo_label = profile.repo_full_name
         if not title:
             short_summary = (
@@ -705,7 +708,7 @@ class EcosystemLifecycleService:
         if extra_tags:
             tags.extend(t for t in extra_tags if t and t not in tags)
 
-        # 推进 stage_status → integrated (task_id 由 link_integration_task 后续写)
+        # Advance stage_status → integrated (task_id is written later by link_integration_task)
         await self._repo.update_deep_review_stage(
             deep_review_id,
             EcosystemStageStatus.INTEGRATED,
@@ -730,14 +733,14 @@ class EcosystemLifecycleService:
         deep_review_id: str,
         task_id: str,
     ) -> EcosystemDeepReview | None:
-        """配套 start_integration：任务创建后回写 task_id。
+        """Pairs with start_integration: after the task is created, writes back task_id.
 
         Args:
-            deep_review_id: 目标 review id。
-            task_id: 创建出的 task id。
+            deep_review_id: the target review id.
+            task_id: the created task id.
 
         Returns:
-            更新后的 review，找不到 → None。
+            The updated review; not found → None.
         """
         if not task_id:
             return None
@@ -758,27 +761,28 @@ class EcosystemLifecycleService:
         meeting_id: str,
         topic: str,
     ) -> WritebackHint | None:
-        """会议结束时检测是否涉及生态库 → 提醒 Leader 反向写回。
+        """When a meeting ends, detect whether it involves the ecosystem library → remind the Leader to write back in
+        reverse.
 
-        Topic 含 ECOSYSTEM_KEYWORDS 任一关键词 → 拉所有 debate_meeting_id=
-        meeting_id 的 review，返回一个 ``WritebackHint`` 让 hook/Leader
-        知道该让 agent 调 apply_debate_result。
+        If the topic contains any ECOSYSTEM_KEYWORDS keyword → pull all reviews with debate_meeting_id=
+        meeting_id and return a ``WritebackHint`` so the hook/Leader
+        knows to have an agent call apply_debate_result.
 
         Args:
-            meeting_id: 刚结束的会议 id。
-            topic: 会议 topic 文本。
+            meeting_id: the just-ended meeting id.
+            topic: the meeting topic text.
 
         Returns:
-            ``WritebackHint`` 或 None（如果 topic 不命中关键词）。
+            A ``WritebackHint`` or None (if the topic hits no keyword).
         """
         if not topic:
             return None
-        topic_lower = topic.lower()
+        topic_lower = topic.lower().replace("-", " ")
         matched = [kw for kw in ECOSYSTEM_KEYWORDS if kw.lower() in topic_lower]
         if not matched:
             return None
 
-        # 拉所有该会议关联的 review
+        # Pull all reviews associated with this meeting
         reviews = await self._repo.list_deep_reviews(
             limit=100, project_id=self._project_id or None
         )
@@ -802,14 +806,14 @@ class EcosystemLifecycleService:
         deep_review_id: str,
         research_goal: str,
     ) -> str:
-        """渲染 Stage 1 sub-agent prompt。"""
+        """Render the Stage 1 sub-agent prompt."""
         return ARCHITECTURE_AGENT_PROMPT.format(
             repo_full_name=profile.repo_full_name,
             repo_id=profile.id,
             deep_review_id=deep_review_id,
             stars=profile.stars,
-            shallow_summary=(profile.shallow_summary or "(暂无浅扫总结)")[:1500],
-            research_goal=research_goal or "(未指定特定研究目标)",
+            shallow_summary=(profile.shallow_summary or "(no shallow-scan summary yet)")[:1500],
+            research_goal=research_goal or "(no specific research goal specified)",
         )
 
     @staticmethod
@@ -818,50 +822,50 @@ class EcosystemLifecycleService:
         repo_full_names: list[str],
         research_goal: str,
     ) -> str:
-        """合成会议 topic 字符串。"""
-        head = research_goal or "生态库选型辩论"
+        """Assemble the meeting topic string."""
+        head = research_goal or "Ecosystem library selection debate"
         candidates = ", ".join(repo_full_names[:5])
         if len(repo_full_names) > 5:
-            candidates += f"... (共 {len(repo_full_names)} 个)"
-        return f"[Ecosystem Stage 2] {head} — 候选: {candidates}"
+            candidates += f"... ({len(repo_full_names)} in total)"
+        return f"[Ecosystem Stage 2] {head} — Candidates: {candidates}"
 
     @staticmethod
     def _build_integration_description(
         profile: EcosystemRepoProfile,
         review: EcosystemDeepReview,
     ) -> str:
-        """合成集成任务描述（汇总 architecture / integration md）。"""
+        """Assemble the integration task description (summarizing the architecture / integration md)."""
         parts: list[str] = [
-            "## 集成目标",
-            f"将 [{profile.repo_full_name}](https://github.com/{profile.repo_full_name}) "
-            "集成到本项目。",
+            "## Integration goal",
+            f"Integrate [{profile.repo_full_name}](https://github.com/{profile.repo_full_name}) "
+            "into this project.",
             "",
         ]
         if profile.shallow_summary:
-            parts.append("## 仓概览（浅扫）")
+            parts.append("## Repo overview (shallow scan)")
             parts.append(profile.shallow_summary[:500])
             parts.append("")
         if review.architecture_md:
-            parts.append("## 架构概览")
+            parts.append("## Architecture overview")
             parts.append(review.architecture_md[:1500])
             parts.append("")
         if review.integration_md:
-            parts.append("## 集成建议（来自 Stage 2 辩论）")
+            parts.append("## Integration suggestions (from the Stage 2 debate)")
             parts.append(review.integration_md[:1500])
             parts.append("")
         if review.risks_md:
-            parts.append("## 已知风险")
+            parts.append("## Known risks")
             parts.append(review.risks_md[:800])
             parts.append("")
-        parts.append("## 关联")
+        parts.append("## Links")
         parts.append(f"- ecosystem deep_review_id: `{review.id}`")
         parts.append(f"- ecosystem repo_id: `{review.repo_id}`")
         if review.debate_meeting_id:
-            parts.append(f"- 辩论会议: `{review.debate_meeting_id}`")
+            parts.append(f"- Debate meeting: `{review.debate_meeting_id}`")
         return "\n".join(parts)
 
     async def _ensure_lifecycle_tag(self, tag_name: str) -> EcosystemTag:
-        """按需 seed lifecycle tag（positioning 类）。已存在则返回。"""
+        """Seed a lifecycle tag on demand (the positioning class). Returns if it already exists."""
         existing = await self._repo.get_tag_by_name(tag_name)
         if existing is not None:
             return existing
@@ -882,7 +886,7 @@ class EcosystemLifecycleService:
         agent_id: str | None,
         confidence: float,
     ) -> EcosystemRepoTag:
-        """加 lifecycle:* tag 到 repo（已存在则更新 source/agent/confidence）。"""
+        """Add a lifecycle:* tag to a repo (if it exists, update source/agent/confidence)."""
         tag = await self._ensure_lifecycle_tag(tag_name)
         repo_tag = EcosystemRepoTag(
             project_id=self._project_id or None,

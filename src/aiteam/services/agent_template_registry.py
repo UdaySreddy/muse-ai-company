@@ -40,9 +40,9 @@ PLUGIN_AGENTS_DIR = Path(__file__).resolve().parents[3] / "plugin" / "agents"
 FALLBACK_SUBAGENT_TYPE = "general-purpose"
 
 _UNKNOWN_TEMPLATE_MESSAGE = (
-    "{name} 不在模板库:若是 CC 内置类型可直接用;"
-    "若是拼写错误,建议就近模板 {suggestions} 或 {fallback} + 原 prompt。"
-    "OS 不拦截,已按原样放行,由读计划的人定夺。"
+    "{name} is not in the template library: if it is a CC built-in type, it can be used directly;"
+    "if it is a typo, consider the closest templates {suggestions} or {fallback} + the original prompt."
+    "The OS does not block it and has passed it through as-is; the person reading the plan decides."
 )
 
 
@@ -181,7 +181,7 @@ def check_subagent_types(
             "closest_templates": closest,
             "message": _UNKNOWN_TEMPLATE_MESSAGE.format(
                 name=name,
-                suggestions="/".join(closest) if closest else "(无相近模板)",
+                suggestions="/".join(closest) if closest else "No similar template",
                 fallback=FALLBACK_SUBAGENT_TYPE,
             ),
         })

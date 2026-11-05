@@ -199,8 +199,8 @@ class EcosystemScanner:
         repo: StorageRepository for persistence.
         gh_search: Async callable that returns parsed repo dicts for (keyword, min_stars, topics).
         config: FilterConfig (defaults to FilterConfig.from_env()).
-        project_id: 可选项目作用域；非空时所有写入会附带此 project_id，
-            读取也限定于同项目。空字符串表示透传 repo 的 _project_scope。
+        project_id: Optional project scope; when non-empty, all writes carry this project_id,
+            and reads are also limited to the same project. An empty string means passing through repo's _project_scope.
         on_new_profile: Optional async hook invoked once per **newly-archived**
             profile (i.e. ``existing is None`` at upsert time). Wired to the
             v1.5.0-B Stage 0 ``EcosystemShallowQueueWorker.enqueue_repo`` so

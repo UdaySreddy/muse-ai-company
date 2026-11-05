@@ -245,7 +245,7 @@ class EcosystemRefresher:
         """
         result = RefreshResult(project_id=self._project_id)
         if not self._project_id:
-            result.errors.append("project_id 为空，refresher 无可识别项目")
+            result.errors.append("project_id is empty; the refresher has no identifiable project")
             return result
 
         settings = await self._resolve_settings()
@@ -272,7 +272,7 @@ class EcosystemRefresher:
 
         if self._gh_fetcher is None:
             result.errors.append(
-                "gh_fetcher 未注入；refresher 跳过 GitHub 调用，仅记录批次"
+                "gh_fetcher not injected; the refresher skips GitHub calls and only records the batch"
             )
             await self._finalize_scan_run(scan_run.id, result)
             return result
@@ -385,7 +385,7 @@ class EcosystemRefresher:
                 repo_id=repo_id,
                 repo_full_name="<unknown>",
                 revived=False,
-                note="profile 不存在",
+                note="profile does not exist",
             )
 
         was_deleted = profile.is_deleted
@@ -395,7 +395,7 @@ class EcosystemRefresher:
                 repo_id=repo_id,
                 repo_full_name=profile.repo_full_name,
                 revived=False,
-                note="profile 当前未处于 deleted/private 状态",
+                note="profile is not in a deleted/private state",
             )
 
         if self._worker is None:
@@ -403,7 +403,7 @@ class EcosystemRefresher:
                 repo_id=repo_id,
                 repo_full_name=profile.repo_full_name,
                 revived=False,
-                note="未注入 worker；resurrect 不可用",
+                note="worker not injected; resurrect is unavailable",
             )
 
         revived = await self._worker.revive_check_one(repo_id)
@@ -412,11 +412,11 @@ class EcosystemRefresher:
                 repo_id=repo_id,
                 repo_full_name=profile.repo_full_name,
                 revived=False,
-                note="GitHub 仍返回 deleted/private 状态",
+                note="GitHub still returns a deleted/private state",
             )
 
         # Drop lifecycle tags so the repo no longer shows up under
-        # "已删除"/"已设私密" UI tabs.
+        # "Deleted"/"Set to private" UI tabs.
         if was_deleted:
             await self._remove_lifecycle_tag(
                 repo_id, LIFECYCLE_TAG_DELETED
@@ -436,7 +436,7 @@ class EcosystemRefresher:
             revived=True,
             queued=intent is not None,
             intent=intent,
-            note="复活成功，已撤 tag 并重新入队 Stage 0",
+            note="Resurrected successfully; tag removed and re-queued to Stage 0",
         )
 
     # ------------------------------------------------------------------

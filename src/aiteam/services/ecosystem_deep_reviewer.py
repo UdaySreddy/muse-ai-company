@@ -115,12 +115,12 @@ class EcosystemDeepReviewer:
         repo: StorageRepository,
         project_id: str = "",
     ) -> None:
-        """初始化深扫服务。
+        """Initialize the deep-scan service.
 
         Args:
-            repo: 数据访问层。
-            project_id: 可选项目作用域；空时透传 repo._project_scope。
-                所有深扫报告的写入读取都限定于此项目。
+            repo: Data access layer.
+            project_id: Optional project scope; when empty, passes through repo._project_scope.
+                All deep-scan report reads and writes are limited to this project.
         """
         self._repo = repo
         self._project_id = project_id or repo._project_scope or ""
@@ -327,16 +327,16 @@ class EcosystemDeepReviewer:
             update_fields["architecture_md"] = architecture_md
         if risks_md is not None:
             update_fields["risks_md"] = risks_md
-        # learnings_md keeps the "我们能借鉴的点" section.
+        # learnings_md keeps the "Points we can learn from" section.
         if learnings_md is not None:
             update_fields["learnings_md"] = learnings_md
-        # integration_md (5. 集成建议 markdown body) — stored alongside
+        # integration_md (section 5. Integration suggestions markdown body) — stored alongside
         # learnings_md when callers pass it; otherwise concatenated.
         if integration_md is not None:
             existing = update_fields.get("learnings_md") or ""
             sep = "\n\n" if existing else ""
             update_fields["learnings_md"] = (
-                f"{existing}{sep}## 5. 集成建议\n{integration_md.strip()}"
+                f"{existing}{sep}## 5. Integration suggestions\n{integration_md.strip()}"
             )
         if demo_log_excerpt is not None:
             update_fields["demo_log_excerpt"] = demo_log_excerpt
