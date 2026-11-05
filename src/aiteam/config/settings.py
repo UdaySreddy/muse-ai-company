@@ -49,7 +49,8 @@ class InfrastructureConfig(BaseModel):
 class DefaultsConfig(BaseModel):
     """Default configuration."""
 
-    model: str = ""  # 空=继承 CC 会话模型（勿再烘焙具体型号——4-7 幽灵教训）
+    model: str = ""  # Empty = inherit the CC session model (do not bake in a concrete model again — the 4-7 phantom
+    # lesson)
     max_context_ratio: float = Field(default=0.8, ge=0.1, le=1.0)
 
 
@@ -143,14 +144,18 @@ WAKE_TIMEOUT_SECONDS: int = 300
 WAKE_MAX_TURNS: int = 10
 WAKE_FUSE_THRESHOLD: int = 3
 
-# Leader 主会话 token 用量采集节流（token 归因 v1 阶段 4，见 docs/token-attribution-v1-design.md §3.3）。
-# Stop 每轮对话都触发，而主会话 transcript 是累计文件、全量解析随会话线性变贵
-# （实测 45.1 MB / 0.18 s）。所以 Stop 走这两个阈值的门，SessionStart / SessionEnd /
-# PostCompact 一律强制定格、不受此约束。
-# ① 距上次解析的最小间隔：稳态下每会话每 5 分钟最多解析一次。
+# Throttling for the Leader main session's token-usage collection (token attribution v1 stage 4, see
+# docs/token-attribution-v1-design.md §3.3).
+# Stop fires on every conversation turn, while the main session's transcript is a cumulative file whose full parse grows
+# linearly more expensive with the session
+# (measured 45.1 MB / 0.18 s). So Stop goes through the gate of these two thresholds, while SessionStart / SessionEnd /
+# PostCompact always force a freeze and are not bound by this.
+# ① The minimum interval since the last parse: in steady state, at most one parse per session per 5 minutes.
 LEADER_USAGE_MIN_INTERVAL_SECONDS: int = 300
-# ② transcript 落盘时间相对上次测量的推进阈值：窗口没到但这一轮已经写了这么久，
-#    说明期间量级可能已显著变化，提前测一次比等窗口更贴近真实。
+# ② The threshold for how far the transcript's on-disk time has advanced relative to the last measurement: when the
+# window has not arrived but this turn has already been writing this long,
+#    the magnitude may have changed significantly in the meantime, and measuring early is closer to reality than waiting
+# for the window.
 LEADER_USAGE_MTIME_ADVANCE_SECONDS: int = 600
 
 # Fleet dispatch (fleet-layer design §4.3 / §9): minimum idle time before a ship
@@ -189,19 +194,19 @@ def load_config(config_path: Path | None = None) -> ProjectConfig:
 def generate_default_config() -> str:
     """Generate default aiteam.yaml content."""
     return """\
-# AI Team OS 项目配置
+# AI Team OS project configuration
 project:
   name: "my-project"
-  description: "项目描述"
+  description: "Project description"
   language: "zh"
 
 defaults:
-  model: "opus"  # 层级别名，自动跟随最新版
+  model: "opus"  # tier alias, automatically follows the latest version
   max_context_ratio: 0.8
 
 infrastructure:
   storage_backend: "sqlite"     # sqlite | postgresql
-  memory_backend: "file"        # file（SQLite 单后端）
+  memory_backend: "file"        # file (single SQLite backend)
   dashboard_port: 3000
   api_port: 8000
 
@@ -210,10 +215,10 @@ infrastructure:
 #   mode: "coordinate"           # coordinate | broadcast | route | meet
 #   leader:
 #     name: "lead"
-#     role: "技术总监"
+#     role: "Technical Director"
 #   members:
 #     - name: "dev-1"
-#       role: "后端开发"
+#       role: "Backend Developer"
 #     - name: "dev-2"
-#       role: "前端开发"
+#       role: "Frontend Developer"
 """
