@@ -1,42 +1,42 @@
 ---
 template_name: review
-description: 评审会议——评估交付物质量，发现问题并提出改进建议
+description: Review meeting — evaluate deliverable quality, find problems, and propose improvements
 total_rounds: 3
 rounds:
   - number: 1
-    name: "方案陈述"
-    rule: "汇报人展示交付物，评审者只听不评（可提澄清问题）。发言格式：[概述] + [核心设计] + [已知局限] + [期望反馈]"
+    name: "Proposal presentation"
+    rule: "The presenter shows the deliverable; reviewers only listen without commenting (clarifying questions allowed). Statement format: [Overview] + [Core design] + [Known limitations] + [Feedback wanted]"
   - number: 2
-    name: "独立评审"
-    rule: "评审者独立发言，不互相参考。问题分级：Critical/Major/Minor/Suggestion，每个问题附带改进建议。发言格式：[总体评价] + 各级问题列表"
+    name: "Independent review"
+    rule: "Reviewers speak independently, without referring to each other. Issue severity levels: Critical/Major/Minor/Suggestion; each issue comes with an improvement suggestion. Statement format: [Overall assessment] + issue lists by level"
   - number: 3
-    name: "回应裁定"
-    rule: "汇报人对每个问题回应（接受/部分接受/不接受+理由）。裁定结果：APPROVED / CONDITIONALLY_APPROVED / REVISION_REQUIRED"
-keywords: [review, 评审, code review, PR, 验收, 审查, quality]
+    name: "Response and ruling"
+    rule: "The presenter responds to each issue (accept/partially accept/reject + reasoning). Ruling outcome: APPROVED / CONDITIONALLY_APPROVED / REVISION_REQUIRED"
+keywords: [review, code review, PR, acceptance, inspection, quality]
 ---
 
-# Review 评审模板
+# Review Template
 
-## 何时使用
+## When to use
 
-- 代码 PR 评审，需要多人从不同维度检查质量
-- 设计文档、架构方案的正式审查
-- 交付物验收前的质量把关
-- 需要结构化反馈（而非随意讨论）的场景
+- Code PR reviews, where several people check quality from different dimensions
+- Formal inspection of design documents and architecture proposals
+- Quality gating before deliverable acceptance
+- Scenarios needing structured feedback (rather than free-form discussion)
 
-**不适合**：探索性讨论或方案选择场景，那更适合 brainstorm 或 decision 模板。
+**Not suitable for**: exploratory discussion or option selection scenarios — brainstorm or decision fit better there.
 
-## 参与者建议
+## Participant recommendations
 
-- 1 位汇报人（交付物作者，负责陈述和回应）
-- 2～4 位评审者（与交付物相关领域的专家）
-- 评审者在 Round 2 需独立发言，避免互相影响
-- 主持人确保评审粒度合理（不过于挑剔细节，也不流于表面）
+- 1 presenter (the deliverable's author, responsible for presenting and responding)
+- 2–4 reviewers (experts in fields related to the deliverable)
+- Reviewers must speak independently in Round 2 to avoid influencing each other
+- The facilitator ensures the review granularity is reasonable (neither nitpicking details nor staying superficial)
 
-## 反模式
+## Anti-patterns
 
-- Round 1 评审者抢先评论（应先让汇报人完整陈述）
-- Round 2 评审者之间互相参考，导致意见同质化
-- 问题没有分级，Critical 和 Suggestion 混在一起
-- 汇报人在 Round 3 逐条争辩而非结构化回应
-- 评审结果模糊，没有明确的 APPROVED/REVISION_REQUIRED 裁定
+- Reviewers jumping in with comments during Round 1 (let the presenter finish first)
+- Reviewers referring to each other in Round 2, causing opinions to homogenize
+- Issues with no severity levels, mixing Critical and Suggestion together
+- The presenter arguing point by point in Round 3 instead of responding in a structured way
+- A vague review outcome with no clear APPROVED/REVISION_REQUIRED ruling

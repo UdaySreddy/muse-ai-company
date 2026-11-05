@@ -1,42 +1,42 @@
 ---
 template_name: retrospective
-description: 复盘会议——总结经验，提取教训，持续改进
+description: Retrospective meeting — summarize experience, extract lessons, improve continuously
 total_rounds: 3
 rounds:
   - number: 1
-    name: "4Ls回顾"
-    rule: "每人从4个维度各提供至少1条反馈，描述事实不指责个人。发言格式：[Loved/满意] + [Learned/学到] + [Lacked/不足] + [Longed For/期望]"
+    name: "4Ls review"
+    rule: "Each person provides at least 1 item of feedback from each of the 4 dimensions, describing facts without blaming individuals. Statement format: [Loved] + [Learned] + [Lacked] + [Longed For]"
   - number: 2
-    name: "行动方向"
-    rule: "基于Round 1的反馈，从5个维度提出改进建议。发言格式：[Keep Doing继续保持] + [More Of多做] + [Less Of少做] + [Start Doing开始做] + [Stop Doing停止做]"
+    name: "Action directions"
+    rule: "Based on the Round 1 feedback, propose improvements across 5 dimensions. Statement format: [Keep Doing] + [More Of] + [Less Of] + [Start Doing] + [Stop Doing]"
   - number: 3
-    name: "承诺计划"
-    rule: "投票选出Top-3改进项，每项指定负责人和验证方式。产出：改进承诺卡（改进内容 + 负责人 + 具体行动 + 验证标准）"
-keywords: [retro, 复盘, 回顾, 总结, 经验教训, 改进]
+    name: "Commitment plan"
+    rule: "Vote to select the Top-3 improvements; assign an owner and a verification method to each. Output: improvement commitment cards (improvement + owner + concrete action + verification criteria)"
+keywords: [retro, retrospective, review, summary, lessons learned, improvement]
 ---
 
-# Retrospective 复盘模板
+# Retrospective Template
 
-## 何时使用
+## When to use
 
-- 项目阶段结束后的经验总结（Sprint 结束、里程碑完成）
-- 重大事故或线上故障的复盘
-- 团队协作出现问题，需要系统性梳理改进方向
-- 定期团队健康检查（如每月一次例行复盘）
+- Experience summaries at the end of a project phase (end of a sprint, milestone completion)
+- Retrospectives on major incidents or production failures
+- Team collaboration problems that need systematic sorting into improvement directions
+- Regular team health checks (e.g. a monthly routine retrospective)
 
-**不适合**：问题尚在发生中（应先止损），或需要立刻做出决策的紧急场景。
+**Not suitable for**: problems still in progress (stop the bleeding first), or urgent scenarios requiring an immediate decision.
 
-## 参与者建议
+## Participant recommendations
 
-- 全体参与者：复盘效果依赖完整的参与视角
-- 主持人保持中立，不偏袒任何观点
-- Round 1 描述事实，避免人身攻击或责任追究
-- 建议匿名收集 Round 1 反馈（减少顾虑），主持人汇总后再讨论
+- All participants: retrospective effectiveness depends on complete participation perspectives
+- The facilitator stays neutral and does not favor any viewpoint
+- In Round 1, describe facts and avoid personal attacks or blame assignment
+- Collecting Round 1 feedback anonymously is recommended (reduces hesitation); the facilitator aggregates it before discussion
 
-## 反模式
+## Anti-patterns
 
-- Round 1 指责个人而非描述事实（破坏心理安全感）
-- 跳过 Round 3 的责任人指定，改进项变成"集体责任"无人跟进
-- 只讨论问题，不讨论值得保留的做法（Loved/Keep Doing 部分）
-- 产出的改进项超过 5 条，导致无法落地执行
-- 复盘变成"甩锅会"或"表扬大会"，失去改进价值
+- Blaming individuals in Round 1 instead of describing facts (destroys psychological safety)
+- Skipping owner assignment in Round 3, so improvements become a "collective responsibility" nobody follows up
+- Discussing only problems and not practices worth keeping (the Loved/Keep Doing parts)
+- Producing more than 5 improvement items, making them impossible to land
+- The retrospective turning into a "blame session" or a "praise session", losing its improvement value

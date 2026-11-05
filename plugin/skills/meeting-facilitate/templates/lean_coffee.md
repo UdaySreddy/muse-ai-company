@@ -1,42 +1,42 @@
 ---
 template_name: lean_coffee
-description: Lean Coffee——民主议程，没有预设议程的开放式讨论
+description: Lean Coffee — a democratic agenda; open discussion with no preset agenda
 total_rounds: 3
 rounds:
   - number: 1
-    name: "议题收集"
-    rule: "每个Agent提出想讨论的议题（每人1条消息），不评论他人议题"
+    name: "Topic collection"
+    rule: "Each agent proposes a topic they want to discuss (1 message per person); do not comment on others' topics"
   - number: 2
-    name: "投票排序"
-    rule: "对所有议题投票，每人3票，得票最高的优先讨论"
+    name: "Voting and ranking"
+    rule: "Vote on all topics, 3 votes per person; the highest-voted topics are discussed first"
   - number: 3
-    name: "时间盒讨论"
-    rule: "按得票顺序逐一讨论，每个议题时间到后投票继续/跳过。从每个议题中提取行动项"
-keywords: [lean coffee, 开放讨论, 自由议题, open discussion]
+    name: "Timeboxed discussion"
+    rule: "Discuss topics one by one in vote order; when a topic's time is up, vote to continue/skip. Extract action items from each topic"
+keywords: [lean coffee, open discussion, free topics]
 ---
 
-# Lean Coffee 开放讨论模板
+# Lean Coffee Open Discussion Template
 
-## 何时使用
+## When to use
 
-- 没有预设议程，由参与者共同决定讨论什么
-- 团队定期同步会，需要民主决定优先话题
-- 议题来源广泛，需要先筛选再深入的场景
-- 希望避免少数人主导议程的讨论
+- There is no preset agenda and participants decide together what to discuss
+- Regular team syncs where the priority topics need to be decided democratically
+- Topics come from a wide range of sources and need filtering before going deep
+- You want to avoid a few people dominating the agenda
 
-**不适合**：已有明确议题且时间紧迫的场景；需要深度分析单一主题时，直接用对应专项模板更高效。
+**Not suitable for**: scenarios with a clear topic and tight time; for deep analysis of a single subject, the corresponding specialized template is more efficient.
 
-## 参与者建议
+## Participant recommendations
 
-- 所有团队成员平等参与，无需特定角色
-- 主持人负责计时和推进（Round 3 每个议题的时间盒管理）
-- 建议每个议题讨论时间盒为 5～8 分钟
-- 人数 3～10 人效果最佳，过多会导致议题碎片化
+- All team members participate equally; no specific roles needed
+- The facilitator handles timing and flow (timebox management for each topic in Round 3)
+- A timebox of 5–8 minutes per topic is recommended
+- 3–10 people works best; too many fragments the topics
 
-## 反模式
+## Anti-patterns
 
-- Round 1 对他人议题评论或否定（会压制议题多样性）
-- 跳过投票，直接讨论第一个提出的议题（违背民主议程原则）
-- 时间盒到了不执行"继续/跳过"投票，陷入单个议题讨论（主持人失职）
-- 不提取行动项，讨论有结果但无落地
-- 用来讨论需要深度分析的技术问题（应改用 review/decision/debate）
+- Commenting on or dismissing others' topics in Round 1 (suppresses topic diversity)
+- Skipping the vote and discussing the first proposed topic directly (violates the democratic agenda principle)
+- Not running the "continue/skip" vote when a timebox expires, sinking into a single topic (facilitator failure)
+- Not extracting action items, so the discussion produces results but no follow-through
+- Using it for technical problems needing deep analysis (use review/decision/debate instead)

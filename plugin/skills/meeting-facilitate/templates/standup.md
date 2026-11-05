@@ -1,36 +1,36 @@
 ---
 template_name: standup
-description: 站会——快速信息同步，识别阻塞，对齐优先级
+description: Standup — quick information sync, identify blockers, align priorities
 total_rounds: 1
 rounds:
   - number: 1
-    name: "三问"
-    rule: "每人严格限1条消息，只说三件事不展开讨论。发言格式：[已完成] + [计划做] + [阻塞项（无则写'无'）]"
-keywords: [standup, 站会, 同步, daily, 进度, 状态更新]
+    name: "Three questions"
+    rule: "Each person is strictly limited to 1 message, covering only three things with no discussion. Statement format: [Done] + [Planned] + [Blockers (write 'none' if there are none)]"
+keywords: [standup, sync, daily, progress, status update]
 ---
 
-# Standup 站会模板
+# Standup Template
 
-## 何时使用
+## When to use
 
-- 每日团队进度同步（Daily Standup）
-- 项目冲刺期间的快速状态对齐
-- 需要快速识别谁被阻塞、谁可以提供帮助
-- 会议时间应控制在 5～15 分钟以内的场景
+- Daily team progress sync (Daily Standup)
+- Quick status alignment during a project sprint
+- You need to quickly identify who is blocked and who can help
+- The meeting must be kept within 5–15 minutes
 
-**不适合**：需要深度讨论的问题（阻塞项应单独开会解决），或需要决策的场景。
+**Not suitable for**: problems needing deep discussion (blockers should get their own follow-up meeting), or scenarios requiring decisions.
 
-## 参与者建议
+## Participant recommendations
 
-- 全体团队成员参与
-- 主持人（通常是 Leader）负责控制时长，阻塞项记录后会下跟进
-- 每人严格 1 条消息，不在站会中展开讨论
-- 有阻塞的成员在站会后单独与相关人协调
+- All team members participate
+- The facilitator (usually the Leader) controls the duration; blockers are recorded and followed up after the meeting
+- Strictly 1 message per person; no discussion during the standup
+- Blocked members coordinate separately with the relevant people after the standup
 
-## 反模式
+## Anti-patterns
 
-- 在 Round 1 展开讨论阻塞细节（打断节奏，延长时间）
-- 发言超过 3 件事，导致站会变成汇报会
-- 阻塞项无人跟进，只是机械式同步
-- 主持人未记录阻塞项，导致站会信息流失
-- 用站会替代所有沟通，重要问题没有单独处理
+- Expanding on blocker details in Round 1 (breaks the rhythm and stretches the time)
+- Covering more than the 3 things, turning the standup into a reporting meeting
+- Blockers that nobody follows up, reducing the sync to a mechanical ritual
+- The facilitator not recording blockers, so standup information is lost
+- Using standups to replace all communication, leaving important problems without separate handling

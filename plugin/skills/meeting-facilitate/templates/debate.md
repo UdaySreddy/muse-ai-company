@@ -1,45 +1,45 @@
 ---
 template_name: debate
-description: 结构化辩论——通过正方陈述、反方质疑、正方回应、裁决四轮提升方案质量
+description: "Structured debate — improve proposal quality through four rounds: advocate's case, critic's challenge, advocate's response, verdict"
 total_rounds: 4
 rounds:
   - number: 1
-    name: "正方陈述"
-    rule: "Advocate（正方）完整呈现方案或观点。发言格式：[方案标题] + [核心论点（≤3条）] + [支撑证据/数据] + [预期收益] + [已知局限]。只陈述，不反驳，不预判质疑。"
+    name: "Advocate Statement"
+    rule: "The Advocate presents the proposal or position in full. Statement format: [Proposal title] + [Core arguments (≤3)] + [Supporting evidence/data] + [Expected benefits] + [Known limitations]. Present only — no rebuttals, no pre-empting challenges."
   - number: 2
-    name: "反方质疑"
-    rule: "Critic（反方）系统性挑战方案。发言格式：[引用正方原话] → [质疑点] + [风险等级: High/Medium/Low] + [替代方案或改进建议]。必须引用正方具体论点，不能泛泛否定。每个质疑点附带建设性替代建议。"
+    name: "Critic Challenge"
+    rule: "The Critic systematically challenges the proposal. Statement format: [Quote of the advocate's words] → [Point of challenge] + [risk level: High/Medium/Low] + [Alternative or improvement suggestion]. You must cite the advocate's specific arguments; generic dismissal is not allowed. Each challenge point must come with a constructive alternative."
   - number: 3
-    name: "正方回应"
-    rule: "Advocate（正方）逐条回应反方质疑。发言格式：[引用质疑点] → [接受/部分接受/不接受] + [理由] + [方案修订（如有）]。允许吸纳合理质疑修改方案。最终输出更新后的方案摘要。"
+    name: "Advocate Response"
+    rule: "The Advocate responds to each of the critic's challenges in turn. Statement format: [Quoted challenge point] → [Accept/Partially accept/Reject] + [Reasoning] + [Proposal revision (if any)]. Reasonable challenges may be absorbed into a revised proposal. Finish by outputting the updated proposal summary."
   - number: 4
-    name: "裁决"
-    rule: "Judge（裁决方）综合全轮讨论给出最终判断。发言格式：[综合评估] + [采纳的改进点] + [最终结论: APPROVED/CONDITIONAL/REJECTED] + [Action Items列表]。裁决必须有理有据，引用辩论中的关键论据。"
-keywords: [debate, 辩论, 分歧, 争议, disagreement, 正反方, advocate, critic, red team, blue team]
+    name: "Verdict"
+    rule: "The Judge gives the final judgment based on all rounds. Statement format: [Overall assessment] + [Improvements adopted] + [Final verdict: APPROVED/CONDITIONAL/REJECTED] + [Action items list]. The verdict must be reasoned and cite the key arguments from the debate."
+keywords: [debate, disagreement, controversy, advocate, critic, red team, blue team]
 ---
 
-# Debate 辩论模板
+# Debate Template
 
-## 何时使用
+## When to use
 
-- 团队对某方案或决策存在明显分歧，需要结构化对撞
-- 高风险决策需要红队（Red Team）挑战，防止群体思维
-- 方案提出者需要通过压力测试来加固论点
-- 需要在争议中找到共识或明确分歧边界
+- The team has a clear disagreement about a proposal or decision and needs a structured clash
+- High-risk decisions that need a Red Team challenge to prevent groupthink
+- The proposer needs a stress test to strengthen their arguments
+- You need to find consensus amid controversy, or clearly delineate the boundaries of disagreement
 
-**不适合**：团队已有共识、只需执行的场景；或问题没有实质性分歧、强行辩论会浪费时间。
+**Not suitable for**: scenarios where the team already has consensus and only execution remains; or where there is no substantive disagreement and a forced debate would waste time.
 
-## 参与者建议
+## Participant recommendations
 
-- 至少 1 位 Advocate（正方代言人）：深度了解方案的人，可以是提案人
-- 至少 1 位 Critic（反方代言人）：善于挑战假设的人，或被指定扮演魔鬼代言人
-- 1 位 Judge（裁决方）：中立第三方，通常是 Leader 或领域专家
-- 主持人可兼任 Judge，但不参与正反方发言
+- At least 1 Advocate: someone who understands the proposal deeply; may be the proposer
+- At least 1 Critic: someone good at challenging assumptions, or a designated devil's advocate
+- 1 Judge: a neutral third party, usually the Leader or a domain expert
+- The facilitator may double as Judge, but must not speak for either side
 
-## 反模式
+## Anti-patterns
 
-- Critic 只是泛泛否定，没有引用正方具体论点（无效质疑）
-- Advocate 在 Round 1 预判质疑、主动防守（偏离陈述目的）
-- Judge 在前三轮表态（影响辩论独立性）
-- 只有 1 人参加（没有真正的对立，无法触发辩论价值）
-- 辩论变成人身攻击或情绪对抗（应聚焦论点，不针对人）
+- The Critic only dismisses generically without quoting the advocate's specific arguments (ineffective challenge)
+- The Advocate pre-empts challenges and defends in Round 1 (deviates from the purpose of presenting the case)
+- The Judge states a position in the first three rounds (undermines debate independence)
+- Only 1 participant (no real opposition, so no debate value is triggered)
+- The debate turns into personal attacks or emotional confrontation (focus on arguments, not people)

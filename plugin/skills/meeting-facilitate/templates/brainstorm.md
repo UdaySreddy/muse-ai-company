@@ -1,44 +1,44 @@
 ---
 template_name: brainstorm
-description: 头脑风暴——发散思维，产生尽可能多的创意和方案
+description: Brainstorming — divergent thinking to generate as many ideas and options as possible
 total_rounds: 4
 rounds:
   - number: 1
-    name: "独立发散"
-    rule: "每人独立提出想法，不评判他人。发言格式：[想法标题] + [简要描述] + [预期价值]"
+    name: "Independent divergence"
+    rule: "Each person proposes ideas independently, without judging others. Statement format: [Idea title] + [Brief description] + [Expected value]"
   - number: 2
-    name: "交叉启发"
-    rule: "必须引用至少1个他人想法，在其基础上衍生。发言格式：[引用原想法] → [衍生想法] + [组合理由]"
+    name: "Cross-pollination"
+    rule: "You must quote at least 1 idea from someone else and build on it. Statement format: [Quoted original idea] → [Derived idea] + [Rationale for the combination]"
   - number: 3
-    name: "评估筛选"
-    rule: "每Agent投3票（可投给自己或他人的想法）。发言格式：[投票: 想法A, 想法B, 想法C] + [各投票理由]"
+    name: "Evaluation and filtering"
+    rule: "Each agent casts 3 votes (may vote for their own or others' ideas). Statement format: [Votes: Idea A, Idea B, Idea C] + [Reason for each vote]"
   - number: 4
-    name: "汇总共识"
-    rule: "主持人汇总，各Agent确认或补充。产出：Top-N想法清单 + 每个想法的初步行动建议"
-keywords: [brainstorm, 头脑风暴, idea, 创意, 发散, 探索, 可能性]
+    name: "Consensus summary"
+    rule: "The facilitator summarizes; each agent confirms or adds. Output: Top-N idea list + a preliminary action suggestion for each idea"
+keywords: [brainstorm, idea, creativity, divergence, exploration, possibilities]
 ---
 
-# Brainstorm 头脑风暴模板
+# Brainstorm Template
 
-## 何时使用
+## When to use
 
-- 项目初期需要探索多种可能方向时
-- 现有方案遭遇瓶颈，需要跳出思维定势时
-- 需要大量候选想法供后续筛选（如功能列表、命名方案、解决路径）
-- 团队成员背景多元，希望发挥各自视角的场景
+- Early in a project, when you need to explore multiple possible directions
+- The current approach has hit a bottleneck and you need to break out of fixed thinking
+- You need a large pool of candidate ideas for later filtering (e.g. feature lists, naming options, solution paths)
+- Team members have diverse backgrounds and you want to leverage each perspective
 
-**不适合**：已有明确方向、只需验证可行性的场景，那更适合 decision 或 debate 模板。
+**Not suitable for**: scenarios where the direction is already clear and only feasibility needs validating — the decision or debate template fits better there.
 
-## 参与者建议
+## Participant recommendations
 
-- 3～8 人效果最佳，人数过少导致想法同质化，过多则管理困难
-- 角色多元化：技术、产品、用户视角都应有代表
-- 主持人保持中立，鼓励发散，不在 Round 1/2 评判想法质量
-- 无需特定角色头衔，普通团队成员即可参与
+- 3–8 people works best; too few leads to homogeneous ideas, too many makes it hard to manage
+- Diversify roles: technical, product, and user perspectives should all be represented
+- The facilitator stays neutral, encourages divergence, and does not judge idea quality in Rounds 1/2
+- No specific role titles needed; regular team members can participate
 
-## 反模式
+## Anti-patterns
 
-- 在 Round 1 对他人想法立刻评判或否定（会压制发散）
-- Round 3 投票时只投自己的想法（破坏民主机制）
-- 主持人在发散阶段暗示"好想法"和"坏想法"（影响投票公正性）
-- 跳过 Round 2 直接投票（损失交叉启发价值）
+- Judging or dismissing others' ideas immediately in Round 1 (suppresses divergence)
+- Voting only for your own ideas in Round 3 (breaks the democratic mechanism)
+- The facilitator hinting at "good ideas" and "bad ideas" during the divergence phase (biases voting fairness)
+- Skipping Round 2 and going straight to voting (loses the cross-pollination value)

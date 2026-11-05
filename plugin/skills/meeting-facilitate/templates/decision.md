@@ -1,42 +1,42 @@
 ---
 template_name: decision
-description: 决策会议——在多个备选方案中做出明确选择
+description: Decision meeting — make a clear choice among multiple candidate options
 total_rounds: 3
 rounds:
   - number: 1
-    name: "方案陈述"
-    rule: "只陈述事实和优势，不攻击其他方案。发言格式：[方案名称] + [事实依据] + [优势清单] + [适用条件]"
+    name: "Option presentations"
+    rule: "State facts and strengths only; do not attack other options. Statement format: [Option name] + [Factual basis] + [Strengths list] + [Applicability conditions]"
   - number: 2
-    name: "交叉质询"
-    rule: "对非自己代言的方案提问/质疑，方案代言人需回应。发言格式：[质疑对象] + [风险点] + [证据/理由]"
+    name: "Cross-examination"
+    rule: "Question/challenge options you do not represent; the option's advocate must respond. Statement format: [Target of challenge] + [Risk point] + [Evidence/reasoning]"
   - number: 3
-    name: "决策收敛"
-    rule: "贡献者给出推荐排序，决策者宣布最终决定。发言格式（贡献者）：[推荐排序] + [关键理由]；发言格式（决策者）：[最终决定] + [决定理由] + [风险缓解]"
-keywords: [decision, 决策, 选择, 方案对比, trade-off, 选型, approve]
+    name: "Decision convergence"
+    rule: "Contributors give a recommended ranking; the decision-maker announces the final decision. Statement format (contributors): [Recommended ranking] + [Key reasons]; statement format (decision-maker): [Final decision] + [Decision rationale] + [Risk mitigation]"
+keywords: [decision, choice, option comparison, trade-off, selection, approve]
 ---
 
-# Decision 决策模板
+# Decision Template
 
-## 何时使用
+## When to use
 
-- 有 2 个以上备选方案，需要通过讨论做出明确选择时
-- 技术选型（框架、数据库、架构方向）
-- 产品功能优先级排序
-- 资源分配或预算方案比较
-- 团队对方案存在分歧，需要结构化讨论收敛共识
+- There are 2 or more candidate options and a clear choice must be made through discussion
+- Technology selection (framework, database, architecture direction)
+- Product feature prioritization
+- Resource allocation or budget option comparison
+- The team disagrees about options and needs structured discussion to converge on consensus
 
-**不适合**：方案只有 1 个、没有真正的选择空间时，那可能更需要 review 模板验证质量。
+**Not suitable for**: when there is only 1 option and no real choice space — the review template for validating quality may fit better there.
 
-## 参与者建议
+## Participant recommendations
 
-- 每个备选方案至少有 1 位代言人（了解该方案细节的人）
-- 1 位决策者（Leader 或具有最终决策权的人）
-- 其他贡献者负责 Round 2 质询（可以是中立立场的专家）
-- 人数建议 3～6 人，避免决策过程过于冗长
+- Each candidate option has at least 1 advocate (someone who knows that option's details)
+- 1 decision-maker (the Leader or whoever holds final decision authority)
+- Other contributors handle Round 2 questioning (may be neutral experts)
+- 3–6 people recommended, to keep the decision process from becoming overly long
 
-## 反模式
+## Anti-patterns
 
-- Round 1 代言人攻击竞争方案（应先聚焦自身优势）
-- 决策者在 Round 1/2 提前表态（影响其他人的独立判断）
-- 质询阶段缺乏具体风险点，只是笼统否定
-- 没有明确的决策者，最终产出"大家都支持 A"但无人拍板
+- Round 1 advocates attacking competing options (focus on your own strengths first)
+- The decision-maker stating a position early in Rounds 1/2 (biases others' independent judgment)
+- The questioning phase lacking concrete risk points and offering only generic dismissal
+- No clear decision-maker, ending with "everyone supports A" but nobody making the call
