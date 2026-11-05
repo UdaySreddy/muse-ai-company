@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""用量呈现面注册表 —— I12（量纲白名单）与 I13（覆盖率同屏红线）共用的真相源。
+"""Usage presentation surface registry — the shared source of truth for I12 (dimension allowlist) and I13 (coverage same-screen red line).
 
-为什么要有一张手写的注册表，而不是让机检自己去猜"哪些是呈现面"：
+Why a hand-written registry, rather than letting the machine check guess "which are presentation surfaces" itself:
 
-* 猜不准。``tokens`` 这个词在 ingest、parser、repository 里到处都是，那些是**计算面**，
-  与"给人看的数字"是两回事。把计算面也扫进来，机检就会变成一个天天误报的东西，而
-  天天误报的机检等于没有机检。
-* 更重要的是，**注册表本身就是那道闸**。四类量纲的白名单只有在"没有未申报的呈现面"
-  这个前提下才是封闭的（§4.4：白名单只需确认四个合法值，新增量纲必须显式过审）。
-  所以两个检查都强制双向比对：漏申报 = 红，申报了却不存在 = 也红。
+* It cannot guess accurately. The word ``tokens`` is everywhere in ingest, parser and repository code, but those are **computation surfaces**,
+  a different thing from "numbers for people to look at". Sweeping computation surfaces in too would turn the machine check into something that false-reports daily, and
+  a machine check that false-reports daily is the same as no machine check.
+* More importantly, **the registry itself is the gate**. The four-dimension allowlist is closed only under the precondition "there are no undeclared presentation surfaces"
+  (§4.4: an allowlist only has to confirm four legal values; a new dimension must be explicitly reviewed).
+  So both checks enforce bidirectional comparison: a missed declaration = red, a declaration for something that does not exist = also red.
 
-规格：docs/token-attribution-v1-design.md §4.4 / §1.1 / §2.5。
-本模块只有数据，没有副作用，供 check_usage_dimensions.py 与 check_usage_coverage.py 导入。
+Spec: docs/token-attribution-v1-design.md §4.4 / §1.1 / §2.5.
+This module holds only data and has no side effects; it is imported by check_usage_dimensions.py and check_usage_coverage.py.
 """
 
 from __future__ import annotations
@@ -19,30 +19,30 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 # ---------------------------------------------------------------------------
-# 量纲白名单 —— 封闭集合，新增必须显式过审（P1）
+# Dimension allowlist — a closed set; additions must be explicitly reviewed (P1)
 # ---------------------------------------------------------------------------
-# 一切呈现只以 token 用量表达，不做任何跨量纲换算（不换算成金额、不换算成人力工时、
-# 不换算成"相当于多少次会议"）。合法量纲穷举如下，共四类：
+# All presentation is expressed only in token usage, with no cross-dimension conversion (not converted to money, not converted to person-hours,
+# not converted to "equivalent to how many meetings"). The legal dimensions are exhaustively listed below, four kinds in total:
 ALLOWED_DIMENSIONS: dict[str, str] = {
-    "token": "token 数（四层分列：input / output / cache_creation / cache_read）",
-    "count": "次数（派工数、工具调用数、agent 数……）",
-    "duration_ms": "时长毫秒",
-    "percent": "百分比",
+    "token": "token count (four layers listed separately: input / output / cache_creation / cache_read)",
+    "count": "counts (number of dispatches, tool calls, agents, …)",
+    "duration_ms": "duration in milliseconds",
+    "percent": "percentages",
 }
 
-# 非用量的数值字段（序号、字节游标、信任分……）不适用四类量纲，必须**逐个具名豁免**
-# 并写明理由——豁免是显式的，不存在"看着不像用量所以自动跳过"这条路。
+# Numeric fields that are not usage (sequence numbers, byte cursors, trust scores, …) do not fit the four dimensions and must be **exempted by name, one by one**,
+# with the reason stated — exemptions are explicit; there is no "looks unlike usage so skip it automatically" path.
 NON_USAGE = ""
 
 # ---------------------------------------------------------------------------
-# 第五类量纲的安全网（次要机制，不是白名单本身）
+# Safety net for fifth-kind dimensions (a secondary mechanism, not the allowlist itself)
 # ---------------------------------------------------------------------------
-# 白名单的封闭性由"注册表必须完整"保证；下面这张词表只是额外一道网，用来在
-# 一个**尚未登记**的文件里抓住金额/工时这类换算量纲。它是网，不是判据——判据永远
-# 是上面那四个值。命中即红，要放行必须先把该量纲加进 ALLOWED_DIMENSIONS（即过审）。
+# The closedness of the allowlist is guaranteed by "the registry must be complete"; the word list below is only an extra net, used to
+# catch conversion dimensions such as money/person-hours in a file **not yet registered**. It is a net, not a criterion — the criterion is always
+# the four values above. A hit is red; to let it through, the dimension must first be added to ALLOWED_DIMENSIONS (i.e. reviewed).
 #
-# 匹配按**标识符切词**而非子串：``isPending`` 里藏着 "spend"、``statusDone`` 里藏着
-# "usd"，子串匹配一跑就是几十条假阳性，而天天误报的机检等于没有机检。
+# Matching is by **identifier word-splitting**, not substrings: ``isPending`` hides "spend" and ``statusDone`` hides
+# "usd"; substring matching would produce dozens of false positives in one run, and a machine check that false-reports daily is the same as no machine check.
 FORBIDDEN_UNIT_WORDS: frozenset[str] = frozenset({
     "cost", "price", "usd", "cny", "rmb", "dollar", "yuan", "fee",
     "billing", "spend", "spent", "budget", "quota", "money", "credit",
@@ -52,10 +52,10 @@ FORBIDDEN_UNIT_WORDS: frozenset[str] = frozenset({
 
 @dataclass(frozen=True)
 class FieldSpec:
-    """一个数值字段的量纲与口径申报。
+    """The dimension and metric declaration of one numeric field.
 
-    ``dimension`` 为 :data:`NON_USAGE` 时表示"申报为非用量字段"，此时 ``note`` 必填。
-    ``metric`` 只对 token 量纲有意义且必填——token 数脱离口径没有意义（§0.2）。
+    When ``dimension`` is :data:`NON_USAGE` it means "declared a non-usage field", and ``note`` is then required.
+    ``metric`` is only meaningful for the token dimension and is required there — a token number detached from its metric is meaningless (§0.2).
     """
 
     dimension: str
@@ -65,51 +65,51 @@ class FieldSpec:
 
 @dataclass(frozen=True)
 class PySurface:
-    """API schema 侧的一个呈现面（``aiteam.types`` 里的一个 Pydantic 模型）。
+    """One presentation surface on the API schema side (one Pydantic model in ``aiteam.types``).
 
     ``kind``:
 
-    * ``row``：一行一条事实的记录面。覆盖率在这里的正确形态是 **no-data 可与 zero
-      区分**（列可为 None）。
-    * ``aggregate``：跨行聚合面。数值必与分母、未归因同层返回，否则就是"局部冒充
-      全貌"（§2.5 / §4.4 红线）。
+    * ``row``: a record surface with one fact per row. The correct form for coverage here is **no-data distinguishable from zero**
+      (the column may be None).
+    * ``aggregate``: a cross-row aggregate surface. Values must return at the same level as the denominator and the unattributed, otherwise it is a "part impersonating
+      the whole" (§2.5 / §4.4 red line).
     """
 
     model: str
     kind: str
     fields: dict[str, FieldSpec]
-    # row 面上"0 兼表未采集"的已知缺口：字段 -> 理由（含何时以何种方式收口）。
-    # 申报不是豁免——每次机检都会把它打印出来，让缺口保持可见。
+    # Known gaps on row surfaces where "0 doubles as not collected": field -> reason (including when and how it will be closed).
+    # A declaration is not an exemption — every machine check prints it out, keeping the gap visible.
     coverage_gap: dict[str, str] = field(default_factory=dict)
-    # aggregate 面必须具备的同层覆盖率字段（分子分母 + 未归因分类）。
+    # The same-level coverage fields an aggregate surface must have (numerator/denominator + unattributed classification).
     coverage_fields: tuple[str, ...] = ()
 
 
-# 四个 token 呈现面：三个 row 面（既有）+ 一个 aggregate 面（TokenAttribution，阶段 2）。
+# Four token presentation surfaces: three row surfaces (existing) + one aggregate surface (TokenAttribution, stage 2).
 PY_SURFACES: tuple[PySurface, ...] = (
     PySurface(
-        # 唯一的聚合面。它与三个 row 面的根本区别：row 面一行一条事实，聚合面把多行
-        # 揉成一个数——而"揉"这个动作正是局部冒充全貌的发生现场。所以这里的守卫比
-        # row 面严：必须与分母、未归因分类同层返回（AGGREGATE_REQUIRED_FIELDS），
-        # 且**不允许申报 coverage_gap**——归因数字的分母没有例外。
+        # The only aggregate surface. Its fundamental difference from the three row surfaces: a row surface has one fact per row, while an aggregate surface kneads multiple rows
+        # into a single number — and that "kneading" action is exactly where a part impersonating the whole happens. So the guards here are
+        # stricter than on row surfaces: it must return at the same level as the denominator and the unattributed classification (AGGREGATE_REQUIRED_FIELDS),
+        # and it **may not declare a coverage_gap** — the denominator of attribution numbers admits no exceptions.
         model="TokenAttribution",
         kind="aggregate",
         fields={
-            # 四层恒为 usage_sum，且这不是"暂时如此"：ctx_last 在结构上进不来。
-            # workflow_agents.tokens 在 ingest 时就把四字段加成了一个数，四层分解
-            # 从未被保存过，而本结构强制四层分列、刻意无合计字段——要把 ctx_last
-            # 塞进来只能挑一层硬塞或凭空造四层。所以 ctx_last 侧只报覆盖率
-            # （UsageCoverageRow，零 token 字段），metric 字段仍必填以钉死口径。
+            # The four layers are always usage_sum, and this is not "temporarily so": ctx_last structurally cannot get in.
+            # workflow_agents.tokens already summed the four fields into one number at ingest time; the four-layer decomposition
+            # was never saved, and this structure mandates four layers listed separately and deliberately has no total field — to squeeze ctx_last
+            # in you would have to either hard-stuff it into one layer or fabricate four layers out of nothing. So the ctx_last side only reports coverage
+            # (UsageCoverageRow, zero token fields), while the metric field is still required to pin the metric down.
             "input_tokens": FieldSpec("token", metric="usage_sum"),
             "output_tokens": FieldSpec("token", metric="usage_sum"),
             "cache_creation_tokens": FieldSpec("token", metric="usage_sum"),
             "cache_read_tokens": FieldSpec("token", metric="usage_sum"),
-            "dispatches_attributed": FieldSpec("count", note="分子：本 scope 内已测到用量的派工数"),
-            "dispatches_total": FieldSpec("count", note="分母：本 scope 内的派工总数（含没数据的行）"),
-            # 原因码 -> 派工数的映射。申报为 count 不是将就：这里要记的正是"它的值与
-            # 分母同单位"——分子加上这个 dict 的各项之和必须等于分母（契约测试钉住）。
-            # 工具调用级的 by_design 因此进不来：52,119 条活动与派工不是同一个单位。
-            "unattributed_reasons": FieldSpec("count", note="未归因派工按原因码分类计数，值与分母同单位"),
+            "dispatches_attributed": FieldSpec("count", note="numerator: the number of dispatches in this scope whose usage was measured"),
+            "dispatches_total": FieldSpec("count", note="denominator: the total number of dispatches in this scope (including rows with no data)"),
+            # A mapping from reason codes -> dispatch counts. Declaring it count is not a compromise: what must be recorded here is precisely "its values are in the
+            # same unit as the denominator" — the numerator plus the sum of this dict's entries must equal the denominator (pinned by a contract test).
+            # Tool-call-level by_design therefore cannot get in: 52,119 activities and dispatches are not the same unit.
+            "unattributed_reasons": FieldSpec("count", note="unattributed dispatches counted by reason code, values in the same unit as the denominator"),
         },
         coverage_fields=("dispatches_attributed", "dispatches_total", "unattributed_reasons"),
     ),
@@ -117,7 +117,7 @@ PY_SURFACES: tuple[PySurface, ...] = (
         model="Agent",
         kind="row",
         fields={
-            "trust_score": FieldSpec(NON_USAGE, note="信任分 0~1，agent 治理域，与用量无关"),
+            "trust_score": FieldSpec(NON_USAGE, note="trust score 0-1, the agent governance domain, unrelated to usage"),
             "ctx_tokens": FieldSpec("token", metric="ctx_watermark"),
             "ctx_window": FieldSpec("token", metric="ctx_watermark"),
             "ctx_pct": FieldSpec("percent", metric="ctx_watermark"),
@@ -137,40 +137,40 @@ PY_SURFACES: tuple[PySurface, ...] = (
             "total_tokens": FieldSpec("token", metric="ctx_last"),
             "total_tool_calls": FieldSpec("count"),
             "duration_ms": FieldSpec("duration_ms"),
-            "journal_offset": FieldSpec(NON_USAGE, note="journal.jsonl 已消费字节水位，是内部游标不是呈现量纲"),
+            "journal_offset": FieldSpec(NON_USAGE, note="the consumed byte watermark of journal.jsonl; an internal cursor, not a presentation dimension"),
             "live_tokens": FieldSpec("token", metric="ctx_last"),
         },
         coverage_gap={
-            "total_tokens": "非 Optional，0 兼表'未采到'与'真的 0'（ctx_last 侧历史遗产）。"
-                            "阶段 0 只正名不改数据；未归因的如实呈现由阶段 2 的覆盖率结构 + 阶段 5 的未归因抽屉承担。",
+            "total_tokens": "non-Optional, 0 doubles as 'not collected' and 'really 0' (a ctx_last-side historical legacy)."
+                            "Stage 0 only rectifies names and does not change data; truthful presentation of the unattributed is borne by the stage 2 coverage structure + the stage 5 unattributed drawer.",
         },
     ),
     PySurface(
         model="WorkflowAgent",
         kind="row",
         fields={
-            "phase_index": FieldSpec(NON_USAGE, note="阶段序号，不是数量"),
+            "phase_index": FieldSpec(NON_USAGE, note="phase sequence number, not a quantity"),
             "tokens": FieldSpec("token", metric="ctx_last"),
             "tool_calls": FieldSpec("count"),
             "duration_ms": FieldSpec("duration_ms"),
         },
         coverage_gap={
-            "tokens": "非 Optional，0 兼表'未采到'与'真的 0'（实测 3,182 行里 273 行为 0）。"
-                      "同上：阶段 0 不改数据，未归因由阶段 2/5 如实呈现。",
+            "tokens": "non-Optional, 0 doubles as 'not collected' and 'really 0' (measured: 273 of 3,182 rows are 0)."
+                      "Same as above: stage 0 does not change data; the unattributed is truthfully presented by stages 2/5.",
         },
     ),
 )
 
 # ---------------------------------------------------------------------------
-# 前端呈现面
+# Frontend presentation surfaces
 # ---------------------------------------------------------------------------
-# 前端没有类型内省可用，只能按文本扫。规则同样双向：dashboard/src 下任何出现 token
-# 标识符的文件都必须在这张表里；表里列了却不存在的文件也是红（改名/删文件后注册表
-# 腐烂，会让机检的覆盖面无声缩水）。
+# The frontend has no type introspection available, so it can only be scanned textually. The rule is likewise bidirectional: any file under dashboard/src in which a token
+# identifier appears must be in this table; a file listed in the table but no longer existing is also red (after a rename/file deletion the registry
+# rots, silently shrinking the machine check's coverage).
 FRONTEND_SURFACES: tuple[str, ...] = (
     "dashboard/src/api/projects.ts",
-    # 阶段 5：/usage 页的取数层与四个呈现组件。四层用量只出现在这几个文件里，
-    # 且每一处都与分母同屏（I13 的前端臂逐文件核对）。
+    # Stage 5: the /usage page's data-fetching layer and four presentation components. The four usage layers appear only in these few files,
+    # and every place is on the same screen as the denominator (the frontend arm of I13 checks file by file).
     "dashboard/src/api/usage.ts",
     "dashboard/src/api/workflows.ts",
     "dashboard/src/components/shared/ContextWatermarkBar.tsx",
@@ -178,7 +178,6 @@ FRONTEND_SURFACES: tuple[str, ...] = (
     "dashboard/src/components/usage/AttributionDrill.tsx",
     "dashboard/src/components/usage/SingleProbeCard.tsx",
     "dashboard/src/i18n/en.ts",
-    "dashboard/src/i18n/zh.ts",
     "dashboard/src/pages/AgentLivePage.tsx",
     "dashboard/src/pages/ProjectDetailPage.tsx",
     "dashboard/src/pages/TeamDetailPage.tsx",
@@ -186,8 +185,8 @@ FRONTEND_SURFACES: tuple[str, ...] = (
     "dashboard/src/types/index.ts",
 )
 
-# 前端允许出现的 token 标识符（含展示用的 i18n 键与字面量）→ 量纲。
-# 未登记的标识符即红：新加一个 token 数值到页面上，必须在这里说清它是什么量纲。
+# Token identifiers allowed to appear on the frontend (including display i18n keys and literals) → dimension.
+# An unregistered identifier is red: adding a new token value to a page requires stating here what dimension it is.
 FRONTEND_IDENTIFIERS: dict[str, str] = {
     "tokens": "token",
     "Tokens": "token",
@@ -197,45 +196,44 @@ FRONTEND_IDENTIFIERS: dict[str, str] = {
     "live_tokens": "token",
     "colTokens": "token",
     "fmtTokens": "token",
-    # 阶段 5 新增。四层分列是硬要求，所以四个层名各自具名登记 —— 没有一个
-    # "总量"标识符可登记，因为呈现面上不存在这样一个字段（§1.2）。
+    # Added in stage 5. Listing the four layers separately is a hard requirement, so each of the four layer names is registered by name — there is no
+    # "total" identifier to register, because no such field exists on any presentation surface (§1.2).
     "input_tokens": "token",
     "output_tokens": "token",
     "cache_creation_tokens": "token",
     "cache_read_tokens": "token",
     "formatTokenCount": "token",
-    # 展示文案里的量纲词本身。i18n 文件是呈现面，"token"这个词出现在给人看的
-    # 句子里时，它指的就是 token 量纲 —— 登记它，第五类量纲词表才拦得住
-    # "折算成金额/工时"那类改写（那种改写恰恰会先出现在文案里）。
+    # The dimension word itself in display copy. i18n files are presentation surfaces; when the word "token" appears in a sentence
+    # meant for people to read, it refers to the token dimension — register it, and the fifth-kind dimension word list can then block
+    # rewrites like "converted to money/person-hours" (rewrites of that kind appear in the copy first, precisely).
     "token": "token",
     "Token": "token",
 }
 
 # ---------------------------------------------------------------------------
-# 覆盖率同屏（I13）用的标记词
+# Marker words used by coverage same-screen (I13)
 # ---------------------------------------------------------------------------
-# "任何呈现面上的 token 数值，若其所在 scope 的 C_measure < 100%，必须在同屏同级
-# 显示未归因部分"（§4.4 红线）。机检认得的"同屏未归因标注"就是下面这几个词——
-# 出现其一即视为该呈现面把未归因这件事说出来了。
+# "For any token value on any presentation surface, if the C_measure of its scope is < 100%, the unattributed portion must be shown
+# on the same screen at the same level" (§4.4 red line). The "same-screen unattributed annotations" the machine check recognizes are the words below —
+# if one of them appears, that presentation surface is taken to have spoken about the unattributed.
 COVERAGE_MARKERS: tuple[str, ...] = (
     "dispatches_total", "dispatches_attributed", "unattributed", "coverage",
-    "未归因", "覆盖率",
 )
 
-# aggregate 面必须同层具备的两样东西：分母，以及未归因的分类计数（§2.5 的
-# TokenAttribution 结构）。少任何一样，数值就能脱离分母被单独渲染。
+# The two things an aggregate surface must have at the same level: the denominator, and the classification counts of the unattributed (§2.5's
+# TokenAttribution structure). Missing either one, a value can be rendered alone, detached from its denominator.
 AGGREGATE_REQUIRED_FIELDS: tuple[str, ...] = ("dispatches_total", "unattributed_reasons")
 
-# 阶段 5 已把口径徽标铺满：WorkflowsPage 的三处 ctx_last、ContextWatermarkBar 的
-# ctx_watermark（AgentLive / ProjectDetail / TeamDetail 三页共用）、/usage 页各处的
-# usage_sum，前端已无裸 token 数值。
+# Stage 5 has spread metric badges everywhere: the three ctx_last places in WorkflowsPage, ContextWatermarkBar's
+# ctx_watermark (shared by the AgentLive / ProjectDetail / TeamDetail pages), and the usage_sum places all over the /usage page — the frontend no longer has bare token values.
 #
-# 但**剩一个真缺口**，如实登记在这里、每次机检打印一次，不让它变成默认状态：
-# WorkflowsPage 展示的 `total_tokens` / `tokens` 是非 Optional 的 0 兼表"未采到"与
-# "真的是 0"（后端 row 面的同名缺口在 PY_SURFACES 里另有申报）。徽标解决了"这是
-# 什么口径"，解决不了"这个 0 是不是没数据"——那件事今天只在 /usage 的覆盖率矩阵上
-# 说得清（workflow 自报那一行的分子分母）。要收口就得让那两列可空，属数据层改动。
+#
+# But **one real gap remains**, registered truthfully here and printed once by every machine check, so it does not become the default state:
+# the `total_tokens` / `tokens` shown by WorkflowsPage are non-Optional, with 0 doubling as "not collected" and
+# "really 0" (the same-named gap on the backend row surfaces is declared separately in PY_SURFACES). The badge solved "which metric
+# is this", but it cannot solve "is this 0 actually no data" — today that is only stated clearly on the /usage coverage matrix
+# (the numerator and denominator of the workflow self-report row). Closing it means making those two columns nullable, a data-layer change.
 FRONTEND_COVERAGE_GAP = (
-    "WorkflowsPage 的 ctx_last 数值已带口径徽标，但 0 仍兼表'未采到'与'真的是 0'"
-    "（列非 Optional）；该路径的真实分子分母只在 /usage 覆盖率矩阵上可见。"
+    "WorkflowsPage's ctx_last values carry metric badges, but 0 still doubles as 'not collected' and 'really 0'"
+    "(the columns are non-Optional); the real numerator and denominator of that path are only visible on the /usage coverage matrix."
 )

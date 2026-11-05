@@ -63,14 +63,14 @@ def run(base: str, project_id: str) -> int:
         page.goto(f"{base}/ecosystem", wait_until="domcontentloaded")
         page.wait_for_timeout(2500)
         shot(page, "v15e-01-ecosystem-list.png")  # viewport-only to see header tabs clearly
-        # 也保存完整页面以便看所有卡片
+        # Also save the full page to see all cards
         shot(page, "v15e-01b-ecosystem-list-full.png", full=True)
 
         print("[2/4] /ecosystem/research (candidate filter)")
         page.goto(f"{base}/ecosystem/research", wait_until="domcontentloaded")
         page.wait_for_timeout(1200)
         # Type a research goal + add a tag
-        page.fill("#research-goal", "升级记忆系统：对比生态主流方案")
+        page.fill("#research-goal", "Upgrade the memory system: compare mainstream ecosystem approaches")
         tag_input = page.locator("#tag-input")
         tag_input.fill("memory")
         tag_input.press("Enter")
@@ -96,22 +96,22 @@ def run(base: str, project_id: str) -> int:
         else:
             page.goto(f"{base}/ecosystem/{first_repo_id}", wait_until="domcontentloaded")
             page.wait_for_timeout(2200)
-            # Click 研究历程 tab
+            # Click the Research History tab
             try:
-                page.get_by_role("tab", name="研究历程").click(timeout=3000)
+                page.get_by_role("tab", name="Research History").click(timeout=3000)
                 page.wait_for_timeout(800)
             except Exception as e:
-                print(f"  warn: could not click 研究历程 tab ({e})")
+                print(f"  warn: could not click Research History tab ({e})")
             shot(page, "v15e-03-detail-research-timeline.png")
 
         print("[4/4] /projects/:projectId (Ecosystem settings tab)")
         page.goto(f"{base}/projects/{project_id}", wait_until="domcontentloaded")
         page.wait_for_timeout(2000)
         try:
-            page.get_by_role("tab", name="Ecosystem 设置").click(timeout=3000)
+            page.get_by_role("tab", name="Ecosystem Settings").click(timeout=3000)
             page.wait_for_timeout(1500)
         except Exception as e:
-            print(f"  warn: could not click Ecosystem 设置 tab ({e})")
+            print(f"  warn: could not click Ecosystem Settings tab ({e})")
         shot(page, "v15e-04-project-ecosystem-settings.png")
 
         if console_errors:

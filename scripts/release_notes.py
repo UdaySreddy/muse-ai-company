@@ -1,36 +1,36 @@
 #!/usr/bin/env python3
-"""从 CHANGELOG.md 生成 GitHub Release 正文 —— 只生成，绝不发布。
+"""Generate the GitHub Release body from CHANGELOG.md — generate only, never publish.
 
-事故背景：v1.10.3 / v1.11.0 / v1.11.1 三个 tag 早已推到公开仓，Release 条目却一直
-没建，访客主页侧边栏两周显示 "Latest v1.10.2"（2026-07-30 手工补齐）。上一轮完全
-同型：v1.10.0/1/2 的 tag 是 07-14 打的，条目 07-21 才批量补。病因不是疏忽——凡是
-进了 scripts/check_invariants.sh 的红线都没烂，没进机检的全烂，而"发版那天还要建
-Release 条目"只存在于人的记忆里。本脚本把其中**可以离线确定性完成**的那部分（正文
-从哪来、版本对不对、命令怎么写）固化成一条命令。
+Incident background: the three tags v1.10.3 / v1.11.0 / v1.11.1 had long been pushed to the public repo, but their Release entries were never
+created, and for two weeks the visitor homepage sidebar showed "Latest v1.10.2" (manually backfilled on 2026-07-30). The previous round was exactly
+the same pattern: the v1.10.0/1/2 tags were cut on 07-14 and their entries were only batch-backfilled on 07-21. The cause is not negligence — every red line that
+entered scripts/check_invariants.sh has not rotted, and everything that did not enter a machine check has rotted, while "on release day you also have to create
+the Release entry" existed only in human memory. This script solidifies the part of that which **can be done offline and deterministically** (where the body
+comes from, whether the version is right, how the command is written) into a single command.
 
-三个刻意选择：
+Three deliberate choices:
 
-1. **正文是 CHANGELOG 段落的原样切片，不做任何 strip。** 切片范围 = 版本标题行之后
-   到下一个 ``## [`` 之前；标题行本身不含在内，因为 Release 页面已经显示 tag 与日期。
-   不 strip 是实测结论：线上 v1.11.1 的 body 就是这样一段原样切片（含前导换行与尾部
-   空行，15597 字符），去掉空白就再也对不上——而"新生成的正文与线上现有条目逐字节
-   可比"是这个脚本唯一的验收指标，可比性一破，--check 就沦为摆设。
-2. **绝不 publish。** 本仓库纪律：发布流水线必须可中断，commit / push / publish 一律
-   留给人执行。脚本只打印可直接粘贴的 ``gh release create``。这也是 --check 拿不到网络
-   时警告而非失败的原因：它的职责是报告，不是把关。
-3. **校验只做离线能做的那些。** 段落存在、版本与 I2 锁步的五处一致、正文非空——都不
-   需要联网，所以无条件跑。查条目在不在、正文对不对必须联网，所以放进可选的 --check，
-   并且允许优雅降级。这也正是"给 Release 条目加一条机检"目前做不到的地方：
-   check_invariants.sh 必须离线确定性可跑。
+1. **The body is a verbatim slice of the CHANGELOG section, with no stripping at all.** The slice range = after the version heading line
+   and before the next ``## [``; the heading line itself is not included, because the Release page already shows the tag and the date.
+   Not stripping is a measured conclusion: the live v1.11.1 body is exactly such a verbatim slice (including the leading newline and the trailing
+   blank lines, 15,597 characters); remove the whitespace and it can never match again — and "a newly generated body is byte-for-byte
+   comparable with the existing live entry" is this script's only acceptance criterion; once comparability breaks, --check becomes a decoration.
+2. **Never publish.** This repo's discipline: the release pipeline must be interruptible; commit / push / publish are all
+   left for a human to perform. The script only prints a directly pasteable ``gh release create``. That is also why --check warns rather than fails when it
+   cannot reach the network: its job is to report, not to gatekeep.
+3. **Checks only do what can be done offline.** The section exists, the version is consistent with the five places of the I2 lockstep, the body is non-empty — none of these
+   needs the network, so they run unconditionally. Checking whether an entry exists and whether its body is right requires the network, so that goes into the optional --check,
+   and it may degrade gracefully. That is also exactly where "add a machine check for Release entries" cannot currently be done:
+   check_invariants.sh must be runnable offline and deterministically.
 
-用法::
+Usage::
 
-    python3 scripts/release_notes.py 1.11.1                    # 抽段 → 落文件 → 打印 gh 命令
+    python3 scripts/release_notes.py 1.11.1                    # extract the section → write the file → print the gh command
     python3 scripts/release_notes.py 1.11.1 --title "v1.11.1 — Truthful Ledgers"
-    python3 scripts/release_notes.py --check 1.11.1             # 与线上 Release 正文逐字节比对
-    python3 scripts/release_notes.py 1.10.3 --backfill          # 为历史 tag 补条目
+    python3 scripts/release_notes.py --check 1.11.1             # compare byte-for-byte with the live Release body
+    python3 scripts/release_notes.py 1.10.3 --backfill          # backfill an entry for a historical tag
 
-退出码：0=通过（含联网失败降级跳过），1=离线校验失败 / 线上缺条目 / 正文不一致。
+Exit codes: 0=pass (including degrade-and-skip on network failure), 1=offline check failed / live entry missing / body mismatch.
 """
 
 from __future__ import annotations
@@ -45,23 +45,23 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CHANGELOG = ROOT / "CHANGELOG.md"
-# build/ 已在 .gitignore 内，落在这里不污染工作树，同时路径稳定到可以直接复制进命令。
+# build/ is already in .gitignore; landing here does not pollute the working tree, and the path is stable enough to copy straight into a command.
 DEFAULT_OUT_DIR = ROOT / "build" / "release-notes"
-# 公开仓的 remote 名。origin 是私有仓，Release 条目只建在公开仓。
+# The remote name of the public repo. origin is the private repo; Release entries are only created on the public repo.
 PUBLIC_REMOTE = "public"
 
-# 版本标题行的破折号有两种写法（1.10.0 及以后 ASCII "-"，1.9.0 及以前中文 "—"），
-# 所以标题行尾部一律用 [^\n]* 吞掉，不去匹配日期分隔符本身。
+# The dash in a version heading line comes in two spellings (from 1.10.0 on the ASCII "-", up to 1.9.0 the Chinese "—"),
+# so the tail of a heading line is always swallowed with [^\n]* and the date separator itself is never matched.
 _HEADING_TMPL = r"^## \[{ver}\][^\n]*\n"
 _NEXT_HEADING = re.compile(r"^## \[", re.M)
 _ANY_HEADING = re.compile(r"^## \[([^\]]+)\]", re.M)
 _SEMVER = re.compile(r"\d+\.\d+\.\d+")
 
-# gh 失败分两类。**认不出来的一律按降级处理**：一个只负责报告的脚本不该为未知错误崩，
-# 更不该把"我没查到"渲染成"线上有问题"。
+# gh failures fall into two classes. **Anything unrecognized is treated as degradation**: a script whose only job is reporting should not crash on an unknown error,
+# and even less should it render "I could not check" as "there is a problem live".
 _DEGRADE = re.compile(
     r"dial tcp|no such host|timed? ?out|connection refused|network is unreachable"
-    r"|could not resolve|certificate|tls|proxy|unexpected eof|未安装"
+    r"|could not resolve|certificate|tls|proxy|unexpected eof|not installed"
     r"|not logged in|authentication|bad credentials|gh auth",
     re.I,
 )
@@ -69,11 +69,11 @@ _MISSING = re.compile(r"release not found|not found|404", re.I)
 
 
 class OnlineUnavailableError(Exception):
-    """联网/鉴权/工具缺失导致查不到线上状态——查不到不等于有问题，降级跳过。"""
+    """The live state cannot be checked due to network/authentication/missing tooling — cannot check does not mean there is a problem; degrade and skip."""
 
 
-# 三个等级全部走 stdout，与 scripts/ 下其余检查脚本一致。分流到 stderr 会在管道里
-# 与 stdout 交错错序——而这些输出的第一读者是会话里捕获输出的 Leader，顺序即因果。
+# All three levels go to stdout, consistent with the other check scripts under scripts/. Splitting them to stderr would interleave them with stdout
+# in a pipeline and scramble the order — and the first reader of this output is the Leader capturing output in a session, where order is causality.
 def ok(msg: str) -> None:
     print(f"✅ {msg}")
 
@@ -86,11 +86,11 @@ def fail(msg: str) -> None:
     print(f"❌ {msg}")
 
 
-# ── CHANGELOG 抽段 ────────────────────────────────────────────────
+# ── CHANGELOG section extraction ──────────────────────────────────────
 
 
 def extract_section(text: str, version: str) -> str | None:
-    """取版本段落原样切片；找不到该版本返回 None。"""
+    """Take a verbatim slice of the version section; return None if the version is not found."""
     head = re.search(_HEADING_TMPL.format(ver=re.escape(version)), text, re.M)
     if head is None:
         return None
@@ -100,15 +100,15 @@ def extract_section(text: str, version: str) -> str | None:
 
 
 def known_versions(text: str) -> list[str]:
-    """CHANGELOG 里出现过的版本号，按文件顺序（即从新到旧）。"""
+    """The version numbers that have appeared in the CHANGELOG, in file order (i.e. newest to oldest)."""
     return _ANY_HEADING.findall(text)
 
 
-# ── I2 五处版本锁步 ──────────────────────────────────────────────
+# ── I2 version lockstep in five places ───────────────────────────────
 
 
 def read_version_sites() -> dict[str, str]:
-    """读 I2 机检的五处版本真相源。这个集合必须与 check_invariants.sh 里那份保持一致。"""
+    """Read the five version sources of truth of the I2 machine check. This set must be kept consistent with the one in check_invariants.sh."""
     sites: dict[str, str] = {}
 
     m = re.search(r'^version = "([^"]+)"', (ROOT / "pyproject.toml").read_text(encoding="utf-8"), re.M)
@@ -128,20 +128,20 @@ def read_version_sites() -> dict[str, str]:
     return sites
 
 
-# ── 外部命令 ──────────────────────────────────────────────────────
+# ── External commands ──────────────────────────────────────────────────
 
 
 def _run(argv: list[str], timeout: int = 60) -> tuple[int, str, str]:
-    """跑外部命令，永不抛异常。cwd 固定在 ROOT —— 本仓库要求并行会话用 git worktree
-    隔离，不锚定工作目录就会去读另一个 checkout 的 remote 与 tag。"""
+    """Run an external command, never raising. cwd is fixed at ROOT — this repo requires parallel sessions to isolate with git worktrees,
+    and without anchoring the working directory it would go and read another checkout's remotes and tags."""
     try:
         proc = subprocess.run(
             argv, cwd=ROOT, capture_output=True, text=True, timeout=timeout, check=False
         )
     except FileNotFoundError:
-        return 127, "", f"{argv[0]}: 未安装"
+        return 127, "", f"{argv[0]}: not installed"
     except subprocess.TimeoutExpired:
-        return 124, "", f"{argv[0]}: 超时 {timeout}s"
+        return 124, "", f"{argv[0]}: timed out after {timeout}s"
     return proc.returncode, proc.stdout, proc.stderr
 
 
@@ -160,11 +160,11 @@ def tag_exists_locally(tag: str) -> bool:
 
 
 def gh_json(args: list[str]) -> object | None:
-    """跑 gh 并解析 JSON。返回 None = 线上明确没有该对象；抛 OnlineUnavailableError = 查不到。"""
+    """Run gh and parse its JSON. Returning None = the object definitely does not exist live; raising OnlineUnavailableError = it cannot be checked."""
     code, out, err = _run(["gh", *args])
     if code == 0:
         return json.loads(out)
-    msg = (err or out).strip() or f"gh 退出码 {code}"
+    msg = (err or out).strip() or f"gh exit code {code}"
     if code in (124, 127) or _DEGRADE.search(msg):
         raise OnlineUnavailableError(msg)
     if _MISSING.search(msg):
@@ -172,7 +172,7 @@ def gh_json(args: list[str]) -> object | None:
     raise OnlineUnavailableError(msg)
 
 
-# ── --check：与线上正文逐字节比对 ─────────────────────────────────
+# ── --check: compare byte-for-byte with the live body ─────────────────
 
 
 def _first_diff(a: str, b: str) -> int:
@@ -186,51 +186,51 @@ def _report_body_diff(version: str, local: str, online: str, slug: str, out_path
     i = _first_diff(local, online)
     lo, hi = max(0, i - 40), i + 40
     fail(
-        f"正文与线上不一致：本地 {len(local)} 字符 / 线上 {len(online)} 字符，"
-        f"首个差异在第 {i} 字符"
+        f"The body differs from live: local {len(local)} characters / live {len(online)} characters,"
+        f"the first difference is at character {i}"
     )
-    print(f"   本地: {local[lo:hi]!r}")
-    print(f"   线上: {online[lo:hi]!r}")
+    print(f"   Local: {local[lo:hi]!r}")
+    print(f"   Live: {online[lo:hi]!r}")
     same_normalized = local.replace("\r\n", "\n").strip() == online.replace("\r\n", "\n").strip()
     print(
-        "   规范化（去 CRLF 与首尾空白）后"
+        "   After normalization (removing CRLF and leading/trailing whitespace)"
         + (
-            "相等 —— 差异只在换行/空白，GitHub 渲染结果不变"
-            "（v1.10.0/1/2 那批条目是用 strip 过的切片建的，属历史差异）"
+            "they are equal — the difference is only in line endings/whitespace, and the GitHub rendering is unchanged"
+            "(the v1.10.0/1/2 batch of entries was created from stripped slices, a historical difference)"
             if same_normalized
-            else "仍不相等 —— 正文实质不同，多半是条目建好后 CHANGELOG 又被改过"
+            else "they are still not equal — the bodies substantively differ, most likely because the CHANGELOG was edited after the entry was created"
         )
     )
     print(
-        f"   修正线上正文（由人执行）: gh release edit v{version} --repo {slug} "
+        f"   Fix the live body (performed by a human): gh release edit v{version} --repo {slug} "
         f"--notes-file {shlex.quote(str(out_path))}"
     )
 
 
 def _report_latest_flag(version: str, slug: str, is_newest: bool) -> int:
-    """核对 latest 徽章。只有当该版本是 CHANGELOG 里最新的那个时，不是 latest 才算失败
-    ——访客主页侧边栏显示的就是这个徽章，2026-07-30 之前它卡在 v1.10.2 两周。"""
+    """Verify the latest badge. Only when this version is the newest one in the CHANGELOG does not being latest count as a failure
+    — the visitor homepage sidebar shows exactly this badge, and before 2026-07-30 it was stuck on v1.10.2 for two weeks."""
     try:
         rels = gh_json(["release", "list", "--repo", slug, "--limit", "30", "--json", "tagName,isLatest"])
     except OnlineUnavailableError as exc:
-        warn(f"latest 徽章未能核对（{exc}）")
+        warn(f"the latest badge could not be verified ({exc})")
         return 0
     if not rels:
-        warn("latest 徽章未能核对：该仓库没有任何 Release 条目")
+        warn("the latest badge could not be verified: this repo has no Release entries at all")
         return 0
 
     latest = next((r["tagName"] for r in rels if r.get("isLatest")), None)
     tag = f"v{version}"
     if latest == tag:
-        ok(f"latest 徽章 = {tag}")
+        ok(f"latest badge = {tag}")
         return 0
     if is_newest:
         fail(
-            f"latest 徽章指向 {latest or '（无）'}，而 CHANGELOG 里最新的版本是 {tag} "
-            "—— 访客主页侧边栏正显示着旧版本"
+            f"the latest badge points at {latest or '(none)'}, while the newest version in the CHANGELOG is {tag} "
+            "— the visitor homepage sidebar is showing the old version"
         )
         return 1
-    print(f"ℹ️  latest 徽章 = {latest or '（无）'}（{tag} 不是最新版本，符合预期）")
+    print(f"ℹ️  latest badge = {latest or '(none)'} ({tag} is not the newest version, as expected)")
     return 0
 
 
@@ -239,13 +239,13 @@ def check_online(version: str, generated: str, slug: str, out_path: Path, is_new
     try:
         data = gh_json(["release", "view", tag, "--repo", slug, "--json", "body,name,publishedAt"])
     except OnlineUnavailableError as exc:
-        warn(f"--check 跳过：拿不到线上 Release（{exc}）。脚本只报告不把关，不算失败。")
+        warn(f"--check skipped: cannot get the live Release ({exc}). The script only reports and does not gatekeep, so this does not count as a failure.")
         return 0
 
     if data is None:
         fail(
-            f"{slug} 上没有 {tag} 的 Release 条目 —— tag 推了但条目没建，"
-            "正是 2026-07-30 手工补齐的那类漏项"
+            f"there is no Release entry for {tag} on {slug} — the tag was pushed but the entry was never created,"
+            "exactly the class of omission that was manually backfilled on 2026-07-30"
         )
         return 1
 
@@ -253,127 +253,127 @@ def check_online(version: str, generated: str, slug: str, out_path: Path, is_new
     status = 0
     online_body: str = data.get("body") or ""
     if online_body == generated:
-        ok(f"正文与线上逐字节一致（{len(generated)} 字符）")
+        ok(f"the body is byte-for-byte identical to live ({len(generated)} characters)")
     else:
         _report_body_diff(version, generated, online_body, slug, out_path)
         status = 1
 
-    print(f"ℹ️  线上标题: {data.get('name')!r} · 发布时间 {data.get('publishedAt')}")
+    print(f"ℹ️  Live title: {data.get('name')!r} · Published at {data.get('publishedAt')}")
     return status or _report_latest_flag(version, slug, is_newest)
 
 
-# ── 发布命令（打印，不执行）───────────────────────────────────────
+# ── Release command (print, do not execute) ──────────────────────────
 
 
 def print_create_command(version: str, slug: str, out_path: Path, title: str, backfill: bool) -> None:
     tag = f"v{version}"
     print()
-    print("发布命令 —— 由人执行，本脚本不发布:")
+    print("Release command — performed by a human; this script does not publish:")
     print(f"  gh release create {tag} \\")
     print(f"    --repo {slug} \\")
     print("    --verify-tag \\")
     print(f"    --title {shlex.quote(title)} \\")
-    # 仓库路径可能带空格（本机 checkout 就在 "AI team OS" 下），不 quote 的命令粘贴即错。
+    # A repo path may contain spaces (this machine's checkout is under "AI team OS"), and a command that is not quoted will be wrong the moment it is pasted.
     print(f"    --notes-file {shlex.quote(str(out_path))}")
     print()
-    print(f"  · --verify-tag 校验的是**远端**有没有 {tag}；本地有 tag ≠ 远端有，"
-          f"必要时先 git push {PUBLIC_REMOTE} {tag}（同样由人执行）")
-    print('  · 历史条目的标题惯例是 "v1.11.1 — <英文副标>"，副标要人写，脚本不编造；'
-          "用 --title 传")
+    print(f"  · --verify-tag verifies whether the **remote** has {tag}; having the tag locally ≠ having it remotely,"
+          f"if necessary first git push {PUBLIC_REMOTE} {tag} (also performed by a human)")
+    print('  · The historical entry title convention is "v1.11.1 — <English subtitle>"; the subtitle is written by a human, the script does not fabricate it;'
+          "pass it with --title")
     if backfill:
-        print("  · 补建多个条目时**按版本升序逐个 create**：GitHub 的 latest 徽章看发布时间，"
-              "倒序建会把旧版本顶成 latest")
-    print(f"  · 建完立刻核对: python3 scripts/release_notes.py --check {version}")
+        print("  · When backfilling multiple entries, **create them one by one in ascending version order**: GitHub's latest badge looks at publish time,"
+              "and creating in reverse order would push an old version up to latest")
+    print(f"  · Verify immediately after creating: python3 scripts/release_notes.py --check {version}")
 
 
-# ── 主流程 ────────────────────────────────────────────────────────
+# ── Main flow ────────────────────────────────────────────────────────
 
 
 def _resolve_version(parser: argparse.ArgumentParser, args: argparse.Namespace) -> str:
     raw = args.check or args.version
     if raw is None:
-        parser.error("需要版本号: release_notes.py 1.11.1 或 release_notes.py --check 1.11.1")
+        parser.error("a version number is required: release_notes.py 1.11.1 or release_notes.py --check 1.11.1")
     if args.check and args.version and args.check.lstrip("v") != args.version.lstrip("v"):
-        parser.error("--check 与位置参数给了两个不同的版本")
+        parser.error("--check and the positional argument gave two different versions")
     version = raw.lstrip("v")
     if not _SEMVER.fullmatch(version):
-        parser.error(f"版本号格式不对: {raw!r}（期望 1.11.1 或 v1.11.1）")
+        parser.error(f"invalid version number format: {raw!r} (expected 1.11.1 or v1.11.1)")
     return version
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="从 CHANGELOG.md 生成 GitHub Release 正文（只生成，不发布）"
+        description="Generate the GitHub Release body from CHANGELOG.md (generate only, never publish)"
     )
-    parser.add_argument("version", nargs="?", help="版本号，1.11.1 或 v1.11.1")
-    parser.add_argument("--check", metavar="VERSION", help="与线上 Release 正文逐字节比对（联网失败则降级跳过）")
-    parser.add_argument("--out", type=Path, help=f"正文输出路径（默认 {DEFAULT_OUT_DIR}/v<版本>.md）")
-    parser.add_argument("--title", help='Release 标题（默认 "v<版本>"）')
-    parser.add_argument("--repo", help=f"目标仓库 owner/name（默认取 git remote {PUBLIC_REMOTE}）")
+    parser.add_argument("version", nargs="?", help="version number, 1.11.1 or v1.11.1")
+    parser.add_argument("--check", metavar="VERSION", help="compare byte-for-byte with the live Release body (degrade and skip on network failure)")
+    parser.add_argument("--out", type=Path, help=f"body output path (default {DEFAULT_OUT_DIR}/v<version>.md)")
+    parser.add_argument("--title", help='Release title (default "v<version>")')
+    parser.add_argument("--repo", help=f"target repo owner/name (default: take it from git remote {PUBLIC_REMOTE})")
     parser.add_argument(
         "--backfill",
         action="store_true",
-        help="为历史版本补条目：显式声明版本号与当前树的版本不一致是有意的",
+        help="backfill an entry for a historical version: explicitly declare that the version differing from the current tree's version is intentional",
     )
     args = parser.parse_args()
     version = _resolve_version(parser, args)
 
     if not CHANGELOG.exists():
-        fail(f"找不到 {CHANGELOG}")
+        fail(f"cannot find {CHANGELOG}")
         return 1
     text = CHANGELOG.read_text(encoding="utf-8")
 
-    # ① 该版本在 CHANGELOG 里存在
+    # ① This version exists in the CHANGELOG
     section = extract_section(text, version)
     if section is None:
         versions = known_versions(text)
-        fail(f"CHANGELOG.md 里没有 {version} 段 —— 先补 CHANGELOG，再建 Release 条目")
-        print(f"   现有版本（最近 8 个）: {', '.join(versions[:8])}")
+        fail(f"there is no {version} section in CHANGELOG.md — first complete the CHANGELOG, then create the Release entry")
+        print(f"   Existing versions (most recent 8): {', '.join(versions[:8])}")
         return 1
 
-    # ② 正文非空
+    # ② The body is non-empty
     if not section.strip():
-        fail(f"{version} 段是空的 —— 空正文的 Release 条目等于没建")
+        fail(f"the {version} section is empty — a Release entry with an empty body is the same as not creating it")
         return 1
 
-    # ③ 版本与 I2 锁步的五处一致
+    # ③ The version agrees with the five places of the I2 lockstep
     sites = read_version_sites()
     distinct = set(sites.values())
     if len(distinct) != 1:
-        fail("I2 版本五处漂移，发版前必须先收敛:")
+        fail("I2 version drift in the five places; it must converge before releasing:")
         for k, v in sites.items():
             print(f"   {k} = {v}")
         return 1
     tree_version = distinct.pop()
     if tree_version != version:
-        detail = f"当前树的版本是 {tree_version}，要生成的是 {version}"
+        detail = f"the current tree's version is {tree_version}, and the one to generate is {version}"
         if args.check:
-            warn(f"{detail} —— --check 在核对历史条目，继续")
+            warn(f"{detail} — --check is verifying a historical entry, continuing")
         elif args.backfill:
-            warn(f"{detail} —— --backfill 已显式声明，继续")
+            warn(f"{detail} — --backfill has been explicitly declared, continuing")
         else:
-            fail(f"{detail} —— 发版日这通常是打错了版本号；确实在补历史条目请加 --backfill")
+            fail(f"{detail} — on release day this is usually a mistyped version number; if you really are backfilling a historical entry, add --backfill")
             return 1
 
-    # ④ tag 存在性：本地可查，远端不可（离线），所以只警告
+    # ④ Tag existence: checkable locally, not remotely (offline), so only a warning
     tag = f"v{version}"
     if not tag_exists_locally(tag):
-        warn(f"本地没有 tag {tag} —— gh release create --verify-tag 会失败，先打 tag 并推到远端")
+        warn(f"there is no local tag {tag} — gh release create --verify-tag will fail; first create the tag and push it to the remote")
 
     slug = args.repo or public_repo_slug()
     if slug is None:
-        fail(f"取不到公开仓地址（git remote {PUBLIC_REMOTE} 不存在）—— 用 --repo owner/name 显式指定")
+        fail(f"cannot get the public repo address (git remote {PUBLIC_REMOTE} does not exist) — specify it explicitly with --repo owner/name")
         return 1
 
     out_path = args.out or DEFAULT_OUT_DIR / f"{tag}.md"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    # newline="\n" 是硬要求：Windows 上默认换行翻译会把 \n 写成 \r\n，正文一进 GitHub
-    # 就与 CHANGELOG 不再逐字节可比，--check 从此永远报不一致。
+    # newline="\n" is a hard requirement: on Windows the default newline translation would write \n as \r\n, and the moment the body enters GitHub
+    # it is no longer byte-for-byte comparable with the CHANGELOG, and --check would forever report a mismatch.
     out_path.write_text(section, encoding="utf-8", newline="\n")
 
     ok(
-        f"{tag} 正文已生成: {out_path}"
-        f"（{len(section)} 字符 / {len(section.splitlines())} 行，取自 CHANGELOG.md 原样切片）"
+        f"{tag} body generated: {out_path}"
+        f"({len(section)} characters / {len(section.splitlines())} lines, a verbatim slice from CHANGELOG.md)"
     )
 
     if args.check:

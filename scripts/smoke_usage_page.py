@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""阶段 5 `/usage` 页的浏览器活体验证脚本（非单测，故用 smoke_ 前缀防 pytest 收集）。
+"""Browser live-verification script for the stage 5 `/usage` page (not a unit test, hence the smoke_ prefix to keep pytest from collecting it).
 
-只读：打开页面、点几下、截图。不写库、不改任何状态。
-中英各跑一遍 —— 页面全量走 i18n，只验一种语言等于没验另一种。
+Read-only: opens the page, clicks a few things, takes screenshots. Writes nothing to the DB and changes no state.
+Run it once per language — the page is fully i18n-driven, so verifying only one language is the same as not verifying the other.
 
-用法: python3 scripts/smoke_usage_page.py [base_url]
+Usage: python3 scripts/smoke_usage_page.py [base_url]
 """
 
 from __future__ import annotations
@@ -20,18 +20,18 @@ SHOTS.mkdir(exist_ok=True)
 
 MUST_APPEAR = {
     "zh": [
-        "覆盖率矩阵",
-        "未归因下钻",
-        "已归因明细",
-        "单次实测",
-        "口径说明",
+        "Coverage Matrix",
+        "Unattributed Drill-down",
+        "Attributed Detail",
+        "Single Measurement",
+        "Metric Definitions",
         "usage_sum",
         "ctx_last",
-        "设计上不采集",
-        "无合计行",
-        "四层分列，无合计字段",
-        "单次实测，非全量台账",
-        "Leader 主会话",
+        "Not collected by design",
+        "No total row",
+        "Four layers, split; no total field",
+        "Single measurement, not a full ledger",
+        "Leader main session",
         "no_transcript_path",
         "not_yet_measured",
         "by_design",
@@ -73,7 +73,7 @@ def run(lang: str) -> tuple[list[str], list[str]]:
         for probe in MUST_APPEAR[lang]:
             print(f"  [{lang}] {probe}: {'YES' if probe in body else '*** MISSING ***'}")
 
-        # 移动端断点（375px）—— 表格与并排面板必须不横向溢出
+        # Mobile breakpoint (375px) — tables and side-by-side panels must not overflow horizontally
         if lang == "zh":
             page.set_viewport_size({"width": 375, "height": 900})
             page.wait_for_timeout(1500)
@@ -81,7 +81,7 @@ def run(lang: str) -> tuple[list[str], list[str]]:
             overflow = page.evaluate(
                 "document.documentElement.scrollWidth - document.documentElement.clientWidth"
             )
-            print(f"  [zh] 375px 横向溢出: {overflow}px")
+            print(f"  [zh] 375px horizontal overflow: {overflow}px")
 
         browser.close()
     return missing, errors

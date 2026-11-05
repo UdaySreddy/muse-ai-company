@@ -4,7 +4,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-OUT = Path(r"C:/Users/TUF/Desktop/AI团队框架/ai-team-os/docs/screenshots")
+OUT = Path(r"C:/Users/TUF/Desktop/AI-team-framework/ai-team-os/docs/screenshots")
 FASTMCP_ID = "6d87c65c-7ebd-4d39-8f9c-2d34388fe58c"
 URL_DETAIL = f"http://localhost:5174/ecosystem/{FASTMCP_ID}"
 
@@ -26,7 +26,7 @@ with sync_playwright() as p:
     print(f"body len: {len(body)}")
 
     # check key sections
-    for key in ["fastmcp", "深度审查", "深扫", "5", "PrefectHQ", "Apache", "report_id"]:
+    for key in ["fastmcp", "deep review", "deep scan", "5", "PrefectHQ", "Apache", "report_id"]:
         if key in body:
             print(f"  found '{key}': YES")
         else:

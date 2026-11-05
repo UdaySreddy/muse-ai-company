@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# 本地预检 — push 前一次性跑完 CI 会跑的所有门禁，把"提交后才发现红"提前到本地。
+# Local preflight — before pushing, run all the gates CI will run in one go, moving "only finding it red after committing" earlier, to local.
 #
-# 用法：
-#   bash scripts/preflight.sh          # 全量（ruff + eslint + 单测 + 机检）
-#   bash scripts/preflight.sh --fast   # 跳过单测，只跑 lint + 机检（秒级）
+# Usage:
+#   bash scripts/preflight.sh          # Full (ruff + eslint + unit tests + machine checks)
+#   bash scripts/preflight.sh --fast   # Skip unit tests, only run lint + machine checks (seconds)
 #
-# 装成 git pre-push 钩子（推荐）：
+# Install as a git pre-push hook (recommended):
 #   ln -sf ../../scripts/preflight.sh .git/hooks/pre-push
-# 想临时跳过：git push --no-verify
+# To skip temporarily: git push --no-verify
 set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
@@ -22,43 +22,43 @@ run() {
   if "$@"; then
     printf '\033[32m  ✓ %s\033[0m\n\n' "$name"
   else
-    printf '\033[31m  ✗ %s 失败\033[0m\n\n' "$name"
+    printf '\033[31m  ✗ %s failed\033[0m\n\n' "$name"
     FAIL=1
   fi
 }
 
-# 1. ruff（对齐 CI：ruff check src/ tests/）——本机未装则跳过（CI 兜底），
-# 工具缺失≠代码有问题，不该拦 push（2026-07-10 实测误拦）
+# 1. ruff (aligned with CI: ruff check src/ tests/) — skipped if not installed locally (CI is the backstop),
+# a missing tool ≠ a code problem and should not block a push (verified false block on 2026-07-10)
 if command -v ruff >/dev/null 2>&1; then
   run "ruff (src/ tests/)" ruff check src/ tests/
 elif python3 -m ruff --version >/dev/null 2>&1; then
   run "ruff (src/ tests/)" python3 -m ruff check src/ tests/
 else
-  printf '\033[33m⏭  ruff 未安装，跳过（CI 会跑）\033[0m\n\n'
+  printf '\033[33m⏭  ruff not installed, skipping (CI will run it)\033[0m\n\n'
 fi
 
-# 2. eslint（对齐 CI：dashboard npm run lint）——依赖未安装则跳过，与上面 ruff 同一条
-# 语义：工具缺失≠代码有问题。dashboard/node_modules 是 gitignore 的，所以每个新建的
-# git worktree 里必然缺失，而本仓库要求并行会话用 worktree 隔离——不加这道判断，
-# worktree 里的预检会稳定假红一次（2026-07-30 发版预检实测）。
+# 2. eslint (aligned with CI: dashboard npm run lint) — skipped if dependencies are not installed, same rule as ruff above:
+# a missing tool ≠ a code problem. dashboard/node_modules is gitignored, so every newly created
+# git worktree necessarily lacks it, and this repo requires parallel sessions to isolate with worktrees — without this check,
+# preflight in a worktree would reliably false-red once (verified in the 2026-07-30 release preflight).
 if [[ -x dashboard/node_modules/.bin/eslint ]]; then
   run "eslint (dashboard)" bash -c 'cd dashboard && npm run lint'
 else
-  printf '\033[33m⏭  dashboard 依赖未安装，eslint 跳过（cd dashboard && npm ci；CI 会跑）\033[0m\n\n'
+  printf '\033[33m⏭  dashboard dependencies not installed, skipping eslint (cd dashboard && npm ci; CI will run it)\033[0m\n\n'
 fi
 
-# 3. 红线不变量机检（hook 双副本/版本锁步/双 dist/dist 时效/venv）
-run "红线机检" bash scripts/check_invariants.sh
+# 3. Red-line invariant machine checks (hook dual copies / version lockstep / dual dist / dist freshness / venv)
+run "red-line machine checks" bash scripts/check_invariants.sh
 
-# 4. 单测（对齐 CI：pytest tests/unit/）— --fast 时跳过
+# 4. Unit tests (aligned with CI: pytest tests/unit/) — skipped with --fast
 if [[ "$FAST" == "0" ]]; then
-  run "单测 (tests/unit/)" python3 -m pytest tests/unit/ -q
+  run "unit tests (tests/unit/)" python3 -m pytest tests/unit/ -q
 else
-  printf '\033[33m⏭  单测已跳过（--fast）\033[0m\n\n'
+  printf '\033[33m⏭  unit tests skipped (--fast)\033[0m\n\n'
 fi
 
 if [[ "$FAIL" == "1" ]]; then
-  printf '\033[31m\033[1m✗ 预检未通过 — 修复后再 push（或 git push --no-verify 强推）\033[0m\n'
+  printf '\033[31m\033[1m✗ Preflight failed — fix before pushing (or force-push with git push --no-verify)\033[0m\n'
   exit 1
 fi
-printf '\033[32m\033[1m✓ 预检全部通过 — 可以 push\033[0m\n'
+printf '\033[32m\033[1m✓ Preflight all passed — OK to push\033[0m\n'

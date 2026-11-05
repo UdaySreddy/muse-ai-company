@@ -4,7 +4,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-OUT = Path(r"C:/Users/TUF/Desktop/AI团队框架/ai-team-os/docs/screenshots")
+OUT = Path(r"C:/Users/TUF/Desktop/AI-team-framework/ai-team-os/docs/screenshots")
 URL = "http://localhost:5174/ecosystem"
 BUGS = []
 

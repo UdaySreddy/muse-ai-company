@@ -1,6 +1,6 @@
-"""从 MCP server.py 提取所有 @mcp.tool() 函数，生成工具参考文档。
+"""Extract all @mcp.tool() functions from the MCP server.py and generate a tool reference document.
 
-用法: python scripts/gen_tool_docs.py
+Usage: python scripts/gen_tool_docs.py
 """
 
 from __future__ import annotations
@@ -9,56 +9,56 @@ import ast
 import textwrap
 from pathlib import Path
 
-# ---------- 路径 ----------
+# ---------- Paths ----------
 ROOT = Path(__file__).resolve().parent.parent
 SERVER_PY = ROOT / "src" / "aiteam" / "mcp" / "server.py"
 OUTPUT_MD = ROOT / "docs" / "mcp-tools-reference.md"
 
-# ---------- 分类映射 ----------
+# ---------- Category mapping ----------
 CATEGORY_MAP: dict[str, tuple[str, int]] = {
     # tool_name -> (category_label, sort_order_within_category)
-    # 团队管理
-    "team_status":      ("团队管理", 2),
-    "team_list":        ("团队管理", 3),
-    "team_briefing":    ("团队管理", 4),
-    # Agent 管理
-    "agent_update_status": ("Agent 管理", 2),
-    "agent_list":          ("Agent 管理", 3),
-    # 任务管理
-    "task_run":       ("任务管理", 1),
-    "task_status":    ("任务管理", 3),
-    "task_list_project": ("任务管理", 4),
-    # 会议
-    "meeting_create":        ("会议", 1),
-    "meeting_send_message":  ("会议", 2),
-    "meeting_read_messages": ("会议", 3),
-    "meeting_conclude":      ("会议", 4),
-    # 记忆
-    "memory_search": ("记忆", 1),
-    # 项目管理
-    "project_create": ("项目管理", 1),
-    # 系统
-    "os_health_check":  ("系统", 1),
-    "event_list":       ("系统", 2),
+    # Team management
+    "team_status":      ("Team Management", 2),
+    "team_list":        ("Team Management", 3),
+    "team_briefing":    ("Team Management", 4),
+    # Agent management
+    "agent_update_status": ("Agent Management", 2),
+    "agent_list":          ("Agent Management", 3),
+    # Task management
+    "task_run":       ("Task Management", 1),
+    "task_status":    ("Task Management", 3),
+    "task_list_project": ("Task Management", 4),
+    # Meetings
+    "meeting_create":        ("Meetings", 1),
+    "meeting_send_message":  ("Meetings", 2),
+    "meeting_read_messages": ("Meetings", 3),
+    "meeting_conclude":      ("Meetings", 4),
+    # Memory
+    "memory_search": ("Memory", 1),
+    # Project management
+    "project_create": ("Project Management", 1),
+    # System
+    "os_health_check":  ("System", 1),
+    "event_list":       ("System", 2),
 }
 
-# 分类显示顺序
+# Category display order
 CATEGORY_ORDER = [
-    "团队管理",
-    "Agent 管理",
-    "任务管理",
-    "循环系统",
-    "会议",
-    "记忆",
-    "项目管理",
-    "系统",
+    "Team Management",
+    "Agent Management",
+    "Task Management",
+    "Loop System",
+    "Meetings",
+    "Memory",
+    "Project Management",
+    "System",
 ]
 
 
-# ---------- AST 解析 ----------
+# ---------- AST parsing ----------
 
 def _is_mcp_tool_decorated(node: ast.FunctionDef) -> bool:
-    """判断函数是否有 @mcp.tool() 装饰器。"""
+    """Tell whether a function has an @mcp.tool() decorator."""
     for deco in node.decorator_list:
         # @mcp.tool()
         if isinstance(deco, ast.Call):
@@ -70,7 +70,7 @@ def _is_mcp_tool_decorated(node: ast.FunctionDef) -> bool:
                 and func.value.id == "mcp"
             ):
                 return True
-        # @mcp.tool (无括号)
+        # @mcp.tool (no parentheses)
         if (
             isinstance(deco, ast.Attribute)
             and deco.attr == "tool"
@@ -82,21 +82,21 @@ def _is_mcp_tool_decorated(node: ast.FunctionDef) -> bool:
 
 
 def _annotation_to_str(node: ast.expr | None) -> str:
-    """将 AST 类型注解节点转为可读字符串。"""
+    """Convert an AST type-annotation node to a readable string."""
     if node is None:
         return ""
     return ast.unparse(node)
 
 
 def _default_to_str(default: ast.expr) -> str:
-    """将默认值 AST 节点转为可读字符串。"""
+    """Convert a default-value AST node to a readable string."""
     return ast.unparse(default)
 
 
 def _parse_docstring(raw: str | None) -> tuple[str, dict[str, str], str]:
-    """解析 docstring，返回 (summary, args_dict, returns_text)。
+    """Parse a docstring and return (summary, args_dict, returns_text).
 
-    支持 Google-style docstring（Args: / Returns:）。
+    Supports Google-style docstrings (Args: / Returns:).
     """
     if not raw:
         return ("", {}, "")
@@ -125,16 +125,16 @@ def _parse_docstring(raw: str | None) -> tuple[str, dict[str, str], str]:
         if section == "summary":
             summary_lines.append(stripped)
         elif section == "args":
-            # 新参数行: "name: description"
+            # New parameter line: "name: description"
             if ":" in stripped and not stripped.startswith(" ") and not line.startswith("        "):
-                # 检测是否是缩进较少的行（参数行通常缩进 8 个空格）
+                # Detect whether this is a less-indented line (parameter lines are usually indented 8 spaces)
                 indent = len(line) - len(line.lstrip())
                 if indent <= 8 and ":" in stripped:
                     parts = stripped.split(":", 1)
                     current_arg = parts[0].strip()
                     args_dict[current_arg] = parts[1].strip()
                     continue
-            # 续行
+            # Continuation line
             if current_arg and stripped:
                 args_dict[current_arg] += " " + stripped
         elif section == "returns":
@@ -142,13 +142,13 @@ def _parse_docstring(raw: str | None) -> tuple[str, dict[str, str], str]:
                 returns_text += (" " if returns_text else "") + stripped
 
     summary = " ".join(summary_lines).strip()
-    # 去掉 summary 末尾空行产生的多余空格
+    # Remove the extra trailing space left by a blank line at the end of the summary
     summary = summary.strip()
     return (summary, args_dict, returns_text)
 
 
 def extract_tools(source: str) -> list[dict]:
-    """从 Python 源码中提取所有 @mcp.tool() 函数信息。"""
+    """Extract information on all @mcp.tool() functions from Python source."""
     tree = ast.parse(source)
     tools = []
 
@@ -162,11 +162,11 @@ def extract_tools(source: str) -> list[dict]:
         docstring = ast.get_docstring(node)
         summary, args_doc, returns_doc = _parse_docstring(docstring)
 
-        # 提取参数
+        # Extract parameters
         args_info: list[dict] = []
         func_args = node.args
 
-        # 计算 defaults 对齐（defaults 对应最后 N 个 args）
+        # Compute the defaults alignment (defaults correspond to the last N args)
         num_args = len(func_args.args)
         num_defaults = len(func_args.defaults)
         default_offset = num_args - num_defaults
@@ -197,11 +197,11 @@ def extract_tools(source: str) -> list[dict]:
     return tools
 
 
-# ---------- Markdown 生成 ----------
+# ---------- Markdown generation ----------
 
 def generate_markdown(tools: list[dict]) -> str:
-    """按分类生成 Markdown 文档。"""
-    # 分组
+    """Generate a Markdown document grouped by category."""
+    # Group
     categorized: dict[str, list[tuple[int, dict]]] = {}
     uncategorized: list[dict] = []
 
@@ -213,18 +213,18 @@ def generate_markdown(tools: list[dict]) -> str:
         else:
             uncategorized.append(tool)
 
-    # 排序
+    # Sort
     for cat in categorized:
         categorized[cat].sort(key=lambda x: x[0])
 
     lines: list[str] = []
     lines.append("# AI Team OS MCP Tools Reference")
     lines.append("")
-    lines.append(f"> 自动生成自 `src/aiteam/mcp/server.py` — 共 {len(tools)} 个工具")
+    lines.append(f"> Auto-generated from `src/aiteam/mcp/server.py` — {len(tools)} tools in total")
     lines.append("")
 
-    # 目录
-    lines.append("## 目录")
+    # Table of contents
+    lines.append("## Table of Contents")
     lines.append("")
     for cat in CATEGORY_ORDER:
         if cat not in categorized:
@@ -234,13 +234,13 @@ def generate_markdown(tools: list[dict]) -> str:
             anchor = tool["name"].replace("_", "-")
             lines.append(f"  - [{tool['name']}](#{anchor})")
     if uncategorized:
-        lines.append("- [其他](#其他)")
+        lines.append("- [Other](#other)")
         for tool in uncategorized:
             anchor = tool["name"].replace("_", "-")
             lines.append(f"  - [{tool['name']}](#{anchor})")
     lines.append("")
 
-    # 各分类
+    # Each category
     for cat in CATEGORY_ORDER:
         if cat not in categorized:
             continue
@@ -255,7 +255,7 @@ def generate_markdown(tools: list[dict]) -> str:
     if uncategorized:
         lines.append("---")
         lines.append("")
-        lines.append("## 其他")
+        lines.append("## Other")
         lines.append("")
         for tool in uncategorized:
             lines.extend(_render_tool(tool))
@@ -264,7 +264,7 @@ def generate_markdown(tools: list[dict]) -> str:
 
 
 def _render_tool(tool: dict) -> list[str]:
-    """渲染单个 tool 的 Markdown 段落。"""
+    """Render the Markdown section for a single tool."""
     lines: list[str] = []
     lines.append(f"### `{tool['name']}`")
     lines.append("")
@@ -272,22 +272,22 @@ def _render_tool(tool: dict) -> list[str]:
     lines.append("")
 
     if tool["args"]:
-        lines.append("**参数:**")
+        lines.append("**Parameters:**")
         lines.append("")
-        lines.append("| 参数 | 类型 | 默认值 | 说明 |")
+        lines.append("| Parameter | Type | Default | Description |")
         lines.append("|------|------|--------|------|")
         for arg in tool["args"]:
             type_str = f"`{arg['type']}`" if arg["type"] else "-"
-            default_str = f"`{arg['default']}`" if arg["default"] else "必填"
+            default_str = f"`{arg['default']}`" if arg["default"] else "Required"
             desc = arg["description"] or "-"
             lines.append(f"| `{arg['name']}` | {type_str} | {default_str} | {desc} |")
         lines.append("")
     else:
-        lines.append("**参数:** 无")
+        lines.append("**Parameters:** none")
         lines.append("")
 
     if tool["returns"]:
-        lines.append(f"**返回:** {tool['returns']}")
+        lines.append(f"**Returns:** {tool['returns']}")
         lines.append("")
 
     return lines
@@ -297,21 +297,21 @@ def _render_tool(tool: dict) -> list[str]:
 
 def main() -> None:
     if not SERVER_PY.exists():
-        print(f"错误: 找不到 {SERVER_PY}")
+        print(f"Error: cannot find {SERVER_PY}")
         raise SystemExit(1)
 
     source = SERVER_PY.read_text(encoding="utf-8")
     tools = extract_tools(source)
 
     if not tools:
-        print("警告: 未找到任何 @mcp.tool() 函数")
+        print("Warning: no @mcp.tool() functions found")
         raise SystemExit(1)
 
     md = generate_markdown(tools)
 
     OUTPUT_MD.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_MD.write_text(md, encoding="utf-8")
-    print(f"已生成 {OUTPUT_MD} — 共 {len(tools)} 个工具")
+    print(f"Generated {OUTPUT_MD} — {len(tools)} tools in total")
 
 
 if __name__ == "__main__":

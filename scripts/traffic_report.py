@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""流量报告生成器 — 从 github-repo-stats 数据分支生成自包含 HTML 报告.
+"""Traffic report generator — generates a self-contained HTML report from the github-repo-stats data branch.
 
-替代 ghrs 自带的 report.html（图像不对齐、排版差）。零外链依赖：
-CSS/JS/数据全部内嵌，离线可开、打印不破版、深浅色自适应。
+Replaces ghrs's bundled report.html (misaligned images, poor layout). Zero external-link dependencies:
+CSS/JS/data are all embedded, so it opens offline, prints without breaking layout, and adapts to light/dark color schemes.
 
-用法:
+Usage:
     python3 scripts/traffic_report.py [--out /tmp/traffic-report.html]
-                                      [--data-dir <ghrs-data 目录>]
+                                      [--data-dir <ghrs-data directory>]
 
-默认从 git 数据分支 origin/github-repo-stats 读最新 CSV；
---data-dir 指定本地目录时改读文件（离线回退）。
+By default it reads the latest CSV from the git data branch origin/github-repo-stats;
+when --data-dir specifies a local directory it reads files instead (offline fallback).
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ GIT_REF = "origin/github-repo-stats"
 DATA_PREFIX = "CronusL-1141/AI-company/ghrs-data"
 REPO_LABEL = "CronusL-1141/AI-company"
 
-# dataviz 参考调色板（已验证）：series-1 blue / series-2 aqua + 双模式 surface
+# dataviz reference palette (verified): series-1 blue / series-2 aqua + dual-mode surfaces
 LIGHT = {
     "surface": "#fcfcfb", "ink": "#0b0b0b", "ink2": "#52514e",
     "grid": "#e9e8e4", "border": "#e2e1dc", "s1": "#2a78d6", "s2": "#1baf7a",
@@ -38,7 +38,7 @@ DARK = {
     "s1_fill": "#0d366b",
 }
 
-# ── 数据读取 ────────────────────────────────────────────────────────────
+# ── Data reading ────────────────────────────────────────────────────────────
 
 
 def _git_show(path: str) -> str | None:
@@ -68,7 +68,7 @@ def _read_csv(text: str) -> list[dict[str, str]]:
 
 
 def load_data(data_dir: Path | None) -> dict[str, list[dict[str, str]]]:
-    """读五张表；git 分支优先，data_dir 回退。快照取文件名最新的一对."""
+    """Read the five tables; the git branch takes priority, data_dir is the fallback. Snapshots take the newest-named pair."""
     def read(name: str) -> list[dict[str, str]]:
         if data_dir is not None:
             p = data_dir / name
@@ -95,7 +95,7 @@ def load_data(data_dir: Path | None) -> dict[str, list[dict[str, str]]]:
     }
 
 
-# ── SVG 图表构建 ────────────────────────────────────────────────────────
+# ── SVG chart building ────────────────────────────────────────────────────────
 
 W, H = 960, 300
 PAD_L, PAD_R, PAD_T, PAD_B = 56, 16, 18, 34
@@ -122,14 +122,14 @@ def _pts(xs: list[float], ys: list[float]) -> str:
 def line_chart(
     chart_id: str,
     dates: list[str],
-    series: list[tuple[str, list[int], str]],  # (名称, 值, CSS 变量名)
+    series: list[tuple[str, list[int], str]],  # (name, values, CSS variable name)
     annotate_peak: bool = False,
     area_first: bool = False,
 ) -> str:
-    """单轴折线图：2px 线、hover 竖线 tooltip、可选峰值直接标注/面积填充."""
+    """Single-axis line chart: 2px lines, hover vertical-line tooltip, optional direct peak annotation / area fill."""
     n = len(dates)
     if n < 2:
-        return '<p class="empty">数据不足（少于 2 天）</p>'
+        return '<p class="empty">Insufficient data (fewer than 2 days)</p>'
     vmax = max(max(vals) for _, vals, _ in series) or 1
     ticks = _nice_ticks(vmax)
     vtop = ticks[-1]
@@ -139,31 +139,31 @@ def line_chart(
         return [PAD_T + PH * (1 - v / vtop) for v in vals]
 
     g: list[str] = []
-    # 网格（recessive）+ y 轴刻度
+    # Grid (recessive) + y-axis ticks
     for tv in ticks:
         y = PAD_T + PH * (1 - tv / vtop)
         g.append(f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{PAD_L + PW}" y2="{y:.1f}" class="grid"/>')
         g.append(f'<text x="{PAD_L - 8}" y="{y + 4:.1f}" class="tick" text-anchor="end">{tv:,}</text>')
-    # x 轴日期（首/尾 + 均匀 3 个中点）
+    # x-axis dates (first/last + 3 evenly spaced midpoints)
     for i in sorted({0, n // 4, n // 2, 3 * n // 4, n - 1}):
         g.append(
             f'<text x="{xs[i]:.1f}" y="{H - 10}" class="tick" text-anchor="middle">'
             f"{dates[i][5:10]}</text>"
         )
-    # 面积（仅第一系列，做 stars 类单系列纵深）
+    # Area (first series only, for depth on single-series charts like stars)
     if area_first:
         _, vals, _ = series[0]
         area = (
             f"{PAD_L},{PAD_T + PH} " + _pts(xs, ys(vals)) + f" {PAD_L + PW},{PAD_T + PH}"
         )
         g.append(f'<polygon points="{area}" class="area"/>')
-    # 折线
+    # Lines
     for name, vals, var in series:
         g.append(
             f'<polyline points="{_pts(xs, ys(vals))}" fill="none" '
             f'stroke="var({var})" stroke-width="2" stroke-linejoin="round"/>'
         )
-    # 峰值直接标注（选择性标注：只标最大点，不逐点标数）
+    # Direct peak annotation (selective annotation: only label the maximum point, not every point)
     if annotate_peak:
         name, vals, var = series[0]
         pi = vals.index(max(vals))
@@ -174,7 +174,7 @@ def line_chart(
             f'<text x="{px:.1f}" y="{py - 10:.1f}" class="peak" text-anchor="{anchor}">'
             f"{dates[pi][5:10]} · {vals[pi]:,}</text>"
         )
-    # hover 捕获层 + 竖线 + 数据（JS 消费）
+    # Hover capture layer + vertical line + data (consumed by JS)
     payload = json.dumps(
         {"dates": dates, "series": [{"name": s[0], "vals": s[1], "var": s[2]} for s in series],
          "xs": [round(x, 1) for x in xs], "padT": PAD_T, "plotH": PH},
@@ -186,7 +186,7 @@ def line_chart(
         'fill="transparent"/>'
     )
     legend = ""
-    if len(series) > 1:  # 单系列不设图例（标题即名称）
+    if len(series) > 1:  # No legend for a single series (the title is the name)
         items = "".join(
             f'<span class="li"><i style="background:var({var})"></i>{name}</span>'
             for name, _, var in series
@@ -201,9 +201,9 @@ def line_chart(
 
 
 def bar_chart(rows: list[tuple[str, int, int]]) -> str:
-    """水平条形图（magnitude → 单一 hue；4px 圆角 data-end；2px 间隙；右侧直接标值）."""
+    """Horizontal bar chart (magnitude → a single hue; 4px rounded data-end; 2px gaps; value labeled directly on the right)."""
     if not rows:
-        return '<p class="empty">暂无来源数据</p>'
+        return '<p class="empty">No referrer data yet</p>'
     vmax = max(r[1] for r in rows) or 1
     bar_h, gap, label_w, val_w = 26, 8, 190, 90
     bw = W - label_w - val_w - 24
@@ -219,11 +219,11 @@ def bar_chart(rows: list[tuple[str, int, int]]) -> str:
         g.append(
             f'<rect x="{label_w}" y="{y}" width="{w:.1f}" height="{bar_h}" rx="4" '
             'class="bar"><title>'
-            f"{_esc(name)}: {total:,} 次浏览 / {uniq:,} 独立访客</title></rect>"
+            f"{_esc(name)}: {total:,} views / {uniq:,} unique visitors</title></rect>"
         )
         g.append(
             f'<text x="{label_w + w + 10:.1f}" y="{y + bar_h / 2 + 4}" class="bval">'
-            f"{total:,} <tspan class='bsub'>({uniq:,} 人)</tspan></text>"
+            f"{total:,} <tspan class='bsub'>({uniq:,} people)</tspan></text>"
         )
     return (
         f'<svg viewBox="0 0 {W} {height}" preserveAspectRatio="xMidYMid meet" '
@@ -235,7 +235,7 @@ def _esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-# ── 报告拼装 ────────────────────────────────────────────────────────────
+# ── Report assembly ────────────────────────────────────────────────────────────
 
 
 def build_html(data: dict[str, list[dict[str, str]]]) -> str:
@@ -253,9 +253,9 @@ def build_html(data: dict[str, list[dict[str, str]]]) -> str:
 
     peak_i = views.index(max(views)) if views else 0
     kpis = [
-        ("总浏览量", f"{sum(views):,}", f"峰值 {dates[peak_i][5:10]} · {views[peak_i]:,}"),
-        ("独立访客", f"{sum(vuniq):,}", f"峰值日 {max(vuniq):,} 人"),
-        ("克隆量", f"{sum(clones):,}", f"{sum(cuniq):,} 独立克隆者"),
+        ("Total views", f"{sum(views):,}", f"Peak {dates[peak_i][5:10]} · {views[peak_i]:,}"),
+        ("Unique visitors", f"{sum(vuniq):,}", f"Peak day {max(vuniq):,} people"),
+        ("Clones", f"{sum(clones):,}", f"{sum(cuniq):,} unique cloners"),
         ("Stars", f"{star_vals[-1]:,}" if star_vals else "—", f"Forks {forks_now:,}"),
     ]
     kpi_html = "".join(
@@ -275,20 +275,20 @@ def build_html(data: dict[str, list[dict[str, str]]]) -> str:
         for r in data["paths"]
     )
 
-    date_range = f"{dates[0]} ~ {dates[-1]}（UTC 天口径）" if dates else "无数据"
+    date_range = f"{dates[0]} ~ {dates[-1]} (UTC day convention)" if dates else "No data"
 
     charts = {
         "views": line_chart(
             "c-views", dates,
-            [("浏览量", views, "--s1"), ("独立访客", vuniq, "--s2")],
+            [("Views", views, "--s1"), ("Unique visitors", vuniq, "--s2")],
             annotate_peak=True,
         ),
         "clones": line_chart(
             "c-clones", dates,
-            [("克隆量", clones, "--s1"), ("独立克隆者", cuniq, "--s2")],
+            [("Clones", clones, "--s1"), ("Unique cloners", cuniq, "--s2")],
         ),
         "stars": line_chart(
-            "c-stars", star_dates, [("Stars 累积", star_vals, "--s1")],
+            "c-stars", star_dates, [("Stars cumulative", star_vals, "--s1")],
             area_first=True,
         ),
     }
@@ -300,26 +300,26 @@ def build_html(data: dict[str, list[dict[str, str]]]) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{REPO_LABEL} 流量报告</title>
+<title>{REPO_LABEL} Traffic Report</title>
 <style>{css}</style>
 </head>
 <body>
 <main>
   <header>
-    <h1>{REPO_LABEL} · 流量报告</h1>
-    <p class="sub">数据区间 {date_range} — 由 github-repo-stats 数据分支每日累积</p>
+    <h1>{REPO_LABEL} · Traffic Report</h1>
+    <p class="sub">Data range {date_range} — accumulated daily by the github-repo-stats data branch</p>
   </header>
   <section class="kpis">{kpi_html}</section>
-  <section class="card"><h2>浏览量趋势</h2>{charts["views"]}</section>
-  <section class="card"><h2>克隆量趋势</h2>{charts["clones"]}</section>
-  <section class="card"><h2>Stars 累积增长</h2>{charts["stars"]}</section>
-  <section class="card"><h2>流量来源 Top {len(ref_rows)}</h2>
-    <p class="note">近 14 天窗口快照 · 数值为浏览次数（括号内为独立访客）</p>
+  <section class="card"><h2>Views Trend</h2>{charts["views"]}</section>
+  <section class="card"><h2>Clones Trend</h2>{charts["clones"]}</section>
+  <section class="card"><h2>Stars Cumulative Growth</h2>{charts["stars"]}</section>
+  <section class="card"><h2>Traffic Sources Top {len(ref_rows)}</h2>
+    <p class="note">Most recent 14-day window snapshot · values are view counts (unique visitors in parentheses)</p>
     {bar_chart(ref_rows)}</section>
-  <section class="card"><h2>热门访问路径</h2>
-    <table><thead><tr><th>路径</th><th class="num">浏览</th><th class="num">独立访客</th></tr></thead>
+  <section class="card"><h2>Popular Paths</h2>
+    <table><thead><tr><th>Path</th><th class="num">Views</th><th class="num">Unique visitors</th></tr></thead>
     <tbody>{path_rows}</tbody></table></section>
-  <footer>生成于本地 · scripts/traffic_report.py · 数据源 {GIT_REF}</footer>
+  <footer>Generated locally · scripts/traffic_report.py · Data source {GIT_REF}</footer>
 </main>
 <script>{js}</script>
 </body>
@@ -403,7 +403,7 @@ footer {{ margin-top: 20px; text-align: center; }}
 
 
 def _js() -> str:
-    # hover 竖线 + tooltip：按 x 最近点吸附，全部 line chart 共用
+    # Hover vertical line + tooltip: snap to the nearest point by x, shared by all line charts
     return """
 document.querySelectorAll('.chart-wrap').forEach(function (wrap) {
   var svg = wrap.querySelector('svg');
@@ -449,21 +449,21 @@ document.querySelectorAll('.chart-wrap').forEach(function (wrap) {
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="生成流量 HTML 报告")
+    ap = argparse.ArgumentParser(description="Generate a traffic HTML report")
     ap.add_argument("--out", default="/tmp/traffic-report.html")
-    ap.add_argument("--data-dir", default=None, help="本地 ghrs-data 目录（离线回退）")
+    ap.add_argument("--data-dir", default=None, help="Local ghrs-data directory (offline fallback)")
     args = ap.parse_args()
 
     data_dir = Path(args.data_dir) if args.data_dir else None
     data = load_data(data_dir)
     if not data["views_clones"]:
-        print("错误：读不到 views_clones_aggregate.csv —— 先 git fetch origin github-repo-stats，"
-              "或用 --data-dir 指定本地数据目录", file=sys.stderr)
+        print("Error: cannot read views_clones_aggregate.csv — first git fetch origin github-repo-stats,"
+              "or use --data-dir to specify a local data directory", file=sys.stderr)
         return 1
 
     out = Path(args.out)
     out.write_text(build_html(data), encoding="utf-8")
-    print(f"报告已生成: {out}  （{out.stat().st_size / 1024:.0f} KB，自包含无外链）")
+    print(f"Report generated: {out}  ({out.stat().st_size / 1024:.0f} KB, self-contained with no external links)")
     return 0
 
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# 红线不变量检查 — 把靠记忆维护的红线做成可执行检查。
-# 每条检查对应一个真实踩过的事故（docs/knowledge-layer-design.md P0）。
-# 用法: bash scripts/check_invariants.sh   （仓库根目录执行；CI 与本地通用）
-# 退出码: 0=全过（警告不拦）, 1=有违规
+# Red-line invariant checks — turn the red lines maintained by memory into executable checks.
+# Each check corresponds to a real accident that has been stepped on (docs/knowledge-layer-design.md P0).
+# Usage: bash scripts/check_invariants.sh   (run from the repo root; works for CI and local)
+# Exit code: 0=all pass (warnings do not block), 1=violations found
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -12,18 +12,18 @@ warn() { printf '⚠️  [%s] %s\n' "$1" "$2"; }
 fail() { printf '❌ [%s] %s\n' "$1" "$2"; FAIL=1; }
 ok()   { printf '✅ [%s] %s\n' "$1" "$2"; }
 
-# ── I1: hook 双副本同步（事故: 715acc8 跨项目守卫只存在于从不分发的 src 副本）──
-# 双向集合比较 + 显式白名单：旧版只从 plugin 侧遍历并 `[ -f "$twin" ]` 跳过缺失，
-# 于是「孪生副本不存在」和「只在 src 侧新增的文件」两类漂移全部静默漏检。
+# ── I1: hook dual copies in sync (accident: 715acc8 the cross-project guard existed only in the never-distributed src copy) ──
+# Bidirectional set comparison + an explicit allowlist: the old version only iterated from the plugin side and skipped missing files with `[ -f "$twin" ]`,
+# so both drift classes — "the twin copy does not exist" and "a file added only on the src side" — were silently missed.
 I1_OUT="$(python3 - <<'EOF'
 import filecmp, os, sys
 
-# 允许单侧存在的文件（各有明确理由，新增须在此显式登记）
+    # Files allowed to exist on one side only (each with a clear reason; additions must be registered explicitly here)
 PLUGIN_ONLY = {
-    "auto_install.py",  # 插件自愈入口：从链外把链装起来，装进包内副本反而递归
+    "auto_install.py",  # plugin self-heal entry point: installs the chain from outside the chain; putting it in the in-package copy would recurse instead
 }
 SRC_ONLY = {
-    "__init__.py",      # 包声明，不是 CC hook
+    "__init__.py",      # package declaration, not a CC hook
 }
 
 def pys(d):
@@ -33,38 +33,38 @@ plugin, src = "plugin/hooks", "src/aiteam/hooks"
 p, s = pys(plugin), pys(src)
 problems = []
 for name in sorted((p - s) - PLUGIN_ONLY):
-    problems.append(f"{name}: 只在 plugin/hooks 存在，缺 src/aiteam/hooks 孪生副本")
+    problems.append(f"{name}: exists only in plugin/hooks, missing the src/aiteam/hooks twin copy")
 for name in sorted((s - p) - SRC_ONLY):
-    problems.append(f"{name}: 只在 src/aiteam/hooks 存在（不会被分发，等于死代码）")
+    problems.append(f"{name}: exists only in src/aiteam/hooks (never distributed, i.e. dead code)")
 for name in sorted(p & s):
     if not filecmp.cmp(f"{plugin}/{name}", f"{src}/{name}", shallow=False):
-        problems.append(f"{name}: 双副本内容漂移")
+        problems.append(f"{name}: dual-copy content drift")
 for name in sorted(PLUGIN_ONLY & s):
-    problems.append(f"{name}: 白名单声明为 plugin 独有，却出现在 src/aiteam/hooks")
+    problems.append(f"{name}: allowlisted as plugin-only, yet appears in src/aiteam/hooks")
 if problems:
     print("\n".join(problems))
     sys.exit(1)
-print(f"{len(p & s)} 对孪生副本逐字节一致（白名单豁免 {len(PLUGIN_ONLY | SRC_ONLY)} 个）")
+print(f"{len(p & s)} pairs of twin copies byte-for-byte identical (allowlist exemptions: {len(PLUGIN_ONLY | SRC_ONLY)})")
 EOF
 )" && I1_OK=1 || I1_OK=0
 if [ "$I1_OK" -eq 1 ]; then
-  ok I1 "hook 双副本同步（${I1_OUT}）"
+  ok I1 "hook dual copies in sync (${I1_OUT})"
 else
-  fail I1 "hook 副本集合不匹配 —— plugin/hooks 与 src/aiteam/hooks 必须同名同内容:
+  fail I1 "hook copy sets do not match — plugin/hooks and src/aiteam/hooks must have the same names and content:
 $I1_OUT"
 fi
 
-# ── I1b: 遗留 send_event 副本禁令（M27: 根 hooks/ 与 .claude/hooks/ 死副本曾漂移达 79 行）──
+# ── I1b: ban on leftover send_event copies (M27: the dead copies in root hooks/ and .claude/hooks/ once drifted by up to 79 lines) ──
 I1B_BAD=""
 [ -f hooks/send_event.py ] && I1B_BAD="$I1B_BAD hooks/send_event.py"
 [ -f .claude/hooks/send_event.py ] && I1B_BAD="$I1B_BAD .claude/hooks/send_event.py"
 if [ -n "$I1B_BAD" ]; then
-  fail I1b "遗留 send_event 副本死灰复燃:$I1B_BAD —— 真相源只有 plugin/hooks/send_event.py（src/aiteam/hooks 镜像由 I1 保证）"
+  fail I1b "leftover send_event copies have risen from the dead:$I1B_BAD — the only source of truth is plugin/hooks/send_event.py (the src/aiteam/hooks mirror is guaranteed by I1)"
 else
-  ok I1b "无遗留 send_event 副本"
+  ok I1b "no leftover send_event copies"
 fi
 
-# ── I2: 版本五处锁步（事故: 7be8cd8 之前 9 处发散 0.0.0–1.6.1）──
+# ── I2: version lockstep in five places (accident: before 7be8cd8, 9 places had diverged 0.0.0–1.6.1) ──
 I2_OUT="$(python3 - <<'EOF'
 import json, re, sys
 vals = {}
@@ -84,24 +84,24 @@ print('VERSION ' + uniq.pop())
 EOF
 )" || true
 case "$I2_OUT" in
-  VERSION*) ok I2 "版本五处一致 (${I2_OUT#VERSION })" ;;
-  *)        fail I2 "版本号漂移: ${I2_OUT#MISMATCH }" ;;
+  VERSION*) ok I2 "version consistent in five places (${I2_OUT#VERSION })" ;;
+  *)        fail I2 "version number drift: ${I2_OUT#MISMATCH }" ;;
 esac
 
-# ── I3: 双 dist bundle 一致（事故: 发版日 plugin/dashboard-dist 滞后半天，人工才发现）──
+# ── I3: dual dist bundles consistent (accident: on release day plugin/dashboard-dist lagged half a day and was only caught by a human) ──
 if [ -d dashboard/dist/assets ] && [ -d plugin/dashboard-dist/assets ]; then
   A="$(ls dashboard/dist/assets/*.js 2>/dev/null | xargs -n1 basename 2>/dev/null | sort)"
   B="$(ls plugin/dashboard-dist/assets/*.js 2>/dev/null | xargs -n1 basename 2>/dev/null | sort)"
   if [ "$A" != "$B" ]; then
-    fail I3 "dashboard/dist 与 plugin/dashboard-dist 的 JS bundle 不一致 —— 重新 cp -R dashboard/dist plugin/dashboard-dist"
+    fail I3 "the JS bundles in dashboard/dist and plugin/dashboard-dist are inconsistent — re-run cp -R dashboard/dist plugin/dashboard-dist"
   else
-    ok I3 "双 dist bundle 一致"
+    ok I3 "dual dist bundles consistent"
   fi
 else
-  warn I3 "dist 目录缺失（未构建环境可忽略）"
+  warn I3 "dist directory missing (ignorable in an unbuilt environment)"
 fi
 
-# ── I4: dist 不落后于前端源码（警告级——src 改动未必影响产物，但落后超 1 天值得看）──
+# ── I4: dist not behind the frontend source (warning level — a src change may not affect the artifact, but lagging more than 1 day is worth a look) ──
 I4_OUT="$(python3 - <<'EOF'
 import os, sys
 def newest(root, exts):
@@ -125,127 +125,127 @@ print(f'{lag_h:.1f}')
 EOF
 )" || I4_OUT="0"
 if python3 -c "import sys; sys.exit(0 if float('${I4_OUT:-0}') > 24 else 1)" 2>/dev/null; then
-  warn I4 "dashboard/dist 落后前端源码 ${I4_OUT} 小时 —— 若改动涉及 UI 请重新构建"
+  warn I4 "dashboard/dist is ${I4_OUT} hours behind the frontend source — if the change involves the UI, please rebuild"
 else
-  ok I4 "dist 时效正常"
+  ok I4 "dist freshness normal"
 fi
 
-# ── I5: venv 禁令（血泪史: ae57984..e2d0fbb，四类进程共享依赖，venv 隔离已被否决）──
+# ── I5: venv ban (hard-luck history: ae57984..e2d0fbb, the four process types share dependencies and venv isolation has been rejected) ──
 I5_HITS="$(grep -rnE '(-m venv|virtualenv|venv\.create|activate_this|\.venv/bin)' src/aiteam --include='*.py' 2>/dev/null | grep -v '^\s*#' | grep -vE '#.*(venv|virtualenv)' || true)"
 if [ -n "$I5_HITS" ]; then
-  fail I5 "src/ 内出现 venv 创建/激活代码（红线）:
+  fail I5 "venv creation/activation code appeared in src/ (red line):
 $I5_HITS"
 else
-  ok I5 "无 venv 违规"
+  ok I5 "no venv violations"
 fi
 
-# ── I6: README 数字机检（事故: 2026-07 审计发现 18 页/631+ 测试/30+ 生态工具三处数字腐烂，全部源于手工维护）──
+# ── I6: README number machine check (accident: a 2026-07 audit found three rotten numbers — 18 pages / 631+ tests / 30+ ecosystem tools — all from manual maintenance) ──
 I6_OUT="$(bash scripts/check_readme_numbers.sh 2>&1)"
 if [ $? -eq 0 ]; then
-  ok I6 "README 数字与实测一致（版本/MCP 工具/页面/REST 端点/测试，双语）"
+  ok I6 "README numbers match measured values (version / MCP tools / pages / REST endpoints / tests)"
 else
-  fail I6 "README 数字漂移 —— 双语 README 与代码实测不符:
+  fail I6 "README number drift — the README does not match the measured code values:
 $I6_OUT"
 fi
 
-# ── I7: ruff lint 门禁（事故: 2026-07-21/22 两次 agent 交付代码未过 ruff 致公仓 CI Lint 红，人工验收清单靠不住，机器把关）──
+# ── I7: ruff lint gate (accident: on 2026-07-21/22, agent-delivered code twice failed ruff and turned the public repo CI Lint red; a human acceptance checklist is unreliable, a machine must guard it) ──
 if command -v ruff >/dev/null 2>&1; then
   I7_OUT="$(ruff check --quiet . 2>&1 || true)"
   if [ -z "$I7_OUT" ]; then
-    ok I7 "ruff lint 全绿"
+    ok I7 "ruff lint all green"
   else
-    fail I7 "ruff lint 未过（公仓 CI 会红）:
+    fail I7 "ruff lint failed (the public repo CI will go red):
 $(echo "$I7_OUT" | head -20)"
   fi
 else
-  ok I7 "ruff 未安装，跳过（CI 仍会把关）"
+  ok I7 "ruff not installed, skipping (CI still guards)"
 fi
 
-# ── I8: hook 注册面统一（事故: 2026-07-27 审计——源码安装与插件安装给出两个不同的 OS，
-#        源码路径整整少 4 个事件，PreToolUse matcher 也对不上；README hook 数手工维护）──
+# ── I8: hook registration surface unified (accident: the 2026-07-27 audit — source install and plugin install produced two different OSes,
+#        the source path was missing 4 whole events and the PreToolUse matcher did not match either; README hook counts were maintained by hand) ──
 I8_OUT="$(python3 scripts/check_hook_surface.py 2>&1)"
 if [ $? -eq 0 ]; then
-  ok I8 "hook 注册面统一（install.py ↔ hooks.json ↔ 双语 README）"
+  ok I8 "hook registration surface unified (install.py ↔ hooks.json ↔ README)"
 else
-  fail I8 "hook 注册面漂移 —— 两条安装路径会装出不同的 OS:
+  fail I8 "hook registration surface drift — the two install paths would install different OSes:
 $I8_OUT"
 fi
 
-# ── I9: MCP 工具参数描述（事故: 2026-07-28 审计——10 个参数在线上 schema 里没有描述，
-#        全部源于 docstring 里 `limit / offset: Pagination.` 这类一行写多参，源码看着
-#        写全了、解析器却拆不开。tool search 时代没描述的参数等于搜不到也猜不对）──
+# ── I9: MCP tool parameter descriptions (accident: the 2026-07-28 audit — 10 parameters had no description in the live schema,
+#        all from docstrings writing multiple parameters on one line like `limit / offset: Pagination.`; the source looked
+#        complete, but the parser could not split them. In the tool-search era, a parameter without a description is one that can neither be found nor guessed right) ──
 I9_OUT="$(python3 scripts/check_tool_param_descriptions.py 2>&1)"
 if [ $? -eq 0 ]; then
-  ok I9 "MCP 工具面描述完整（${I9_OUT#✅ MCP 工具面描述完整: }）"
+  ok I9 "MCP tool surface descriptions complete (${I9_OUT#✅ MCP tool surface descriptions complete: })"
 else
-  fail I9 "MCP 工具/参数缺 description —— 缺描述的参数在 tool search 里搜不到:
+  fail I9 "MCP tools/parameters missing descriptions — parameters without descriptions cannot be found in tool search:
 $I9_OUT"
 fi
 
-# ── I10: 表集合一致（事故: 2026-07-28 D0 取证——Mac 库 07-06 全新建库，Win 侧内容从未随迁，
-#        而没有任何机检对照"代码认识的表"与"磁盘上的表"，静默丢表要等到有人去读才发现）──
+# ── I10: table sets consistent (accident: 2026-07-28 D0 forensics — the Mac database was built entirely new on 07-06, the Win-side content never migrated with it,
+#        and no machine check compared "the tables the code knows" with "the tables on disk"; a silently lost table is only discovered when someone goes to read it) ──
 I10_OUT="$(python3 scripts/check_schema_tables.py 2>&1)"
 if [ $? -eq 0 ]; then
-  ok I10 "表集合一致（${I10_OUT##*✅ 表集合一致: }）"
+  ok I10 "table sets consistent (${I10_OUT##*✅ Table sets consistent: })"
   echo "$I10_OUT" | grep '^⚠️' || true
 else
-  fail I10 "ORM 声明的表在库中缺失 —— 建表失败或换机丢表:
+  fail I10 "tables declared by the ORM are missing from the database — table creation failed or a table was lost in a machine move:
 $I10_OUT"
 fi
 
-# ── I11: 时钟约定统一（事故: 2026-07-28——核心域写本地墙钟、ecosystem 域写 UTC，
-#        SQLite 落库把 offset 静默剥掉，两制的行长得一模一样，跨域比较偏 8 小时且
-#        不抛异常。它活了几个月，一次审计抓到三处。双墙钟不是谁决定的，是一个模块
-#        一个模块随手写出来的——没有机检，同样的事会再发生且同样没人看见）──
+# ── I11: clock convention unified (accident: 2026-07-28 — the core domain wrote local wall clock, the ecosystem domain wrote UTC,
+#        SQLite storage silently strips the offset, rows of the two conventions look exactly alike, cross-domain comparisons are off by 8 hours and
+#        raise no exception. It lived for several months before one audit caught three places. The dual wall clocks were decided by nobody; one module
+#        after another wrote them casually — without a machine check, the same thing will happen again and again nobody will see it) ──
 I11_OUT="$(python3 scripts/check_clock_convention.py 2>&1)"
 if [ $? -eq 0 ]; then
-  ok I11 "时钟约定统一（${I11_OUT#✅ 时钟约定统一: }）"
+  ok I11 "clock convention unified (${I11_OUT#✅ Clock convention unified: })"
 else
-  fail I11 "库里出现了第二个时钟 —— 这类错不抛异常，只会悄悄偏一个时区:
+  fail I11 "a second clock appeared in the database — this kind of error raises no exception, it only quietly shifts by one timezone:
 $I11_OUT"
 fi
 
-# ── I12: 用量呈现面量纲白名单（立项时那句"1.862 亿 token 已在库里"口径就是错的——
-#        workflow_agents.tokens 是末轮上下文水位，与用量累加实测差 5~25 倍。混口径的
-#        下一步就是混量纲：把 token 折成金额、折成工时、折成"相当于多少人天"。P1 定死
-#        只以 token 表达，且用白名单而非禁用词表——黑名单漏一个写法就破防）──
+# ── I12: usage presentation-surface dimension allowlist (the remark at project founding, "186.2 million tokens are already in the database", had the wrong metric —
+#        workflow_agents.tokens is the last-turn context watermark, measured 5-25x apart from accumulated usage. The next step after mixing metrics
+#        is mixing dimensions: folding tokens into money, into person-hours, into "equivalent to how many person-days". P1 fixes it in stone:
+#        express only in tokens, using an allowlist rather than a banned-word list — a blacklist that misses one spelling is breached) ──
 I12_OUT="$(python3 scripts/check_usage_dimensions.py 2>&1)"
 if [ $? -eq 0 ]; then
-  ok I12 "用量量纲白名单（${I12_OUT#✅ 量纲白名单通过: }）"
+  ok I12 "usage dimension allowlist (${I12_OUT#✅ Dimension allowlist passed: })"
 else
-  fail I12 "用量呈现面出现白名单外的量纲 —— 只许 token 四层/次数/时长毫秒/百分比:
+  fail I12 "a dimension outside the allowlist appeared on a usage presentation surface — only the four token layers / counts / duration in milliseconds / percentages are allowed:
 $I12_OUT"
 fi
 
-# ── I13: 覆盖率同屏红线（纪律① no-data≠zero 的呈现面形态：一个 token 数值脱离口径
-#        与分母就没有意义。子 agent 用量的实测覆盖率是 11/2450 = 0.4%，此时报出一个
-#        孤立总量就是局部冒充全貌。页面标注是软约束，所以这条钉在类型层——口径必须
-#        写在字段旁边，聚合面必须与分母同层返回）──
+# ── I13: coverage same-screen red line (the presentation-surface form of discipline 1, no-data≠zero: a token value detached from its metric
+#        and denominator is meaningless. The measured coverage of sub-agent usage is 11/2450 = 0.4%; reporting a lone
+#        total at that point is a part impersonating the whole. Page annotation is a soft constraint, so this is pinned at the type layer — the metric must
+#        be written next to the field, and aggregate surfaces must return at the same level as the denominator) ──
 I13_OUT="$(python3 scripts/check_usage_coverage.py 2>&1)"
 if [ $? -eq 0 ]; then
-  ok I13 "覆盖率同屏红线（${I13_OUT##*✅ 覆盖率同屏红线通过: }）"
+  ok I13 "coverage same-screen red line (${I13_OUT##*✅ Coverage same-screen red line passed: })"
   echo "$I13_OUT" | grep '^⚠️' || true
 else
-  fail I13 "token 数值脱离口径/分母出现 —— 未归因不呈现就是局部冒充全貌:
+  fail I13 "a token value appeared detached from metric/denominator — unattributed not presented is a part impersonating the whole:
 $I13_OUT"
 fi
 
-# ── I14: 历史回采三条硬约束（设计 §6.4）。回采脚本一次改写两千余行生产数据，其中第一条
-#        错了就无法挽回：workflow_agents.tokens 是 ctx_last 口径，回采产出的是 usage_sum，
-#        实测差 5~25 倍——写进去等于把混口径永久固化进历史且事后不可分辨（R3）。所以这条
-#        检查是行为式的：真建临时库、真跑一次 --apply、真比对禁改列的逐行 sha256 指纹，
-#        文本扫描挡不住动态拼出来的 SQL，"跑完那一列有没有变"挡得住 ──
+# ── I14: the three hard constraints on historical backfill (design §6.4). The backfill script rewrites more than two thousand rows of production data in one pass, and the first of them
+#        is irrecoverable if wrong: workflow_agents.tokens is the ctx_last metric, the backfill output is usage_sum,
+#        measured 5-25x apart — writing it in permanently solidifies the mixed metrics into history, indistinguishable afterwards (R3). So this
+#        check is behavioral: really build a temporary database, really run --apply once, really compare per-row sha256 fingerprints of the forbidden column;
+#        a text scan cannot stop dynamically assembled SQL, but "did that column change after the run" can ──
 I14_OUT="$(python3 scripts/check_backfill_safety.py 2>&1)"
 if [ $? -eq 0 ]; then
-  ok I14 "回采红线（${I14_OUT#✅ 回采红线通过: }）"
+  ok I14 "backfill red line (${I14_OUT#✅ Backfill red line passed: })"
 else
-  fail I14 "历史回采硬约束失守 —— ctx_last 列被污染 / 覆盖率分窗合并 / 幂等或 dry-run 失效:
+  fail I14 "historical backfill hard constraints breached — the ctx_last column was polluted / coverage windows merged / idempotency or dry-run failed:
 $I14_OUT"
 fi
 
 echo
 if [ "$FAIL" -eq 1 ]; then
-  echo "结论: ❌ 存在红线违规，禁止提交/发布。修复后重跑 bash scripts/check_invariants.sh"
+  echo "Conclusion: ❌ red-line violations exist; committing/releasing is forbidden. Fix them and re-run bash scripts/check_invariants.sh"
   exit 1
 fi
-echo "结论: ✅ 全部不变量通过"
+echo "Conclusion: ✅ all invariants passed"

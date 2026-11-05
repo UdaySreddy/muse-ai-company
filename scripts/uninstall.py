@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# The 25 agent templates installed by AI Team OS (mirrors plugin/agents/).
+# The 26 agent templates installed by AI Team OS (mirrors plugin/agents/).
 # Keep in sync with plugin/agents/*.md — test_install_assets.py asserts parity.
 AGENT_TEMPLATES = [
     "debate-advocate.md", "debate-critic.md",
@@ -26,7 +26,8 @@ AGENT_TEMPLATES = [
     "engineering-git-workflow-master.md", "engineering-mcp-builder.md",
     "engineering-mobile-developer.md", "engineering-rapid-prototyper.md",
     "engineering-security-engineer.md", "engineering-software-architect.md",
-    "engineering-sre.md", "management-project-manager.md",
+    "engineering-sre.md", "management-chief-operating-officer.md",
+    "management-project-manager.md",
     "management-tech-lead.md", "specialized-workflow-architect.md",
     "support-meeting-facilitator.md", "support-technical-writer.md",
     "team-member.md",

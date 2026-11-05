@@ -73,7 +73,7 @@ def _load_manifest() -> tuple[set[tuple], set[str], list[str], list[str]]:
                 match = _CMD_RE.search(command)
                 if not match:
                     errors.append(
-                        f"hooks.json:{event}: 无法解析 hook 命令 → {command[:80]!r}"
+                        f"hooks.json:{event}: cannot parse hook command → {command[:80]!r}"
                     )
                     continue
                 script, arg = match.group(1), match.group(2) or ""
@@ -97,14 +97,13 @@ def _load_installer_surface() -> set[tuple]:
 
 def _describe(entry: tuple) -> str:
     event, matcher, script, arg, timeout = entry
-    shown_matcher = matcher or "(无 matcher)"
+    shown_matcher = matcher or "(no matcher)"
     shown_arg = f" {arg}" if arg else ""
     return f"{event} [{shown_matcher}] → {script}{shown_arg} (timeout={timeout})"
 
 
 _HEADLINE_RE = {
     "README.md": re.compile(r"Hook System \((\d+) scripts? across (\d+) Lifecycle Events"),
-    "README.zh-CN.md": re.compile(r"Hook 系统（(\d+) 个脚本 / (\d+) 个生命周期事件"),
 }
 
 # Every other place either README states a lifecycle-event count. A bare
@@ -112,7 +111,6 @@ _HEADLINE_RE = {
 # event") is prose, not a claim, and must not be matched.
 _EVENT_ANCHOR_RE = (
     re.compile(r"(\d+)\s+(?:CC\s+)?[Ll]ifecycle\s+[Ee]vents?"),
-    re.compile(r"(\d+)\s*个\s*(?:CC\s*)?生命周期事件"),
 )
 
 
@@ -128,26 +126,26 @@ def scan_event_anchors(text: str, event_count: int, name: str) -> list[str]:
             for match in regex.finditer(line):
                 if int(match.group(1)) != event_count:
                     failures.append(
-                        f"{name}:{lineno}: 生命周期事件数声明 \"{match.group(0).strip()}\" "
-                        f"≠ 清单实测 {event_count}（plugin/hooks/hooks.json）"
+                        f"{name}:{lineno}: lifecycle event count declaration \"{match.group(0).strip()}\" "
+                        f"≠ manifest-measured {event_count} (plugin/hooks/hooks.json)"
                     )
     return failures
 
 
 def _readme_counts(script_count: int, event_count: int) -> list[str]:
-    """Pin every bilingual README hook count to the manifest."""
+    """Pin every README hook count to the manifest."""
     failures: list[str] = []
     for name, pattern in _HEADLINE_RE.items():
         text = (ROOT / name).read_text(encoding="utf-8")
         match = pattern.search(text)
         if not match:
-            failures.append(f"{name}: 找不到 Hook 系统标题行——无法核对脚本/事件数")
+            failures.append(f"{name}: Hook System headline line not found — cannot verify script/event counts")
         else:
             scripts, events = int(match.group(1)), int(match.group(2))
             if scripts != script_count or events != event_count:
                 failures.append(
-                    f"{name}: 声明 {scripts} 脚本 / {events} 事件 ≠ 清单实测 "
-                    f"{script_count} 脚本 / {event_count} 事件（plugin/hooks/hooks.json）"
+                    f"{name}: declares {scripts} scripts / {events} events ≠ manifest-measured "
+                    f"{script_count} scripts / {event_count} events (plugin/hooks/hooks.json)"
                 )
         failures.extend(scan_event_anchors(text, event_count, name))
     return failures
@@ -158,9 +156,9 @@ def main() -> int:
     installer = _load_installer_surface()
 
     for entry in sorted(manifest - installer):
-        failures.append(f"install.py 缺少（hooks.json 有）: {_describe(entry)}")
+        failures.append(f"install.py is missing (hooks.json has): {_describe(entry)}")
     for entry in sorted(installer - manifest):
-        failures.append(f"hooks.json 缺少（install.py 有）: {_describe(entry)}")
+        failures.append(f"hooks.json is missing (install.py has): {_describe(entry)}")
 
     # Hook counts: scripts include the plugin-only self-heal entry, events are
     # whatever the manifest actually registers.
@@ -169,21 +167,21 @@ def main() -> int:
     # Every registered script must exist on disk in both distribution copies.
     for script in sorted(scripts):
         if not (ROOT / "plugin" / "hooks" / script).is_file():
-            failures.append(f"hooks.json 注册了不存在的脚本: plugin/hooks/{script}")
+            failures.append(f"hooks.json registers a script that does not exist: plugin/hooks/{script}")
         elif script not in PLUGIN_ONLY_SCRIPTS and not (
             ROOT / "src" / "aiteam" / "hooks" / script
         ).is_file():
-            failures.append(f"注册的 hook 缺少包内孪生副本: src/aiteam/hooks/{script}")
+            failures.append(f"registered hook is missing its in-package twin copy: src/aiteam/hooks/{script}")
 
     if failures:
         for failure in failures:
             print(f"❌ {failure}")
-        print(f"\n结论: ❌ hook 注册面漂移 {len(failures)} 处")
+        print(f"\nConclusion: ❌ hook registration surface drift in {len(failures)} places")
         return 1
 
     print(
-        f"✅ hook 注册面一致: {len(events)} 事件 / {len(scripts)} 脚本 · "
-        f"install.py 与 hooks.json 逐条对齐（事件/matcher/参数/timeout）· 双语 README 数字相符"
+        f"✅ Hook registration surface consistent: {len(events)} events / {len(scripts)} scripts · "
+        f"install.py and hooks.json aligned entry by entry (event/matcher/argument/timeout) · README numbers match"
     )
     return 0
 

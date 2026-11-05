@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
-"""存量时间戳平移：本地墙钟 → UTC。默认 dry-run。
+"""Shift existing timestamps: local wall clock → UTC. Dry-run by default.
 
-规格见 docs/utc-unification-design.md。简述：这个库过去跑着两个墙钟——核心域写
-宿主本地时间，ecosystem 域写 UTC——而 SQLite 落库把 offset 静默剥掉，两制的行长得
-一模一样。代码侧已统一为 UTC（``aiteam.clock``），本脚本负责把**已经写进去的**
-本地墙钟值换算成 UTC。
+Spec in docs/utc-unification-design.md. In brief: this database used to run two wall clocks — the core domain wrote
+host-local time, the ecosystem domain wrote UTC — and SQLite storage silently strips the offset, so rows of the two conventions look
+exactly alike. The code side has been unified to UTC (``aiteam.clock``); this script converts the local wall-clock values
+**already written** into UTC.
 
-四件事决定了这个脚本的形状：
+Four things determine the shape of this script:
 
-1. **按列平移 + 逐行排除。** 一个列的写入方在库的绝大部分生命期内口径恒定（核心域
-   一直写本地），但新代码合入后**任何新起的进程都写 UTC**，所以列内会混入少数已经
-   是 UTC 的行。整列平移的同时必须把这些行逐行挑出来排除——它们已经是目标态，再减
-   一个时区就永久错 16 小时。检测在执行时刻对全库现算（见 :func:`detect_contamination`），
-   不吃任何固定行号清单：污染量随时间增长，昨天的清单今天就是错的。
-2. **判不了的行不许静默平移。** 能被证据判定的行（口径确定）自动处理；判不了的逐行
-   进 journal 的 undecidable 清单，必须人审后加 ``--ack-undecidable`` 才放行。
-3. **只许平移一次。** 成功 ``--apply`` 后在库上打幂等标记（``PRAGMA user_version``）；
-   再次 ``--apply`` 硬拒。``--journal`` 目标文件已存在同样硬拒——那是唯一的恢复凭证，
-   被覆盖就等于销毁。
-4. **可逆且无损。** 平移是纯值变换，亚秒位原样保留（见 :func:`shift_expr`）；
-   ``--rollback`` 按 journal 记录的位移量与排除清单往回搬，排除行两次都不动。
+1. **Shift per column + exclude row by row.** A column's writer kept one convention for most of the database's life (the core domain
+   always wrote local), but after the new code merged, **every newly started process writes UTC**, so a column will contain a minority of rows that are already
+   UTC. While shifting the whole column, those rows must be picked out and excluded one by one — they are already in the target state, and subtracting
+   another timezone would put them permanently 16 hours wrong. Detection is computed fresh against the whole database at execution time (see :func:`detect_contamination`)
+   and consumes no fixed row-number list: the contamination grows with time, so yesterday's list is wrong today.
+2. **Rows that cannot be judged may not be silently shifted.** Rows the evidence can judge (convention certain) are handled automatically; rows it cannot
+   go one by one into the journal's undecidable list, and only proceed after a human review plus ``--ack-undecidable``.
+3. **Shift only once.** After a successful ``--apply``, an idempotency marker is stamped on the database (``PRAGMA user_version``);
+   a second ``--apply`` hard-refuses. A ``--journal`` target file that already exists likewise hard-refuses — it is the only recovery credential, and
+   overwriting it is destroying it.
+4. **Reversible and lossless.** The shift is a pure value transformation; sub-second digits are preserved as-is (see :func:`shift_expr`);
+   ``--rollback`` moves values back by the shift amount and exclusion list recorded in the journal; excluded rows are untouched both times.
 
-用法::
+Usage::
 
-    python3 scripts/migrate_timestamps_utc.py                    # dry-run 全表报告
-    python3 scripts/migrate_timestamps_utc.py --db /tmp/copy.db  # 对副本演练
+    python3 scripts/migrate_timestamps_utc.py                    # dry-run, whole-database report
+    python3 scripts/migrate_timestamps_utc.py --db /tmp/copy.db  # rehearse against a copy
     python3 scripts/migrate_timestamps_utc.py --apply --journal ~/utc-journal.json
     python3 scripts/migrate_timestamps_utc.py --rollback --journal ~/utc-journal.json
 
-``--apply`` / ``--rollback`` 由缔造者亲自执行，执行前先备份::
+``--apply`` / ``--rollback`` are executed personally by the Founder; back up first::
 
     cp ~/.claude/data/ai-team-os/aiteam.db ~/aiteam.db.bak-utc-$(date +%Y%m%d%H%M%S)
 """
@@ -45,11 +45,11 @@ from pathlib import Path
 DEFAULT_DB = Path.home() / ".claude" / "data" / "ai-team-os" / "aiteam.db"
 
 # ---------------------------------------------------------------------------
-# 待平移列清单 —— 与 docs/utc-unification-design.md §3.1 逐条对应。
+# The list of columns to shift — corresponding item by item to docs/utc-unification-design.md §3.1.
 #
-# 判定依据是写入方代码（核心域一律 datetime.now() 宿主本地），并由生产库实测复核：
-# 各表 max(值) 均等于取证时刻的**本地**墙钟，而 ecosystem 域各表 max 落在 UTC 侧，
-# 两域分布无交叠。ecosystem_* 与 pipeline_stage_history 本就写 UTC，**不在此列**。
+# The basis for judging is the writer's code (the core domain uniformly uses host-local datetime.now()), verified against the production database:
+# each table's max(value) equals the **local** wall clock at forensics time, while the ecosystem domain's tables' max values fall on the UTC side,
+# and the two domains' distributions do not overlap. ecosystem_* and pipeline_stage_history already write UTC and are **not in this list**.
 # ---------------------------------------------------------------------------
 LOCAL_COLUMNS: dict[str, tuple[str, ...]] = {
     "projects": ("created_at", "updated_at"),
@@ -86,10 +86,10 @@ LOCAL_COLUMNS: dict[str, tuple[str, ...]] = {
     "knowledge_links": ("created_at",),
 }
 
-# 每张表的"出生列"：插入时一次写定、此后再不更新。它是**唯一**能用 rowid（物理写入
-# 序）做单调性检测的列——rowid 递增即写入序递增，值相对前缀最大值倒退约一个时区就是
-# UTC 写入的指纹。其余列都会被 UPDATE 原地改写，rowid 与值的时序脱钩，只能靠跨列预言
-# 机判定。哪列属于哪类**不是启发式，是写入方代码的事实**，改 ORM 时必须同步这里。
+# Each table's "birth column": written once at insert time and never updated afterwards. It is the **only** column that can use rowid (physical write
+# order) for monotonicity detection — an increasing rowid means an increasing write order, and a value that drops back by about one timezone relative to the prefix maximum is
+# the fingerprint of a UTC write. Every other column is rewritten in place by UPDATE, decoupling rowid from the value's timing; those can only be judged by the cross-column oracle.
+# Which class a column belongs to **is not a heuristic; it is a fact of the writer's code**; when the ORM changes, this must be synced.
 ROW_BIRTH_COLUMN: dict[str, str] = {
     "projects": "created_at",
     "phases": "created_at",
@@ -113,13 +113,13 @@ ROW_BIRTH_COLUMN: dict[str, str] = {
     "knowledge_links": "created_at",
 }
 
-# 保证"不早于出生列"的列 —— 它们记的是"这一行后来发生了什么"，所以同行的
-# ``出生列 <= 本列`` 是**结构性不变量**，可以双向当预言机用（既约束本列，也给出生列
-# 一个上界）。名单是白名单不是黑名单，因为反例是实打实存在的：
-#   · scheduled_tasks.next_run_at 记的是未来时刻；
-#   · workflow_runs/agents 的 started_at / queued_at / completed_at 来自 CC 状态文件的
-#     epoch，实测最早到 2026-06-23，比该行落库的 created_at(2026-07-06) 早好几周。
-# 把这些列塞进来，预言机会对着一条假不变量下判断。
+# Columns guaranteed "not earlier than the birth column" — they record "what happened to this row later", so ``birth column <= this column``
+# for the same row is a **structural invariant**, usable bidirectionally as an oracle (it constrains this column, and also gives the birth column
+# an upper bound). The list is an allowlist, not a blacklist, because counterexamples really exist:
+#   · scheduled_tasks.next_run_at records a future instant;
+#   · workflow_runs/agents' started_at / queued_at / completed_at come from CC state files'
+#     epochs, measured as early as 2026-06-23, weeks earlier than the created_at (2026-07-06) of the row landing in the database.
+# Stuffing these columns in would make the oracle judge against a fake invariant.
 AFTER_BIRTH_COLUMNS: set[tuple[str, str]] = {
     ("projects", "updated_at"),
     ("phases", "updated_at"),
@@ -144,54 +144,54 @@ AFTER_BIRTH_COLUMNS: set[tuple[str, str]] = {
     ("workflow_agents", "last_activity_at"),
 }
 
-# 冻结/敏感对象——照样平移（列本身不是冻结对象），但单独留档并在报告里点名。
-# tasks.config 里的旧 memo JSON 才是冻结档案，本脚本一个字节都不碰它。
+# Frozen/sensitive objects — shifted anyway (the column itself is not a frozen object), but archived separately and named in the report.
+# The old memo JSON in tasks.config is the frozen archive; this script does not touch one byte of it.
 FROZEN_NOTE = {
-    "tasks": "tasks.config.memo 是冻结档案（CLAUDE.md），本脚本只动 DATETIME 列，不碰 JSON",
-    "task_memos": "记忆 v2 升表后的活数据；旧 JSON 档案留在 tasks.config 内，不动",
-    "events": "只可追加账本（无修改面）；本次是值换算，不增删行",
-    "memories": "方向层记忆；invalid_at 是失效轴，一并平移以免失效判定错位",
+    "tasks": "tasks.config.memo is a frozen archive (CLAUDE.md); this script only touches DATETIME columns, not the JSON",
+    "task_memos": "live data after the memory v2 table migration; the old JSON archive stays in tasks.config, untouched",
+    "events": "append-only ledger (no modification surface); this is a value conversion, adding and removing no rows",
+    "memories": "direction-layer memories; invalid_at is the invalidation axis and is shifted along, lest invalidation judging go out of alignment",
 }
 
-# 明确不动的对象及理由 —— 报告里原样打印，免得下一个人重新调查一遍。
+# Objects explicitly not touched, with reasons — printed verbatim in the report, so the next person does not have to re-investigate.
 EXCLUDED = [
-    ("ecosystem_* (15 张表 / 36 列)", "本就以 UTC 写入，已是目标态"),
-    ("pipeline_stage_history.transitioned_at", "同上，ecosystem 侧 UTC"),
-    ("ecosystem_repo_profiles.pushed_at / last_commit_at", "值来自 GitHub API，本就是真 UTC"),
-    ("governance_lease.expires_at / updated_at", "VARCHAR，存的就是带 +00:00 的 isoformat"),
-    ("loop_states.updated_at", "退役 cron 引擎遗留死表，全仓零写入方"),
-    ("events.data 内嵌时间戳", "事件载荷是 hook 当时上报了什么的原样记录，改它等于篡改证词"),
-    ("tasks.config.memo 内嵌时间戳", "冻结档案（CLAUDE.md 明令不清理不写入）"),
-    ("reports.content / task_memos.content 正文内的时间", "是人写的文字，不是数据"),
-    ("检测判定为已是 UTC 的行", "新代码写入的行已在目标态，逐行排除（见报告「逐行口径判定」栏）"),
+    ("ecosystem_* (15 tables / 36 columns)", "already written in UTC; already in the target state"),
+    ("pipeline_stage_history.transitioned_at", "same as above, ecosystem-side UTC"),
+    ("ecosystem_repo_profiles.pushed_at / last_commit_at", "values come from the GitHub API and are true UTC to begin with"),
+    ("governance_lease.expires_at / updated_at", "VARCHAR, storing isoformat with +00:00"),
+    ("loop_states.updated_at", "a dead table left by the retired cron engine; zero writers in the whole repo"),
+    ("timestamps embedded in events.data", "an event payload is a verbatim record of what the hook reported at the time; changing it is tampering with testimony"),
+    ("timestamps embedded in tasks.config.memo", "frozen archive (CLAUDE.md explicitly forbids cleaning it or writing to it)"),
+    ("times in the body text of reports.content / task_memos.content", "words written by a human, not data"),
+    ("rows detected as already UTC", "rows written by the new code are already in the target state and are excluded row by row (see the report's per-row convention verdicts section)"),
 ]
 
-# 全库判定的容差：活着的系统里"最近一次写入"距今不会超过这个量。设得比一次
-# 会话间隔宽松，但远小于一个时区偏移，才分得开"贴本地 now"和"贴 UTC now"。
+# Tolerance for whole-database judging: in a living system, "the most recent write" is never further in the past than this. It is set looser than one
+# session interval but far smaller than a timezone offset, so that "hugging local now" and "hugging UTC now" can be told apart.
 GUARD_TOLERANCE = timedelta(hours=3)
 
-# 时区指纹容差：一个值要被认定为"同一瞬刻的另一种口径表达"，它与预期位置的偏差必须
-# 小于这个量。给到分钟级而不是小时级是有实测依据的——生产库 task_memos.created_at 里
-# 存在 7.1~8.7 小时的**合法**乱序（记忆 v2 升表时的批量回填），小时级容差会把它们
-# 误认成时区指纹。
+# Timezone fingerprint tolerance: for a value to be recognized as "another convention's expression of the same instant", its deviation from the expected position must
+# be smaller than this. Minute-level rather than hour-level has a measured basis — in the production database, task_memos.created_at contains
+# There exist 7.1-8.7 hours of **legitimate** disorder (the batch backfill during the memory v2 table migration); an hour-level tolerance would mistake them
+# for timezone fingerprints.
 SIGNATURE_TOLERANCE = timedelta(minutes=5)
 
-# 口径见证取样：只看最近这么多行。用中位数而不是 max —— max 天生只反映极少数最新行，
-# 少数派混入永远进不了 max，这正是旧护栏对"混口径"结构性失明的根因。
+# Convention witness sampling: only look at this many most recent rows. A median rather than max — max by nature only reflects the very few newest rows,
+# and a minority mixed in can never enter max, which is exactly why the old guardrail was structurally blind to "mixed conventions".
 WITNESS_TAIL = 200
 
-# 幂等标记：成功平移后写进 PRAGMA user_version。选它是因为侵入最小——不建表、不加列、
-# 不产生任何业务可见对象，且 SQLAlchemy / 本仓 storage 层从不读写它（实测生产库为 0）。
+# Idempotency marker: written into PRAGMA user_version after a successful shift. It is chosen because it is the least intrusive — no table, no column,
+# no business-visible object, and SQLAlchemy / this repo's storage layer never reads or writes it (the production database measures 0).
 MIGRATION_MARKER = 20260728
 
 
 # ---------------------------------------------------------------------------
 def shift_for(naive_local: datetime) -> timedelta:
-    """把一个 naive 的本地墙钟值换算成 UTC 所需的位移（UTC+8 上是 −8h）。
+    """The shift needed to convert a naive local wall-clock value to UTC (−8h on UTC+8).
 
-    用系统时区库按**当时的日期**求偏移，而不是写死 −8：写死会在有夏令时的机器上
-    把半年的数据搬错。Asia/Shanghai 1991 年后无夏令时，所以本机实际恒为 −8——但
-    这一点由 :func:`assert_shift_is_constant` 去**证明**，而不是假设。
+    The offset is obtained from the system timezone database **for the date in question**, rather than hardcoding −8: hardcoding would move
+    half a year of data wrongly on a machine with daylight saving time. Asia/Shanghai has had no DST since 1991, so on this machine it is effectively a constant −8 — but
+    that is something :func:`assert_shift_is_constant` must **prove**, not assume.
     """
     return naive_local.astimezone(UTC).replace(tzinfo=None) - naive_local
 
@@ -209,10 +209,10 @@ def parse_db_ts(raw: str | None) -> datetime | None:
 
 
 class Contamination:
-    """一列的逐行口径判定结果。
+    """The per-row convention verdict result for one column.
 
-    ``excluded`` 是**已经是 UTC**的行（新代码写的），平移与回滚都必须绕开它们；
-    ``undecidable`` 是证据不足以判定口径的行，交人审。
+    ``excluded`` are the rows that are **already UTC** (written by the new code); shifting and rollback must both go around them;
+    ``undecidable`` are rows whose evidence is insufficient to judge the convention; they go to a human for review.
     """
 
     def __init__(
@@ -221,7 +221,7 @@ class Contamination:
         suspects: int = 0,
         excluded: list[int] | None = None,
         undecidable: list[dict] | None = None,
-        method: str = "未检测",
+        method: str = "Not detected",
     ) -> None:
         self.key = key
         self.suspects = suspects
@@ -253,7 +253,7 @@ class ColumnReport:
         self.samples: list[str] = []
         self.guard: str = "n/a"
         self.guard_ok = True
-        # 追加型列（出生列）才有 rowid 单调性可用，也才有资格当口径见证。
+        # Only append-type columns (birth columns) have rowid monotonicity available, and only they qualify as convention witnesses.
         self.is_birth = ROW_BIRTH_COLUMN.get(table) == column
         self.tail_median: datetime | None = None
 
@@ -274,16 +274,16 @@ class ColumnReport:
 
 
 def shift_expr(column: str, hours: float) -> str:
-    """位移表达式 —— **保留亚秒精度**。
+    """Shift expression — **preserves sub-second precision**.
 
-    直接 ``datetime(col, '-8 hours')`` 会把结果截到整秒，等于顺手抹掉 32 万行的
-    微秒位。而事件账本按 timestamp 排序，同一秒内的先后就靠那几位。
+    A direct ``datetime(col, '-8 hours')`` would truncate the result to whole seconds, casually erasing the microsecond digits of 320,000 rows.
+    And the event ledger sorts by timestamp; within the same second, ordering depends on those very digits.
 
-    因为位移量必然是整分钟（现存所有时区的偏移都是整分钟，含 +05:30 / +05:45），
-    所以只搬"到分钟"的前缀，秒与亚秒位原样接回去：
+    Because the shift amount is necessarily a whole number of minutes (every existing timezone offset is a whole number of minutes, including +05:30 / +05:45),
+    only the prefix "up to the minute" is moved, and the seconds and sub-second digits are spliced back as-is:
 
         "2026-07-28 17:01:25.068573"
-         └─ 前 16 位 ─┘└─ 第 17 位起原样保留 ─┘
+         └─ first 16 chars ─┘└─ preserved as-is from char 17 on ─┘
     """
     minutes = round(hours * 60)
     sign = "+" if minutes >= 0 else "-"
@@ -296,14 +296,14 @@ def shift_expr(column: str, hours: float) -> str:
 def assert_uniform_width(
     conn: sqlite3.Connection, reports: list[ColumnReport], hours: float = -8.0
 ) -> None:
-    """确认每个待平移值都能被 :func:`shift_expr` 安全切分。
+    """Confirm that every value to be shifted can be safely split by :func:`shift_expr`.
 
-    两道检查，缺一不可：
+    Two checks, neither dispensable:
 
-    * 宽度：短于 ``YYYY-MM-DD HH:MM`` 的值一定被前缀切分毁掉；
-    * **直接判据**：拿真正要执行的表达式跑一遍，凡是"原值非空但结果为 NULL"的行都
-      会被静默清空。宽度够并不等于能解析（纪元浮点串、非法月日、斜杠格式都长于 16
-      位却照样清成 NULL），所以宽度检查是必要不充分条件，真正管用的是这一条。
+    * Width: a value shorter than ``YYYY-MM-DD HH:MM`` will certainly be destroyed by the prefix split;
+    * **The direct criterion**: run the very expression that will be executed; any row whose "original value is non-empty but whose result is NULL"
+      would be silently emptied. Sufficient width does not imply parseability (epoch float strings, illegal month/day, slash formats are all longer than 16
+      characters yet still collapse to NULL), so the width check is necessary but not sufficient; this is the one that really works.
     """
     bad: list[str] = []
     for rep in reports:
@@ -314,46 +314,46 @@ def assert_uniform_width(
             f"where {rep.column} is not null and length({rep.column}) < 16"
         ).fetchone()[0]
         if n:
-            bad.append(f"{rep.key}: {n} 行的值短于 'YYYY-MM-DD HH:MM'")
+            bad.append(f"{rep.key}: {n} rows have values shorter than 'YYYY-MM-DD HH:MM'")
         n = conn.execute(
             f"select count(*) from {rep.table} where {rep.column} is not null "
             f"and ({shift_expr(rep.column, hours)}) is null"
         ).fetchone()[0]
         if n:
-            bad.append(f"{rep.key}: {n} 行经位移表达式后变成 NULL（值形态非法）")
+            bad.append(f"{rep.key}: {n} rows become NULL after the shift expression (illegal value shape)")
     if bad:
         raise SystemExit(
-            "❌ 存在无法安全切分的时间值，拒绝执行（继续做会把它们清成 NULL）:\n  "
+            "❌ Cannot safely split: time values exist that cannot be safely split; refusing to execute (continuing would empty them into NULL):\n  "
             + "\n  ".join(bad)
         )
 
 
 # ---------------------------------------------------------------------------
-# 混口径检测
+# Mixed-convention detection
 #
-# 背景（实测，非推演）：UTC 新代码已合入 master 且 aiteam 是 editable 安装，任何在
-# 合并之后新起的进程（新会话的 MCP server、hook 子进程、CLI、被自动拉活的 API）写的
-# 都是 UTC。于是同一列里会同时存在两种口径的行，而且污染量随时间单调增长——所以检测
-# 必须在执行时刻现算。
+# Background (measured, not deduced): the UTC new code has merged into master and aiteam is an editable install, so any process started after
+# the merge (a new session's MCP server, a hook subprocess, the CLI, an API auto-revived) writes
+# UTC. So the same column can hold rows of both conventions at once, and the contamination grows monotonically with time — therefore detection
+# must be computed fresh at execution time.
 #
-# 判据的骨架是一条硬约束：一个 UTC 写入的值 v，其真实时刻是 v + offset，而这个真实
-# 时刻必须落在 [T0, now] 之内（T0 = 新代码最早可能运行的时刻）。反过来说，
+# The skeleton of the criterion is one hard constraint: for a value v written in UTC, its real instant is v + offset, and that real
+# instant must fall within [T0, now] (T0 = the earliest moment the new code could have run). Conversely,
 #
-#     只有落在 [T0 − offset, now − offset] 这条**风险带**里的值才有可能是 UTC 写的。
+#     only values falling in the **risk band** [T0 − offset, now − offset] could possibly have been written in UTC.
 #
-# 带外的值一律**证明**为本地口径，照常平移。带内的值再逐行判：
+# Values outside the band are all **proven** local and are shifted as usual. Values inside the band are then judged row by row:
 #
-# * 追加型列（出生列）：rowid 即写入序。取该行前面所有带外行的最大值当下界、后面第一
-#   个带外行的值当上界，把 v 与 v+offset 两种读法分别套进去——只有一种读法自洽时判定
-#   成立，两种都自洽或都不自洽则进 undecidable。
-# * 原地更新列：拿同行的出生列当锚，用"更新不可能早于创建"这条不变量判。
+# * Append-type columns (birth columns): rowid is the write order. Take the maximum of all out-of-band rows before this row as the lower bound, and the value of the first
+#   out-of-band row after it as the upper bound, and fit both readings, v and v+offset, into them — when only one reading is self-consistent, the verdict
+#   stands; when both are or neither is, it goes to undecidable.
+# * In-place update columns: take the same row's birth column as an anchor and judge by the invariant "an update cannot be earlier than the creation".
 # ---------------------------------------------------------------------------
 def risk_band(t0: datetime, now_local: datetime, forward_hours: float) -> tuple[datetime, datetime]:
-    """风险带：只有落在这里的**原始值**才可能是 UTC 写入的，带外一律证明为本地。
+    """Risk band: only **raw values** falling here could have been written in UTC; everything outside the band is proven local.
 
-    上沿贴的是**执行时刻**而不是库内最新写入——一次 UTC 写入完全可能发生在最后一条
-    本地行之后，拿库内 max 收口会漏掉它。代价是对着一份放久了的快照跑 dry-run，带宽
-    会随墙钟一起长、候选行跟着变多；这不是误报，是"拖得越久越难判"的如实反映。
+    The upper edge hugs the **execution moment**, not the newest write in the database — a UTC write could perfectly well have happened after the last
+    local row, and closing the band at the in-database max would miss it. The cost is that running a dry-run against a long-stale snapshot lets the bandwidth
+    grow with the wall clock and the candidate rows grow with it; that is not a false positive, it is the truthful reflection of "the longer you drag it out, the harder it is to judge".
     """
     offset = timedelta(hours=-forward_hours)
     edges = (t0 - offset, now_local - offset)
@@ -375,12 +375,12 @@ def _scan(conn: sqlite3.Connection, table: str, column: str) -> list[tuple[int, 
 def detect_utc_writer_since(
     conn: sqlite3.Connection, reports: list[ColumnReport], offset: timedelta
 ) -> tuple[datetime | None, list[dict]]:
-    """取证：库里最早的一次 UTC 写入发生在什么时候（本地墙钟表达）。
+    """Forensics: when did the earliest UTC write in the database happen (expressed in local wall clock).
 
-    只在追加型列上找**时区指纹式乱序**——值相对写入序前缀的最大值倒退了恰好一个
-    offset（东半球；西半球则是超前于后继行）。容差按分钟给，见 :data:`SIGNATURE_TOLERANCE`。
+    Only look for **timezone-fingerprint disorder** on append-type columns — a value dropping back by exactly one
+    offset relative to the prefix maximum of the write order (eastern hemisphere; in the western hemisphere it instead runs ahead of its successor rows). The tolerance is given in minutes; see :data:`SIGNATURE_TOLERANCE`.
 
-    返回 (T0, 证据行)。T0 为 None 表示全库没有任何 UTC 写入的痕迹。
+    Returns (T0, evidence rows). T0 being None means there is no trace of any UTC write anywhere in the database.
     """
     evidence: list[dict] = []
     for rep in reports:
@@ -388,7 +388,7 @@ def detect_utc_writer_since(
             continue
         rows = _scan(conn, rep.table, rep.column)
         if offset > timedelta(0):
-            # 东半球：UTC 值比同刻的本地值早，表现为 rowid 序上的倒退。
+            # Eastern hemisphere: a UTC value is earlier than a local value of the same instant, appearing as a drop-back in rowid order.
             running: datetime | None = None
             for rid, v in rows:
                 if running is not None and abs((running - v) - offset) <= SIGNATURE_TOLERANCE:
@@ -404,7 +404,7 @@ def detect_utc_writer_since(
                 if running is None or v > running:
                     running = v
         else:
-            # 西半球（含 UTC 本身不会走到这里）：UTC 值反而更晚，表现为超前于后继行。
+            # Western hemisphere (UTC itself never gets here): a UTC value is later instead, appearing as running ahead of successor rows.
             following: datetime | None = None
             for rid, v in reversed(rows):
                 if following is not None and abs((v - following) + offset) <= SIGNATURE_TOLERANCE:
@@ -432,15 +432,15 @@ def _classify_birth_column(
     band: tuple[datetime, datetime],
     offset: timedelta,
 ) -> tuple[list[int], list[dict], int]:
-    """追加型列的逐行判定：用 rowid 邻居 + 同行后继列把两种读法卡到只剩一种。
+    """Per-row verdict for an append-type column: pin the two readings down to one with rowid neighbours + same-row successor columns.
 
-    两个证据源：
+    Two evidence sources:
 
-    * **rowid 邻居**（下界取前面所有带外行的最大值，上界取后面第一个带外行）——rowid
-      就是物理写入序，一行的真实时刻必然夹在两者之间。
-    * **同行后继列**（:data:`AFTER_BIRTH_COLUMNS`）——出生时刻不可能晚于这一行后来
-      被更新的时刻。只采信落在风险带**之外**的后继列值（那些已被证明是本地口径），
-      所以不存在循环依赖。
+    * **rowid neighbours** (the lower bound takes the maximum of all out-of-band rows before it; the upper bound takes the first out-of-band row after it) — rowid
+      is the physical write order, and a row's real instant necessarily lies between the two.
+    * **Same-row successor columns** (:data:`AFTER_BIRTH_COLUMNS`) — a birth instant cannot be later than the instant this row was later
+      updated. Only successor-column values falling **outside** the risk band are trusted (those have been proven local),
+      so there is no circular dependency.
     """
     lo, hi = band
     siblings = [
@@ -463,7 +463,7 @@ def _classify_birth_column(
         rows.append((rid, parsed))
         for value in record[2:]:
             sib = parse_db_ts(value)
-            # 带内的后继列自己口径未定，不能拿来当证据。
+            # A successor column inside the band has an unsettled convention itself and cannot serve as evidence.
             if sib is None or lo <= sib <= hi:
                 continue
             if rid not in ceiling or sib < ceiling[rid]:
@@ -515,7 +515,7 @@ def _classify_birth_column(
                 {
                     "rowid": rid,
                     "value": v.strftime("%Y-%m-%d %H:%M:%S.%f"),
-                    "reason": "两种读法都自洽" if local_ok else "两种读法都与邻居冲突",
+                    "reason": "both readings are self-consistent" if local_ok else "both readings conflict with the neighbours",
                 }
             )
     return excluded, undecidable, suspects
@@ -531,14 +531,14 @@ def _classify_updated_column(
     band: tuple[datetime, datetime],
     offset: timedelta,
 ) -> tuple[list[int], list[dict], int]:
-    """原地更新列的逐行判定：跨列一致性预言机。
+    """Per-row verdict for an in-place update column: the cross-column consistency oracle.
 
-    rowid 对这类列没有意义（值会被 UPDATE 原地改写，写入序与值的时序脱钩），唯一可用
-    的是不变量 **同一行的更新时刻不可能早于它的创建时刻**：拿同行的出生列当锚，把两种
-    读法套进去——更新值比创建时刻早了将近一个 offset，就只能是 UTC 口径。
+    rowid is meaningless for this kind of column (values are rewritten in place by UPDATE, decoupling write order from value timing); the only usable thing
+    is the invariant that **the update instant of the same row cannot be earlier than its creation instant**: take the same row's birth column as the anchor and fit both
+    readings into it — if an update value is earlier than the creation instant by nearly one offset, it can only be in the UTC convention.
 
-    这条不变量只对 :data:`AFTER_BIRTH_COLUMNS` 成立，其余列（未来时刻、外部 epoch
-    来源）没有可用预言机，带内行一律交人审。
+    This invariant only holds for :data:`AFTER_BIRTH_COLUMNS`; the other columns (future instants, external epoch
+    sources) have no usable oracle, and their in-band rows all go to a human for review.
     """
     lo, hi = band
     excluded: list[int] = []
@@ -559,13 +559,13 @@ def _classify_updated_column(
                 {
                     "rowid": rid,
                     "value": v.strftime("%Y-%m-%d %H:%M:%S.%f"),
-                    "reason": "该列可能早于创建时刻（未来时刻或外部 epoch 来源），无可用不变量",
+                    "reason": "this column may be earlier than the creation instant (a future instant or an external epoch source); no usable invariant",
                 }
             )
             continue
         anchor = parse_db_ts(birth_raw)
         if anchor is None:
-            undecidable.append({"rowid": rid, "value": str(raw), "reason": "锚列为空，无从对照"})
+            undecidable.append({"rowid": rid, "value": str(raw), "reason": "the anchor column is empty; nothing to compare against"})
             continue
         if rid in birth_pending:
             undecidable.append(
@@ -573,11 +573,11 @@ def _classify_updated_column(
                     "rowid": rid,
                     "value": v.strftime("%Y-%m-%d %H:%M:%S.%f"),
                     "anchor": f"{birth_column}={anchor:%Y-%m-%d %H:%M:%S}",
-                    "reason": "锚列自己的口径就待人审，不能拿来定案",
+                    "reason": "the anchor column's own convention awaits human review and cannot be used to settle the case",
                 }
             )
             continue
-        # 锚列本身若被判为 UTC，它的真实创建时刻是 anchor + offset。
+        # If the anchor column itself was judged UTC, its real creation instant is anchor + offset.
         born = anchor + offset if rid in birth_excluded else anchor
         local_ok = v >= born - SIGNATURE_TOLERANCE
         utc_ok = (v + offset) >= born - SIGNATURE_TOLERANCE
@@ -591,7 +591,7 @@ def _classify_updated_column(
                     "rowid": rid,
                     "value": v.strftime("%Y-%m-%d %H:%M:%S.%f"),
                     "anchor": f"{birth_column}={anchor:%Y-%m-%d %H:%M:%S}",
-                    "reason": "两种读法都不违反「更新不早于创建」" if local_ok else "两种读法都与锚冲突",
+                    "reason": "neither reading violates 'an update is not earlier than the creation'" if local_ok else "both readings conflict with the anchor",
                 }
             )
     return excluded, undecidable, suspects
@@ -604,10 +604,10 @@ def detect_contamination(
     now_local: datetime,
     since: datetime | None = None,
 ) -> tuple[dict[str, Contamination], datetime | None, list[dict]]:
-    """全库逐行口径检测。执行时刻现算，不吃任何固定行号清单。
+    """Whole-database per-row convention detection. Computed fresh at execution time; consumes no fixed row-number list.
 
-    返回 (逐列结果, T0, 取证行)。``since`` 给定时覆盖自动取证的 T0（运维手册里
-    应当填新代码合入的那一刻——那是 UTC 写入方最早可能出现的时间）。
+    Returns (per-column results, T0, evidence rows). When ``since`` is given it overrides the automatically forensically-derived T0 (the operations manual
+    should fill in the moment the new code merged — that is the earliest time a UTC writer could have appeared).
     """
     offset = timedelta(hours=-forward_hours)
     found: dict[str, Contamination] = {r.key: Contamination(key=r.key) for r in reports}
@@ -617,23 +617,23 @@ def detect_contamination(
         t0 = since if t0 is None else min(t0, since)
     if t0 is None:
         for c in found.values():
-            c.method = "无 UTC 写入痕迹（风险带为空）"
+            c.method = "No trace of UTC writes (risk band empty)"
         return found, None, evidence
 
     band = risk_band(t0, now_local, forward_hours)
 
     for rep in reports:
         if rep.non_null == 0:
-            found[rep.key].method = "空列"
+            found[rep.key].method = "Empty column"
             continue
         birth_column = ROW_BIRTH_COLUMN.get(rep.table)
         if rep.is_birth:
             excluded, undecidable, suspects = _classify_birth_column(
                 conn, rep.table, rep.column, band, offset
             )
-            method = "rowid 单调性 + 同行后继列（追加型列）"
+            method = "rowid monotonicity + same-row successor columns (append-type column)"
         elif birth_column is None:
-            found[rep.key].method = "无出生列可锚定，全部候选行交人审"
+            found[rep.key].method = "No birth column to anchor on; all candidate rows go to human review"
             continue
         else:
             birth = found[f"{rep.table}.{birth_column}"]
@@ -647,14 +647,14 @@ def detect_contamination(
                 band,
                 offset,
             )
-            method = f"跨列一致性（锚 {birth_column}）"
+            method = f"Cross-column consistency (anchor {birth_column})"
         entry = found[rep.key]
         entry.suspects = suspects
         entry.excluded = sorted(excluded)
         entry.undecidable = undecidable
         entry.method = method
 
-    # 取证行必定是 UTC 行；即便邻居判定因为数据稀疏没能定案，也要并进排除集。
+    # An evidence row is certainly a UTC row; even if the neighbour verdict could not settle it due to sparse data, it must be merged into the exclusion set.
     for e in evidence:
         entry = found.get(f"{e['table']}.{e['column']}")
         if entry is None:
@@ -683,7 +683,7 @@ def collect(conn: sqlite3.Connection, now_local: datetime) -> list[ColumnReport]
 
     for table, columns in LOCAL_COLUMNS.items():
         if table not in existing:
-            print(f"⚠️  表 {table} 不在库中，跳过", file=sys.stderr)
+            print(f"⚠️  Table {table} is not in the database, skipping", file=sys.stderr)
             continue
         table_rows = conn.execute(f"select count(*) from {table}").fetchone()[0]
         cols_present = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
@@ -691,7 +691,7 @@ def collect(conn: sqlite3.Connection, now_local: datetime) -> list[ColumnReport]
             rep = ColumnReport(table, column)
             rep.rows = table_rows
             if column not in cols_present:
-                print(f"⚠️  列 {table}.{column} 不在库中，跳过", file=sys.stderr)
+                print(f"⚠️  Column {table}.{column} is not in the database, skipping", file=sys.stderr)
                 continue
             cnt, lo, hi = conn.execute(
                 f"select count({column}), min({column}), max({column}) from {table}"
@@ -717,17 +717,17 @@ def collect(conn: sqlite3.Connection, now_local: datetime) -> list[ColumnReport]
                 if tail:
                     rep.tail_median = sorted(tail)[len(tail) // 2]
 
-            # ---- 逐列自证（单边判据，见 verdict() 的说明）----
+            # ---- Per-column self-proof (one-sided criterion; see the verdict() notes) ----
             newest = parse_db_ts(hi)
             if newest is None:
-                rep.guard = "空列（无行可判）"
+                rep.guard = "Empty column (no rows to judge)"
             elif newest > now_utc_naive:
-                # UTC 时钟不可能写出未来的值，所以这一列**必然**含本地墙钟写入的行。
-                # 这是正面确证，不是启发式。
-                rep.guard = f"确证本地（最新行 {str(hi)[:19]} 晚于 UTC 此刻 {now_utc_naive:%H:%M:%S}）"
+                # A UTC clock cannot write a future value, so this column **necessarily** contains rows written by the local wall clock.
+                # This is positive confirmation, not a heuristic.
+                rep.guard = f"Proven local (latest row {str(hi)[:19]} is later than UTC now {now_utc_naive:%H:%M:%S})"
             else:
                 age = now_local - newest
-                rep.guard = f"冷数据（最新行距今 {age.days} 天 {age.seconds // 3600} 小时，无法自证）"
+                rep.guard = f"Cold data (latest row is {age.days} days {age.seconds // 3600} hours ago, cannot self-prove)"
             reports.append(rep)
     return reports
 
@@ -738,36 +738,36 @@ def verdict(
     contamination: dict[str, Contamination] | None = None,
     ack_undecidable: bool = False,
 ) -> tuple[bool, list[str]]:
-    """全库级判定：这个库现在还是不是本地墙钟在写，混进来的 UTC 行有没有被识别。
+    """Whole-database verdict: is this database still being written by the local wall clock, and have the UTC rows that mixed in been recognized.
 
-    判定放在**库级**而不是列级：真正的风险是部署顺序颠倒，而部署是全局的。一个冷了
-    三天的列本来就没有新鲜行可判，逐列去猜只会对冷数据制造假警报。
+    The verdict sits at the **database level** rather than the column level: the real risk is a reversed deployment order, and deployment is global. A column that has been cold for
+    three days has no fresh rows to judge in the first place; guessing column by column would only manufacture false alarms against cold data.
 
-    口径见证用**最新鲜的那个追加型列的尾部中位数**，两点讲究：
+    The convention witness uses the **median of the tail of the freshest append-type column**, with two points of care:
 
-    * 只有追加型列（出生列）有资格作证——它的 rowid 就是写入序，"最近这批写入"这个
-      概念对它才成立；原地更新列的 max 可能来自任何一行的任何一次更新。
-    * 用中位数而不是 max。max 天生只反映极少数最新行：库已整体平移成 UTC、旧代码又
-      补写了一行本地值时，那一行就足以让 max 贴住本地此刻——旧护栏正是这样把"已平移
-      的库"判成"可以平移"的。中位数要求**多数**近期写入是同一口径，少数派掀不翻它。
+    * Only append-type columns (birth columns) qualify as witnesses — their rowid is the write order, and the concept of "the most recent batch of writes"
+      only holds for them; an in-place update column's max could come from any update of any row.
+    * A median rather than max. Max by nature only reflects the very few newest rows: when the database has been shifted wholesale to UTC and old code
+      writes one more local row, that single row suffices to make max hug local now — that is exactly how the old guardrail judged "an already-shifted
+      database" as "shiftable". The median requires **the majority** of recent writes to be of one convention; a minority cannot overturn it.
 
-    正面确证仍然是单边、无歧义的：UTC 时钟写不出未来的值，所以见证中位数晚于 UTC
-    此刻就**必然**是本地墙钟写的。
+    Positive confirmation is still one-sided and unambiguous: a UTC clock cannot write a future value, so a witness median later than UTC
+    now is **necessarily** written by the local wall clock.
 
-    第二层判定是混口径：检测到的 UTC 行必须已被逐行识别并排除；判不了口径的行必须
-    经人审（``--ack-undecidable``）才放行——**绝不静默平移**。
+    The second layer of the verdict is mixed conventions: detected UTC rows must already have been recognized row by row and excluded; rows whose convention cannot be judged must
+    pass human review (``--ack-undecidable``) before being let through — **never silently shifted**.
     """
     now_utc_naive = now_local.astimezone(UTC).replace(tzinfo=None)
     notes: list[str] = []
 
-    proven_local = [r for r in reports if r.guard.startswith("确证本地")]
+    proven_local = [r for r in reports if r.guard.startswith("Proven local")]
     freshest = max(
         (parse_db_ts(r.max_before) for r in reports if r.max_before),
         default=None,
     )
 
     if freshest is None:
-        notes.append("库内没有任何非空时间值 —— 无需平移，也无从判定。")
+        notes.append("There are no non-empty time values in the database at all — no shift needed, and no verdict possible either.")
         return True, notes
 
     witness = None
@@ -778,18 +778,18 @@ def verdict(
             witness = rep
 
     notes.append(
-        f"全库最新写入 {freshest:%Y-%m-%d %H:%M:%S}；"
-        f"距本地此刻 {abs((now_local - freshest).total_seconds()) / 3600:.1f}h，"
-        f"距 UTC 此刻 {abs((now_utc_naive - freshest).total_seconds()) / 3600:.1f}h"
+        f"Newest write in the whole database {freshest:%Y-%m-%d %H:%M:%S};"
+        f"{abs((now_local - freshest).total_seconds()) / 3600:.1f}h from local now,"
+        f"{abs((now_utc_naive - freshest).total_seconds()) / 3600:.1f}h from UTC now"
     )
     notes.append(
-        f"正面确证为本地墙钟的列：{len(proven_local)} / {len(reports)}"
-        "（max 晚于 UTC 此刻 —— UTC 时钟写不出未来的值）"
+        f"Columns positively proven to be on the local wall clock: {len(proven_local)} / {len(reports)}"
+        "(max later than UTC now — a UTC clock cannot write a future value)"
     )
 
     passed = True
     if witness is None:
-        notes.append("⚠️  没有任何追加型列可作口径见证（库内无 rowid 可信的列）。请人工确认后加 --force。")
+        notes.append("⚠️  No append-type column can serve as a convention witness (no rowid-trustworthy column in the database). Please confirm manually and add --force.")
         passed = False
     else:
         median = witness.tail_median
@@ -797,21 +797,21 @@ def verdict(
         d_local = abs((now_local - median).total_seconds())
         d_utc = abs((now_utc_naive - median).total_seconds())
         notes.append(
-            f"口径见证 {witness.key}：最近 {WITNESS_TAIL} 行的中位数 {median:%Y-%m-%d %H:%M:%S}"
-            f"（距本地此刻 {d_local / 3600:.1f}h，距 UTC 此刻 {d_utc / 3600:.1f}h）"
+            f"Convention witness {witness.key}: median of the most recent {WITNESS_TAIL} rows {median:%Y-%m-%d %H:%M:%S}"
+            f"({d_local / 3600:.1f}h from local now, {d_utc / 3600:.1f}h from UTC now)"
         )
         if median > now_utc_naive + SIGNATURE_TOLERANCE:
-            notes.append("✅ 写入方仍是旧代码（本地墙钟），可以平移。")
+            notes.append("✅ The writer is still the old code (local wall clock); shifting is OK.")
         elif d_utc <= GUARD_TOLERANCE.total_seconds() and d_utc < d_local:
             notes.append(
-                "❌ 近期写入的多数已经贴着 UTC 此刻 —— 新代码很可能已经在写库了，"
-                "或这个库已经平移过。此时再平移会把这些 UTC 行推早一个时区。"
+                "❌ The majority of recent writes already hug UTC now — the new code is very likely already writing to the database,"
+                "or this database has already been shifted. Shifting again now would push these UTC rows one timezone early."
             )
             passed = False
         else:
             notes.append(
-                "⚠️  见证列早于 UTC 此刻且不贴任何一侧（全库都是冷数据），无法自证。"
-                "请人工确认这个库确实还没被新代码写过，再加 --force 执行。"
+                "⚠️  The witness column is earlier than UTC now and hugs neither side (the whole database is cold data); it cannot self-prove."
+                "Please confirm manually that this database really has not been written by the new code, then add --force to execute."
             )
             passed = False
 
@@ -820,38 +820,38 @@ def verdict(
         dirty = {k: c for k, c in contamination.items() if c.excluded}
         if dirty:
             notes.append(
-                f"混口径检测：{len(dirty)} 列共 {total_excluded} 行已判定为 UTC 口径，"
-                "将被逐行排除、不参与平移。"
+                f"Mixed-convention detection: {total_excluded} rows across {len(dirty)} columns have been judged to be in the UTC convention,"
+                "and will be excluded row by row, taking no part in the shift."
             )
             for key, entry in sorted(dirty.items()):
-                notes.append(f"    · {key}: {len(entry.excluded)} 行（{entry.method}）")
+                notes.append(f"    · {key}: {len(entry.excluded)} rows ({entry.method})")
         else:
-            notes.append("混口径检测：未发现任何已是 UTC 口径的行。")
+            notes.append("Mixed-convention detection: no rows already in the UTC convention were found.")
         pending = all_undecidable(contamination)
         if pending:
             if ack_undecidable:
                 notes.append(
-                    f"⚠️  {len(pending)} 行口径无法判定，已由 --ack-undecidable 确认按本地口径平移"
-                    "（逐行清单见 journal 与上方「逐行口径判定」栏）。"
+                    f"⚠️  The convention of {len(pending)} rows cannot be judged; they have been confirmed via --ack-undecidable to be shifted in the local convention"
+                    "(the row-by-row list is in the journal and in the per-row convention verdicts section above)."
                 )
             else:
                 notes.append(
-                    f"❌ {len(pending)} 行口径无法判定 —— 绝不静默平移。请逐行人审上方清单，"
-                    "确认它们确实是本地墙钟写的，再加 --ack-undecidable 执行。"
+                    f"❌ The convention of {len(pending)} rows cannot be judged — never silently shift. Please review the list above row by row,"
+                    "confirm they really were written by the local wall clock, then add --ack-undecidable to execute."
                 )
                 passed = False
         else:
-            notes.append("口径无法判定的行：0（无需 --ack-undecidable）。")
+            notes.append("Rows whose convention cannot be judged: 0 (no --ack-undecidable needed).")
 
     return passed, notes
 
 
 def assert_shift_is_constant(reports: list[ColumnReport]) -> float:
-    """证明整个数据区间内位移恒定；不恒定就拒绝用常量 SQL 平移。
+    """Prove the shift is constant over the whole data range; if it is not constant, refuse to shift with constant SQL.
 
-    逐列端点全查一遍（不只取全局 min/max）。注意这是端点采样：若某列首尾处于同一
-    夏令时状态而**中段**跨过切换点，这里查不出来。对 Asia/Shanghai（1991 年后无
-    夏令时）无实际影响，脚本被搬到有 DST 的宿主上时必须改成逐行换算。
+    Check the endpoints of every column in full (not only the global min/max). Note this is endpoint sampling: if a column's head and tail are in the same
+    daylight-saving state but its **middle** crosses a switchover point, this cannot detect it. It has no practical effect on Asia/Shanghai (no DST
+    since 1991); if the script is moved to a host with DST, it must be changed to per-row conversion.
     """
     stamps = [
         parsed
@@ -864,8 +864,8 @@ def assert_shift_is_constant(reports: list[ColumnReport]) -> float:
     shifts = {shift_for(s).total_seconds() / 3600.0 for s in stamps}
     if len(shifts) != 1:
         raise SystemExit(
-            f"❌ 数据区间内本地偏移不恒定（观测到 {sorted(shifts)} 小时）——"
-            "本机时区存在夏令时，不能用常量小时数平移。需改用逐行换算。"
+            f"❌ The local offset is not constant over the data range ({sorted(shifts)} hours observed) —"
+            "this machine's timezone has daylight saving time, so shifting by a constant number of hours is not possible. Per-row conversion is needed."
         )
     return shifts.pop()
 
@@ -895,9 +895,9 @@ def render(
     band: tuple[datetime, datetime] | None = None,
 ) -> None:
     print(f"\n{'=' * 108}")
-    print(f"存量时间戳平移 · {mode} · 位移 {hours:+g} 小时（本地墙钟 → UTC）")
+    print(f"Existing-timestamp shift · {mode} · shift {hours:+g} hours (local wall clock → UTC)")
     print(f"{'=' * 108}\n")
-    print(f"{'表':<20} {'列':<20} {'非空':>8} {'排除':>6}  {'平移前 min→max':<42} 平移后 min→max")
+    print(f"{'Table':<20} {'Column':<20} {'Non-empty':>8} {'Excluded':>6}  {'Before min→max':<42} After min→max")
     print("-" * 108)
 
     total = 0
@@ -907,7 +907,7 @@ def render(
         total_excluded += skipped
         total += max(rep.non_null - skipped, 0)
         if rep.non_null == 0:
-            print(f"{rep.table:<20} {rep.column:<20} {0:>8} {0:>6}  （空列，无行可平移）")
+            print(f"{rep.table:<20} {rep.column:<20} {0:>8} {0:>6}  (empty column, no rows to shift)")
             continue
         lo, hi = parse_db_ts(rep.min_before), parse_db_ts(rep.max_before)
         delta = timedelta(hours=hours)
@@ -920,9 +920,9 @@ def render(
         )
 
     print("-" * 108)
-    print(f"{'合计':<43} {total:>8} 个非空单元将被平移，{total_excluded} 个单元被排除\n")
+    print(f"{'Total':<43} {total:>8} non-empty cells will be shifted, {total_excluded} cells excluded\n")
 
-    print("抽样前后对照（每列最新 3 行）")
+    print("Before/after samples (the newest 3 rows of each column)")
     print("-" * 108)
     for rep in reports:
         if not rep.samples:
@@ -936,16 +936,16 @@ def render(
         print(f"  {rep.key:<46} {' | '.join(pairs)}")
 
     if contamination is not None:
-        print("\n逐行口径判定（混口径检测：哪些行已经是 UTC，不参与平移）")
+        print("\nPer-row convention verdicts (mixed-convention detection: which rows are already UTC and take no part in the shift)")
         print("-" * 108)
         print(
-            "  取证基准 T0（最早的 UTC 写入时刻，本地墙钟）："
-            + (f"{since:%Y-%m-%d %H:%M:%S}" if since else "无痕迹（风险带为空，全库单一口径）")
+            "  Forensic baseline T0 (the earliest UTC write instant, local wall clock):"
+            + (f"{since:%Y-%m-%d %H:%M:%S}" if since else "no trace (risk band empty; the whole database is of a single convention)")
         )
         if band is not None:
             print(
-                f"  风险带（原始值落在这个区间才可能是 UTC 写的）：{band[0]:%Y-%m-%d %H:%M:%S}"
-                f" … {band[1]:%Y-%m-%d %H:%M:%S}；带外一律证明为本地"
+                f"  Risk band (only raw values falling in this interval could be UTC-written): {band[0]:%Y-%m-%d %H:%M:%S}"
+                f" … {band[1]:%Y-%m-%d %H:%M:%S}; everything outside the band is proven local"
             )
         dirty = False
         for rep in reports:
@@ -954,32 +954,32 @@ def render(
                 continue
             dirty = True
             shown = ", ".join(str(r) for r in entry.excluded[:20])
-            more = f" …共 {len(entry.excluded)} 行" if len(entry.excluded) > 20 else ""
+            more = f" …{len(entry.excluded)} rows in total" if len(entry.excluded) > 20 else ""
             print(
-                f"  {rep.key:<40} 候选 {entry.suspects:>6} 行 · 排除 {len(entry.excluded):>4} 行"
-                f" · 待人审 {len(entry.undecidable):>4} 行  [{entry.method}]"
+                f"  {rep.key:<40} candidates {entry.suspects:>6} rows · excluded {len(entry.excluded):>4} rows"
+                f" · awaiting human review {len(entry.undecidable):>4} rows  [{entry.method}]"
             )
             if entry.excluded:
-                print(f"      排除 rowid: {shown}{more}")
+                print(f"      Excluded rowids: {shown}{more}")
             for row in entry.undecidable[:20]:
-                print(f"      ⚠️ 待人审 rowid={row['rowid']} 值={row['value']} —— {row['reason']}")
+                print(f"      ⚠️ Awaiting human review rowid={row['rowid']} value={row['value']} — {row['reason']}")
             if len(entry.undecidable) > 20:
-                print(f"      ⚠️ …另有 {len(entry.undecidable) - 20} 行待人审（完整清单见 journal）")
+                print(f"      ⚠️ …and {len(entry.undecidable) - 20} more rows awaiting human review (full list in the journal)")
         if not dirty:
-            print("  所有列均为单一口径，无行需要排除。")
+            print("  All columns are of a single convention; no rows need excluding.")
 
-    print("\n逐列自证（能否证明该列仍是本地墙钟写的）")
+    print("\nPer-column self-proof (can it be proven that this column is still written by the local wall clock)")
     print("-" * 108)
     for rep in reports:
         print(f"   {rep.key:<46} {rep.guard}")
 
-    print("\n冻结/敏感对象说明")
+    print("\nFrozen/sensitive object notes")
     print("-" * 108)
     for table, note in FROZEN_NOTE.items():
         if any(r.table == table for r in reports):
             print(f"  {table:<22} {note}")
 
-    print("\n明确不平移的对象")
+    print("\nObjects explicitly not shifted")
     print("-" * 108)
     for what, why in EXCLUDED:
         print(f"  {what:<48} {why}")
@@ -992,11 +992,11 @@ def execute(
     hours: float,
     contamination: dict[str, Contamination] | None = None,
 ) -> int:
-    """按列平移，逐行绕开已是 UTC 的行。
+    """Shift per column, going around the rows that are already UTC, row by row.
 
-    平移后立刻复核非空行数：位移表达式对畸形值会返回 NULL（静默清空），
-    而 ``cur.rowcount`` 只数匹配行、数不出这件事。对不上就抛异常——此时事务尚未
-    提交，连接一关整批回退，不存在半平移状态。
+    Immediately re-verify the non-empty row count after shifting: the shift expression returns NULL for malformed values (silently emptying them),
+    while ``cur.rowcount`` only counts matched rows and cannot see this. If it does not add up, raise — at that point the transaction has not
+    been committed, and closing the connection rolls the whole batch back; there is no half-shifted state.
     """
     assert_uniform_width(conn, reports, hours)
     touched = 0
@@ -1020,19 +1020,19 @@ def execute(
         ).fetchone()[0]
         if after != rep.non_null:
             raise SystemExit(
-                f"❌ {rep.key} 平移后非空行数 {after} ≠ 平移前 {rep.non_null} —— "
-                "位移把值清成了 NULL。事务未提交，库保持原状。"
+                f"❌ {rep.key}: non-empty row count after shifting {after} ≠ before shifting {rep.non_null} — "
+                "the shift emptied values into NULL. The transaction was not committed; the database is in its original state."
             )
         touched += cur.rowcount
-        note = f"（另有 {len(skip)} 行已是 UTC，已排除）" if skip else ""
-        print(f"  {rep.key:<46} {cur.rowcount:>8} 行{note}")
+        note = f"(plus {len(skip)} rows already UTC, excluded)" if skip else ""
+        print(f"  {rep.key:<46} {cur.rowcount:>8} rows{note}")
     conn.execute("drop table if exists temp._utc_skip")
     conn.commit()
     return touched
 
 
 def verify_rollback(conn: sqlite3.Connection, journal: dict) -> int:
-    """回滚后逐列复核：行数与 min/max 必须回到 journal 记录的平移前状态。"""
+    """After rollback, re-verify column by column: row counts and min/max must return to the pre-shift state recorded in the journal."""
     problems = 0
     for entry in journal["columns"]:
         table, column = entry["table"], entry["column"]
@@ -1040,23 +1040,23 @@ def verify_rollback(conn: sqlite3.Connection, journal: dict) -> int:
             f"select count({column}), min({column}), max({column}) from {table}"
         ).fetchone()
         if cnt != entry["non_null"]:
-            print(f"  ❌ {table}.{column} 行数 {cnt} ≠ 平移前 {entry['non_null']}")
+            print(f"  ❌ {table}.{column} row count {cnt} ≠ pre-shift {entry['non_null']}")
             problems += 1
         elif str(lo)[:19] != str(entry["min_before"])[:19] or str(hi)[:19] != str(
             entry["max_before"]
         )[:19]:
             print(
-                f"  ❌ {table}.{column} 区间 {str(lo)[:19]}→{str(hi)[:19]} "
-                f"≠ 平移前 {str(entry['min_before'])[:19]}→{str(entry['max_before'])[:19]}"
+                f"  ❌ {table}.{column} range {str(lo)[:19]}→{str(hi)[:19]} "
+                f"≠ pre-shift {str(entry['min_before'])[:19]}→{str(entry['max_before'])[:19]}"
             )
             problems += 1
         else:
-            print(f"  ✅ {table}.{column} 已回到平移前状态")
+            print(f"  ✅ {table}.{column} has returned to its pre-shift state")
     return problems
 
 
 def contamination_from_journal(journal: dict) -> dict[str, Contamination]:
-    """回滚时的排除清单**只认 journal**——平移之后库里已看不出谁是谁了。"""
+    """At rollback time the exclusion list **only recognizes the journal** — after the shift, the database itself no longer shows who is who."""
     out: dict[str, Contamination] = {}
     for key, entry in (journal.get("detection", {}).get("columns", {}) or {}).items():
         out[key] = Contamination(
@@ -1098,52 +1098,52 @@ def build_journal(
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--db", default=str(DEFAULT_DB), help="SQLite 文件路径")
-    ap.add_argument("--apply", action="store_true", help="真的写库（默认 dry-run）")
-    ap.add_argument("--rollback", action="store_true", help="反向平移（+offset），需 --journal")
+    ap.add_argument("--db", default=str(DEFAULT_DB), help="SQLite file path")
+    ap.add_argument("--apply", action="store_true", help="really write to the database (default dry-run)")
+    ap.add_argument("--rollback", action="store_true", help="reverse shift (+offset); requires --journal")
     ap.add_argument(
         "--journal",
         default="",
-        help="留档 JSON 路径（--apply / --rollback 必需；dry-run 给了就把完整清单落盘供人审）",
+        help="archive JSON path (required for --apply / --rollback; with a dry-run, giving it writes the full list to disk for human review)",
     )
     ap.add_argument(
         "--force",
         action="store_true",
-        help="护栏报警时仍然执行 —— 只有在人已确认该列口径后才可用；不能越过待人审行与幂等标记",
+        help="execute anyway when a guardrail alarms — only usable after a human has confirmed the column's convention; it cannot override rows awaiting human review or the idempotency marker",
     )
     ap.add_argument(
         "--ack-undecidable",
         action="store_true",
-        help="确认已逐行人审 undecidable 清单，按本地口径平移它们",
+        help="confirm the undecidable list has been human-reviewed row by row; shift them in the local convention",
     )
     ap.add_argument(
         "--utc-writer-since",
         default="",
-        help="新代码最早可能写库的本地时刻（YYYY-MM-DD HH:MM:SS）；不给则由库内取证自动推断",
+        help="the earliest local instant at which the new code could have written to the database (YYYY-MM-DD HH:MM:SS); if not given, inferred automatically from in-database forensics",
     )
     args = ap.parse_args()
 
     db = Path(args.db).expanduser()
     if not db.is_file():
-        print(f"❌ 找不到数据库：{db}", file=sys.stderr)
+        print(f"❌ Database not found: {db}", file=sys.stderr)
         return 2
     if args.apply and args.rollback:
-        print("❌ --apply 与 --rollback 不能同时给", file=sys.stderr)
+        print("❌ --apply and --rollback cannot be given at the same time", file=sys.stderr)
         return 2
     if (args.apply or args.rollback) and not args.journal:
         print(
-            "❌ --apply / --rollback 必须给 --journal —— 那是唯一的恢复凭证（含逐行排除清单）",
+            "❌ --apply / --rollback require --journal — that is the only recovery credential (including the per-row exclusion list)",
             file=sys.stderr,
         )
         return 2
 
     journal_path = Path(args.journal).expanduser() if args.journal else None
-    # ---- journal 防覆盖：二次 apply 会把"平移前基线"覆盖成"平移后状态"，
-    #      随后的 --rollback 就会对着被污染的基线报「复核全过」。凭证只许写一次。
+    # ---- Journal overwrite protection: a second apply would overwrite the "pre-shift baseline" with the "post-shift state",
+    #      and a subsequent --rollback would then report "all re-verification passed" against the polluted baseline. The credential may only be written once.
     if journal_path is not None and not args.rollback and journal_path.exists():
         print(
-            f"❌ journal 目标文件已存在：{journal_path}\n"
-            "   覆盖它等于销毁唯一的恢复凭证。请换一个文件名。",
+            f"❌ The journal target file already exists: {journal_path}\n"
+            "   Overwriting it destroys the only recovery credential. Please choose another filename.",
             file=sys.stderr,
         )
         return 2
@@ -1152,31 +1152,31 @@ def main() -> int:
     if args.utc_writer_since:
         since = parse_db_ts(args.utc_writer_since)
         if since is None:
-            print(f"❌ --utc-writer-since 无法解析：{args.utc_writer_since}", file=sys.stderr)
+            print(f"❌ --utc-writer-since cannot be parsed: {args.utc_writer_since}", file=sys.stderr)
             return 2
 
     conn = sqlite3.connect(str(db))
     conn.execute("PRAGMA busy_timeout = 30000")
     marker = read_marker(conn)
 
-    # ---- 幂等标记：平移只许成功一次 ----
+    # ---- Idempotency marker: a shift may only succeed once ----
     if args.apply and marker == MIGRATION_MARKER:
         print(
-            f"❌ 这个库已经平移过了（PRAGMA user_version = {MIGRATION_MARKER}）。\n"
-            "   再平移一次会把全库再减一个时区。要重来先 --rollback。",
+            f"❌ This database has already been shifted (PRAGMA user_version = {MIGRATION_MARKER}).\n"
+            "   Shifting once more would subtract another timezone from the whole database. To start over, --rollback first.",
             file=sys.stderr,
         )
         return 3
     if args.apply and marker != 0:
         print(
-            f"❌ PRAGMA user_version = {marker}，被别的用途占用了 —— 幂等标记无处安放，拒绝执行。",
+            f"❌ PRAGMA user_version = {marker} is occupied by another use — the idempotency marker has nowhere to live; refusing to execute.",
             file=sys.stderr,
         )
         return 3
     if args.rollback and marker != MIGRATION_MARKER:
         print(
-            f"❌ 这个库没有平移标记（user_version = {marker}，期望 {MIGRATION_MARKER}）—— "
-            "它没被本脚本平移过，回滚只会把数据推晚一个时区。",
+            f"❌ This database has no shift marker (user_version = {marker}, expected {MIGRATION_MARKER}) — "
+            "it was never shifted by this script, and rolling it back would only push the data one timezone late.",
             file=sys.stderr,
         )
         return 3
@@ -1184,42 +1184,42 @@ def main() -> int:
     now_local = datetime.now().astimezone()
     reports = collect(conn, now_local.replace(tzinfo=None))
     if not reports:
-        print("❌ 没有可处理的列", file=sys.stderr)
+        print("❌ No columns to process", file=sys.stderr)
         return 2
 
     forward = assert_shift_is_constant(reports)
     if forward == 0.0:
-        print("ℹ️  本机本地时区即 UTC，无需平移。")
+        print("ℹ️  The local timezone of this machine is UTC; no shift is needed.")
         return 0
 
     # ---------------- rollback ----------------
     if args.rollback:
         assert journal_path is not None
         if not journal_path.is_file():
-            print(f"❌ 找不到 journal：{journal_path}", file=sys.stderr)
+            print(f"❌ Journal not found: {journal_path}", file=sys.stderr)
             return 2
         journal = json.loads(journal_path.read_text())
         if journal.get("db") != str(db) and not args.force:
             print(
-                f"❌ journal 记的是 {journal.get('db')}，当前库是 {db} —— 张冠李戴的回滚会搬错数据。",
+                f"❌ The journal records {journal.get('db')}, while the current database is {db} — a mismatched rollback would move the wrong data.",
                 file=sys.stderr,
             )
             return 2
-        # 位移量取 journal 记录的值而不是按当前宿主时区现算：换机器/换时区回滚才不会搬错。
+        # The shift amount takes the value recorded in the journal rather than being recomputed from the current host timezone, so a rollback on another machine/timezone does not move things wrongly.
         hours = -float(journal.get("shift_hours", forward))
         skip = contamination_from_journal(journal)
         skipped_total = sum(len(c.excluded) for c in skip.values())
-        print(f"回滚：按 journal {journal_path} 反向平移 {hours:+g} 小时")
+        print(f"Rollback: reverse-shifting {hours:+g} hours per journal {journal_path}")
         if skipped_total:
-            print(f"      平移时排除过的 {skipped_total} 行同样不动（它们本来就是 UTC）")
+            print(f"      The {skipped_total} rows excluded at shift time are likewise untouched (they were UTC to begin with)")
         touched = execute(conn, reports, hours, skip)
-        print(f"\n共回滚 {touched} 个单元。逐列复核：")
+        print(f"\nRolled back {touched} cells in total. Per-column re-verification:")
         problems = verify_rollback(conn, journal)
         if not problems:
             write_marker(conn, 0)
             conn.commit()
-            print("\n已清除平移标记（PRAGMA user_version = 0）")
-        print("\n" + ("❌ 回滚复核有出入，请人工介入" if problems else "✅ 回滚复核全过"))
+            print("\nShift marker cleared (PRAGMA user_version = 0)")
+        print("\n" + ("❌ The rollback re-verification has discrepancies; human intervention is needed" if problems else "✅ Rollback re-verification all passed"))
         return 1 if problems else 0
 
     contamination, detected_since, evidence = detect_contamination(
@@ -1227,7 +1227,7 @@ def main() -> int:
     )
     hours = forward
 
-    mode = "APPLY（真的写库）" if args.apply else "DRY-RUN（不写库）"
+    mode = "APPLY (really writing)" if args.apply else "DRY-RUN (not writing)"
     band = (
         risk_band(detected_since, now_local.replace(tzinfo=None), forward)
         if detected_since is not None
@@ -1241,19 +1241,19 @@ def main() -> int:
     pending = all_undecidable(contamination)
     hard_block = bool(pending) and not args.ack_undecidable
 
-    print("\n全库护栏判定")
+    print("\nWhole-database guardrail verdict")
     print("-" * 108)
     if marker:
-        print(f"  ⚠️  PRAGMA user_version = {marker}（{MIGRATION_MARKER} 表示已平移过）")
+        print(f"  ⚠️  PRAGMA user_version = {marker} ({MIGRATION_MARKER} means already shifted)")
     for note in notes:
         print(f"  {note}")
     if not passed:
         print(f"\n{'!' * 108}")
-        print("护栏拦截 —— 正确顺序是：① 尽量停掉写入方 ② 备份 ③ 平移（新代码写的行会被逐行排除）④ 重启 API。")
+        print("Guardrail block — the correct order is: 1) stop the writers as far as possible 2) back up 3) shift (rows written by the new code will be excluded row by row) 4) restart the API.")
         if hard_block:
-            print("其中「待人审行」这一条 --force 越不过去：请逐行核对后加 --ack-undecidable。")
+            print("Of these, the 'rows awaiting human review' item cannot be overridden by --force: please check row by row and then add --ack-undecidable.")
         else:
-            print("若已人工确认口径无误，可加 --force 强制执行。")
+            print("If a human has confirmed the convention is correct, add --force to force execution.")
         print(f"{'!' * 108}")
 
     if journal_path is not None and not args.apply:
@@ -1264,10 +1264,10 @@ def main() -> int:
                 indent=2,
             )
         )
-        print(f"\n完整逐行清单已写入 {journal_path}（dry-run 留档，供人审）")
+        print(f"\nThe full per-row list has been written to {journal_path} (a dry-run archive, for human review)")
 
     if not args.apply:
-        print("\n（dry-run，未写库。确认无误后由缔造者执行 --apply，执行前先备份。）")
+        print("\n(Dry-run; nothing was written. Once confirmed correct, the Founder executes --apply; back up before executing.)")
         return 0
 
     if hard_block or (not passed and not args.force):
@@ -1281,14 +1281,14 @@ def main() -> int:
             indent=2,
         )
     )
-    print(f"\n留档已写入 {journal_path}")
+    print(f"\nArchive written to {journal_path}")
 
-    print("\n执行中：")
+    print("\nExecuting:")
     touched = execute(conn, reports, hours, contamination)
     write_marker(conn, MIGRATION_MARKER)
     conn.commit()
-    print(f"\n✅ 已平移 {touched} 个单元，幂等标记已写入（user_version = {MIGRATION_MARKER}）。")
-    print("请复核几张表的 max(时间列)：现在应当等于 UTC 此刻，而不是本地此刻。")
+    print(f"\n✅ Shifted {touched} cells; the idempotency marker has been written (user_version = {MIGRATION_MARKER}).")
+    print("Please re-verify the max(time column) of a few tables: they should now equal UTC now, not local now.")
     return 0
 
 

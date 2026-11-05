@@ -60,34 +60,34 @@ def main() -> int:
     try:
         tool_count, param_count, undocumented_tools, missing = asyncio.run(collect())
     except Exception as exc:  # import/registration failure is itself a red line
-        print(f"❌ 无法枚举 MCP 工具面（server 导入或注册失败）: {exc!r}")
+        print(f"❌ Cannot enumerate the MCP tool surface (server import or registration failed): {exc!r}")
         return 1
 
     if not tool_count:
-        print("❌ 枚举到 0 个 MCP 工具 —— register_all 未生效，检查失去意义")
+        print("❌ Enumerated 0 MCP tools — register_all did not take effect, the check is meaningless")
         return 1
 
     missing_count = sum(len(v) for v in missing.values())
     if not missing_count and not undocumented_tools:
         print(
-            f"✅ MCP 工具面描述完整: {tool_count} 个工具 / {param_count} 个参数，"
-            f"全部带 description"
+            f"✅ MCP tool surface descriptions complete: {tool_count} tools / {param_count} parameters,"
+            f"all with descriptions"
         )
         return 0
 
     for name in undocumented_tools:
-        print(f"❌ 工具 {name}: 缺工具级 description（docstring 为空）")
+        print(f"❌ Tool {name}: missing tool-level description (empty docstring)")
     for name in sorted(missing):
         params = ", ".join(sorted(missing[name]))
-        print(f"❌ 工具 {name}: 参数缺 description —— {params}")
+        print(f"❌ Tool {name}: parameters missing descriptions — {params}")
 
     print(
-        f"\n结论: ❌ {tool_count} 个工具 / {param_count} 个参数中，"
-        f"{missing_count} 个参数 + {len(undocumented_tools)} 个工具没有描述。"
-        "\n修法: 在函数 docstring 的 Args 段为每个参数单独写一行（写清'何时用/什么含义'，"
-        "别复述参数名），或用 Field(description=...)。"
-        "\n常见坑: 一行写多个参数（形如 `limit / offset: Pagination.`）解析器无法拆分，"
-        "看着有描述其实全丢——必须一参一行。"
+        f"\nConclusion: ❌ of {tool_count} tools / {param_count} parameters,"
+        f"{missing_count} parameters + {len(undocumented_tools)} tools have no description."
+        "\nFix: in the Args section of the function docstring, write one line for each parameter (make clear when to use it / what it means,"
+        "do not just restate the parameter name), or use Field(description=...)."
+        "\nCommon pitfall: writing multiple parameters on one line (like `limit / offset: Pagination.`) cannot be split by the parser,"
+        "so it looks described but is actually all lost — one parameter per line is required."
     )
     return 1
 

@@ -3,7 +3,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-OUT = Path(r"C:/Users/TUF/Desktop/AI团队框架/ai-team-os/docs/screenshots")
+OUT = Path(r"C:/Users/TUF/Desktop/AI-team-framework/ai-team-os/docs/screenshots")
 URL = "http://localhost:5174/ecosystem"
 
 def main():
@@ -40,8 +40,8 @@ def main():
             except Exception:
                 pass
 
-        # Try the search input  (placeholder='搜索仓库名 / owner / ...')
-        search_input = page.locator("input[placeholder*='搜索']").first
+        # Try the search input  (placeholder='Search repo name / owner / ...')
+        search_input = page.locator("input[placeholder*='Search']").first
         if search_input.count() > 0:
             print("Search input found, typing 'memory'...")
             search_input.fill("memory")
@@ -53,8 +53,8 @@ def main():
             print(f"Visible cards after search: {len(cards)}")
 
         # Try finding selector for category/tag filter by inspecting stable selectors
-        # Look for divs with text "分类" or "Category" or "标签"
-        for txt in ["分类", "类别", "标签", "Tags", "Stars", "排序", "min_stars"]:
+        # Look for divs with text "Category" or "Tags"
+        for txt in ["Category", "Tags", "Stars", "Sort", "min_stars"]:
             els = page.get_by_text(txt, exact=False).all()
             if els:
                 print(f"  text '{txt}': {len(els)} elements")

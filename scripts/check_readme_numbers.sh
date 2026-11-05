@@ -1,43 +1,43 @@
 #!/usr/bin/env bash
-# README 数字机检 — 双语 README 的关键数字与代码实测对齐，漂移即红。
-# 背景: 2026-07 审计发现 18 页/631+ 测试/30+ 生态工具三处数字腐烂，全部源于手工维护。
+# README number machine check — key numbers in the README aligned with measured code values; drift turns it red.
+# Background: a 2026-07 audit found three rotten numbers — 18 pages / 631+ tests / 30+ ecosystem tools — all from manual maintenance.
 #
-# 宽松设计防误报——只锚定四类高价值声明，普通措辞变化不误伤：
-#   ① 版本: announcement 行（"> ⚡" 开头）必须包含 v{__version__}（硬等式）
-#   ② MCP 工具数: "N MCP tools" / "N 个 MCP 工具" 声明 = @mcp.tool 实测数（硬等式）；
-#      同一行数字前文含 ecosystem/生态 时按 ecosystem.py 单独实测数校验
-#   ③ 测试数: "N+ tests" / "N+ 测试" 声明 ≤ pytest --collect-only 实收数（单向，防夸大；
-#      pytest 不可用时跳过该项，CI 兜底）
-#   ④ 页面数: "N pages" / "N 个页面" 声明 = App.tsx 路由实测数（硬等式）
-#   ⑤ REST 端点数: "N REST endpoints" / "N 个 REST 端点" 与目录树的 "(N routes)"
-#      = 应用自身 OpenAPI 路由表实测数（硬等式）。真相源必须是路由表而非 grep：
-#      2026-07-27 实测静态 grep 只数出 195，路由表 199（多方法路由与换行装饰器漏网）。
+# Loose design against false positives — it only anchors four kinds of high-value claims, and ordinary wording changes cause no collateral damage:
+#   ① Version: the announcement line (starting with "> ⚡") must contain v{__version__} (hard equality)
+#   ② MCP tool count: "N MCP tools" claims = the measured @mcp.tool count (hard equality);
+#      when the text before the number on the same line contains ecosystem, it is checked against the count measured in ecosystem.py alone
+#   ③ Test count: "N+ tests" claims ≤ the count actually collected by pytest --collect-only (one-way, against exaggeration;
+#      when pytest is unavailable this item is skipped and CI is the backstop)
+#   ④ Page count: "N pages" claims = the route count measured in App.tsx (hard equality)
+#   ⑤ REST endpoint count: "N REST endpoints" and the directory tree's "(N routes)"
+#      = the operation count measured in the application's own OpenAPI route table (hard equality). The source of truth must be the route table, not grep:
+#      on 2026-07-27 a static grep only counted 195 while the route table had 199 (multi-method routes and multi-line decorators slipped through).
 #
-# 用法: bash scripts/check_readme_numbers.sh   （仓库根目录执行；CI 与本地通用）
-# 退出码: 0=全过, 1=有漂移
+# Usage: bash scripts/check_readme_numbers.sh   (run from the repo root; works for CI and local)
+# Exit code: 0=all pass, 1=drift found
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-# ── 实测真相源 ──────────────────────────────────────────────
+# ── Measured sources of truth ─────────────────────────────────────
 VERSION="$(python3 -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('src/aiteam/__init__.py').read()).group(1))")" || {
-  echo "❌ 无法从 src/aiteam/__init__.py 读取 __version__"; exit 1; }
+  echo "❌ Cannot read __version__ from src/aiteam/__init__.py"; exit 1; }
 MCP_TOTAL="$(grep -h '@mcp.tool' src/aiteam/mcp/tools/*.py | wc -l | tr -d ' ')"
 MCP_ECO="$(grep -c '@mcp.tool' src/aiteam/mcp/tools/ecosystem.py | tr -d ' ')"
 PAGES="$(grep -c '<Route .*element={<ErrorBoundary>' dashboard/src/App.tsx | tr -d ' ')"
-# 测试实收数（兼容 "N tests collected" 与 "collected N items" 两种输出）
+# Actually-collected test count (accepts both the "N tests collected" and "collected N items" output forms)
 TESTS="$(python3 -m pytest tests --collect-only -q 2>/dev/null | tail -5 \
   | grep -oE '[0-9]+ tests? collected|collected [0-9]+ items' \
   | grep -oE '[0-9]+' | head -1)" || TESTS=""
-# REST 端点实测 = 应用自己的 OpenAPI 路由表里的 operation 数（path × method）。
-# 走 app.openapi() 这一公开接口，不碰 FastAPI 的惰性 include 内部结构。
+# REST endpoint measurement = the number of operations (path × method) in the application's own OpenAPI route table.
+# Goes through the public app.openapi() interface and does not touch FastAPI's lazy include internals.
 #
-# 必须显式把**本仓的** src 顶到 sys.path 最前：aiteam 是 editable 安装，裸 import
-# 解析到的是安装时登记的那个 checkout。在 git worktree 里跑（本仓的多会话并行纪律
-# 要求第二个及之后的会话必须用 worktree）就会静默地去数主 checkout 的路由，于是
-# 这一项永远"通过"——它核对的根本不是眼前这份代码。其余各项（工具数/页面数 grep、
-# I12/I13）都已按 ROOT 取数，只有这里漏了。
+# Must explicitly push **this repo's** src to the very front of sys.path: aiteam is an editable install, and a bare import
+# resolves to the checkout registered at install time. Run in a git worktree (this repo's multi-session parallelism discipline
+# requires the second and subsequent sessions to use a worktree) and it would silently go and count the main checkout's routes, so
+# this item would forever "pass" — what it checks would not be the code in front of you at all. All other items (tool counts/page counts by grep,
+# I12/I13) already take their numbers by ROOT; only this one was missed.
 REST="$(python3 -c '
 import sys
 
@@ -62,66 +62,65 @@ version, mcp_total, mcp_eco, pages = sys.argv[1], int(sys.argv[2]), int(sys.argv
 tests = int(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5] else None
 rest = int(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6] else None
 
-RE_MCP = re.compile(r'(\d[\d,]*)\**\s*(?:个\s*)?MCP\s*(?:tools|工具)')
-RE_TEST = re.compile(r'(\d[\d,]*)\+?\**\s*(?:automated\s+)?tests\b'
-                     r'|(\d[\d,]*)\+?\**\s*(?:项|个|条)?\s*(?:自动化)?\s*测试')
-RE_PAGE = re.compile(r'(\d[\d,]*)\**\s*(?:个\s*)?(?:[Dd]ashboard\s*)?(?:路由)?\s*(?:pages\b|页面)')
-RE_ECO_CTX = re.compile(r'[Ee]cosystem|生态')
-# ⑤ 两种写法都锚住：headline 的 "N REST endpoints"，与目录树的 "REST endpoints (N routes)"
-RE_REST = re.compile(r'(\d[\d,]*)\**\s*(?:个\s*)?REST\s*(?:endpoints?\b|端点)')
-RE_REST_ROUTES = re.compile(r'REST\s*(?:endpoints?|端点)\s*[（(](\d[\d,]*)\s*(?:routes?\b|条路由)')
+RE_MCP = re.compile(r'(\d[\d,]*)\**\s*MCP\s*tools')
+RE_TEST = re.compile(r'(\d[\d,]*)\+?\**\s*(?:automated\s+)?tests\b')
+RE_PAGE = re.compile(r'(\d[\d,]*)\**\s*(?:[Dd]ashboard\s*)?\s*(?:pages\b)')
+RE_ECO_CTX = re.compile(r'[Ee]cosystem')
+# ⑤ Both spellings are anchored: the headline's "N REST endpoints", and the directory tree's "REST endpoints (N routes)"
+RE_REST = re.compile(r'(\d[\d,]*)\**\s*REST\s*(?:endpoints?\b)')
+RE_REST_ROUTES = re.compile(r'REST\s*(?:endpoints?)\s*[(](\d[\d,]*)\s*(?:routes?\b)')
 
 fails = []
-for path in ('README.md', 'README.zh-CN.md'):
+for path in ('README.md',):
     lines = open(path, encoding='utf-8').read().splitlines()
-    # ① 版本声明
+    # ① Version claim
     ann = [l for l in lines if l.lstrip().startswith('> ⚡')]
     if not ann:
-        fails.append(f'{path}: 找不到 announcement 行（"> ⚡" 开头）——无法核对版本声明')
+        fails.append(f'{path}: announcement line not found (starting with "> ⚡") — cannot verify the version claim')
     elif not any(f'v{version}' in l for l in ann):
-        fails.append(f'{path}: announcement 行版本声明 ≠ 代码版本 v{version}'
-                     f'（src/aiteam/__init__.py）——发版后请同步 README 顶部引用块')
+        fails.append(f'{path}: announcement-line version claim ≠ code version v{version}'
+                      f'(src/aiteam/__init__.py) — after a release, please sync the quote block at the top of the README')
     for i, line in enumerate(lines, 1):
-        # ② MCP 工具数（行内前缀含 ecosystem/生态 → 按 ecosystem 单独数校验）
+        # ② MCP tool count (a line prefix containing ecosystem → checked against the ecosystem-only count)
         for m in RE_MCP.finditer(line):
             n = int(m.group(1).replace(',', ''))
             is_eco = bool(RE_ECO_CTX.search(line[:m.start()]))
             expect = mcp_eco if is_eco else mcp_total
-            label = f'ecosystem 工具实测数 {mcp_eco}' if is_eco else f'MCP 工具实测总数 {mcp_total}'
+            label = f'measured ecosystem tool count {mcp_eco}' if is_eco else f'measured MCP tool total {mcp_total}'
             if n != expect:
-                fails.append(f'{path}:{i}: 声明 "{m.group(0).strip()}" ≠ {label}'
-                             f'（grep @mcp.tool src/aiteam/mcp/tools/）')
-        # ③ 测试数（单向: 声明 ≤ 实收，防吹大）
+                fails.append(f'{path}:{i}: claim "{m.group(0).strip()}" ≠ {label}'
+                             f'(grep @mcp.tool src/aiteam/mcp/tools/)')
+        # ③ Test count (one-way: claim ≤ collected, against inflating)
         if tests is not None:
             for m in RE_TEST.finditer(line):
-                n = int((m.group(1) or m.group(2)).replace(',', ''))
+                n = int(m.group(1).replace(',', ''))
                 if n > tests:
-                    fails.append(f'{path}:{i}: 测试数声明 "{m.group(0).strip()}" > 实收 {tests}'
-                                 f'（pytest --collect-only）——README 数字超过了实际测试数')
-        # ④ 页面数
+                    fails.append(f'{path}:{i}: test count claim "{m.group(0).strip()}" > collected {tests}'
+                                 f'(pytest --collect-only) — the README number exceeds the actual test count')
+        # ④ Page count
         for m in RE_PAGE.finditer(line):
             n = int(m.group(1).replace(',', ''))
             if n != pages:
-                fails.append(f'{path}:{i}: 页面数声明 "{m.group(0).strip()}" ≠ 路由实测数 {pages}'
-                             f'（dashboard/src/App.tsx）')
-        # ⑤ REST 端点数（两种写法同一真相源）
+                fails.append(f'{path}:{i}: page count claim "{m.group(0).strip()}" ≠ measured route count {pages}'
+                             f'(dashboard/src/App.tsx)')
+        # ⑤ REST endpoint count (both spellings, one source of truth)
         if rest is not None:
             for regex in (RE_REST, RE_REST_ROUTES):
                 for m in regex.finditer(line):
                     n = int(m.group(1).replace(',', ''))
                     if n != rest:
-                        fails.append(f'{path}:{i}: REST 端点声明 "{m.group(0).strip()}" ≠ '
-                                     f'路由表实测数 {rest}（app.openapi() 的 path × method）')
+                        fails.append(f'{path}:{i}: REST endpoint claim "{m.group(0).strip()}" ≠ '
+                                      f'measured route-table count {rest} (app.openapi() path × method)')
 
 if fails:
     for f in fails:
         print(f'❌ {f}')
-    print(f'\n结论: ❌ README 数字漂移 {len(fails)} 处——请按实测值更新双语 README')
+    print(f'\nConclusion: ❌ README number drift in {len(fails)} places — please update the README with the measured values')
     sys.exit(1)
 
-skip = '' if tests is not None else '（⚠️ pytest 不可用，测试数校验已跳过，CI 兜底）'
-skip_rest = '' if rest is not None else '（⚠️ 应用导入失败，REST 端点校验已跳过，CI 兜底）'
-print(f'✅ README 数字机检通过（双语）: 版本 v{version} · MCP 工具 {mcp_total}（生态 {mcp_eco}）'
-      f' · 页面 {pages} · REST 端点 {rest if rest is not None else "?"}{skip_rest}'
-      f' · 测试声明 ≤ {tests if tests is not None else "?"}{skip}')
+skip = '' if tests is not None else '(⚠️ pytest unavailable, test-count check skipped, CI is the backstop)'
+skip_rest = '' if rest is not None else '(⚠️ application import failed, REST endpoint check skipped, CI is the backstop)'
+print(f'✅ README number machine check passed: version v{version} · MCP tools {mcp_total} (ecosystem {mcp_eco})'
+      f' · pages {pages} · REST endpoints {rest if rest is not None else "?"}{skip_rest}'
+      f' · test claims ≤ {tests if tests is not None else "?"}{skip}')
 PYEOF

@@ -56,11 +56,11 @@ def compare(declared: set[str], actual: set[str]) -> tuple[list[str], list[str]]
     database. Returns ``(failures, warnings)``.
     """
     failures = [
-        f"{name}: ORM 声明了该表，但数据库里不存在 —— 建表失败或换机丢表"
+        f"{name}: the ORM declares this table, but it does not exist in the database — table creation failed or the table was lost in a machine move"
         for name in sorted(declared - actual)
     ]
     warnings = [
-        f"{name}: 数据库有该表，但 ORM 未声明 —— 退役功能的遗留表（冻结不删，仅登记）"
+        f"{name}: the database has this table, but the ORM does not declare it — a leftover table from a retired feature (frozen, not deleted, only registered)"
         for name in sorted(actual - declared)
         if not _is_bookkeeping(name)
     ]
@@ -130,7 +130,7 @@ def main() -> int:
 
     # Half 1 — always runs, including in CI where no live database exists.
     for name in sorted(declared - creatable):
-        failures.append(f"{name}: ORM 声明了该表，但 create_all 不会建它（Base 注册表不一致）")
+        failures.append(f"{name}: the ORM declares this table, but create_all will not create it (Base registry inconsistency)")
 
     # Half 2 — the live database, when this machine has one.
     path = live_db_path()
@@ -138,20 +138,20 @@ def main() -> int:
     if path.is_file() and path.stat().st_size > 0:
         db_failures, warnings = compare(declared, db_tables(path))
         failures.extend(db_failures)
-        checked = f"实库 {path}"
+        checked = f"live DB {path}"
     else:
-        checked = "实库缺失（CI 环境），仅校验 ORM↔DDL"
+        checked = "live DB missing (CI environment), only checking ORM vs DDL"
 
     for warning in warnings:
         print(f"⚠️  {warning}")
     if failures:
         for failure in failures:
             print(f"❌ {failure}")
-        print(f"\n结论: ❌ 表集合漂移 {len(failures)} 处")
+        print(f"\nConclusion: ❌ table set drift in {len(failures)} places")
         return 1
 
-    suffix = f"，另有 {len(warnings)} 张遗留表已登记" if warnings else ""
-    print(f"✅ 表集合一致: ORM 声明 {len(declared)} 张 · {checked}{suffix}")
+    suffix = f", plus {len(warnings)} leftover tables registered" if warnings else ""
+    print(f"✅ Table sets consistent: ORM declares {len(declared)} tables · {checked}{suffix}")
     return 0
 
 

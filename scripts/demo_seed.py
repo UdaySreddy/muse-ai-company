@@ -24,7 +24,7 @@ What it creates (all DB-backed, portable):
   * 4 workflow runs        with per-agent telemetry (swimlanes, one failed lane)
   * 18 ecosystem profiles  real public open-source repos, neutral metadata
 
-Two of the project-detail cards are LIVE probes, NOT rows in the DB (探查结论):
+Two of the project-detail cards are LIVE probes, NOT rows in the DB (probe findings):
   * Leaders (with context %) come from ``session_probe`` reading
     ``~/.claude/projects/<slug>/*.jsonl`` transcripts, keyed on project.root_path.
   * Worktrees come from ``worktree_probe`` running ``git worktree list`` on

@@ -1,7 +1,7 @@
-"""知识层 P1a — 历史回扫：扫存量 memo/report 建引用边（幂等，可反复跑）。
+"""Knowledge layer P1a — historical backfill: scan existing memos/reports and build reference edges (idempotent, can be run repeatedly).
 
-用法: python3 scripts/backfill_knowledge_links.py
-直连生产 DB（~/.claude/data/ai-team-os/aiteam.db），UNIQUE 冲突静默忽略。
+Usage: python3 scripts/backfill_knowledge_links.py
+Connects directly to the production DB (~/.claude/data/ai-team-os/aiteam.db); UNIQUE conflicts are silently ignored.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ async def main() -> None:
 
     inserted = scanned = 0
 
-    # 1) 全部任务的 memo
+    # 1) All tasks' memos
     projects = await repo.list_projects()
     for proj in projects:
         tasks = await repo.list_tasks_by_project(proj.id)
@@ -49,7 +49,7 @@ async def main() -> None:
                     for r in refs
                 ])
 
-    # 2) 全部报告
+    # 2) All reports
     for proj in projects:
         reports = await repo.list_reports(project_id=proj.id)
         for meta in reports:
@@ -74,7 +74,7 @@ async def main() -> None:
                 for r in refs
             ])
 
-    print(f"扫描 {scanned} 条 memo/report，新建 {inserted} 条引用边（重复已忽略）")
+    print(f"Scanned {scanned} memos/reports, created {inserted} new reference edges (duplicates ignored)")
 
 
 if __name__ == "__main__":

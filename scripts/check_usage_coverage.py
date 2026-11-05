@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
-"""I13 — 覆盖率同屏红线机检（token 数值不得脱离口径与分母出现）。
+"""I13 — coverage same-screen red-line machine check (token values may not appear detached from their metric and denominator).
 
-红线（token 用量归因 v1 设计 §4.4 / §2.5 / P2）：
+Red line (token usage attribution v1 design §4.4 / §2.5 / P2):
 
-    任何呈现面上的 token 数值，若其所在 scope 的 C_measure < 100%，必须在同屏同级
-    显示未归因部分。缺失即视为红线违规。
+    For any token value on any presentation surface, if the C_measure of its scope is < 100%, the unattributed portion must be shown
+    on the same screen at the same level. Its absence counts as a red-line violation.
 
-以及它的前置条件——**任何一个 token 数值，脱离口径标签就没有意义**（§0.2）。本库同时
-存在两个正交口径，实测差 5~25 倍；把它们并列或相加，就是刚在时间戳上栽过的同类事故。
+And its precondition — **any token value, detached from a metric label, is meaningless** (§0.2). This database simultaneously
+has two orthogonal metrics, measured to differ by 5-25x; putting them side by side or adding them up is the same class of accident as the one just suffered on timestamps.
 
-四条守卫：
+Four guards:
 
-1. **口径必标**：注册表里每个 token 量纲字段都要有口径，且口径 ∈ ``aiteam.types``
-   认可的封闭集合（TokenMetric 两个成员 + 不参与归因的上下文水位）。
-2. **口径同屏**：口径标签必须**出现在字段旁边**（``types.py`` 里该模型的源码块内），
-   不是只写在这张注册表里。页面注释是软约束，三个月后的自己会忽略它；写在字段旁边
-   的口径，下一个改这行的人躲不开。
-3. **aggregate 面必带分母**：跨行聚合的呈现面必须与 ``dispatches_total`` /
-   ``unattributed_reasons`` 同层返回，且 ``usage_sum`` 口径的聚合面**不允许**申报缺口
-   —— 归因数字的分母没有例外。
-4. **row 面 no-data ≠ zero**：一行一条事实的记录面，未采集必须能与"真的是 0"区分
-   （列可为 None）；做不到的必须具名申报缺口，机检每次都把它打印出来。
+1. **Metric must be labeled**: every token dimension field in the registry must carry a metric, and the metric must be in the closed set
+   recognized by ``aiteam.types`` (the two TokenMetric members + the context watermark that does not participate in attribution).
+2. **Metric on the same screen**: the metric label must **appear next to the field** (inside that model's source block in ``types.py``),
+   not only in this registry. A page comment is a soft constraint that your future self three months later will ignore; a metric written
+   next to the field is something the next person to change that line cannot dodge.
+3. **Aggregate surfaces must carry the denominator**: an aggregating presentation surface must return ``dispatches_total`` /
+   ``unattributed_reasons`` at the same level, and an aggregate surface of the ``usage_sum`` metric **may not** declare a gap
+   — the denominator of attribution numbers admits no exceptions.
+4. **Row surfaces: no-data ≠ zero**: on a record surface with one fact per row, "not collected" must be distinguishable from "really 0"
+   (the column may be None); surfaces that cannot do this must declare the gap by name, and the machine check prints it out every time.
 
-第 3、4 两条今天分别处在"上膛未击发"与"两处已申报缺口"的状态，这是如实的：
-阶段 0 只做口径正名，聚合面由阶段 2 落地，前端徽标由阶段 5 落地。
+Guards 3 and 4 today are respectively in the "cocked but not fired" and "two gaps already declared" states — that is the honest picture:
+stage 0 only rectifies metric names, aggregate surfaces land in stage 2, and frontend badges land in stage 5.
 
-用法: python3 scripts/check_usage_coverage.py   （仓库根目录执行）
-退出码: 0=全过（申报缺口只警告不拦）, 1=有违规。
+Usage: python3 scripts/check_usage_coverage.py   (run from the repo root)
+Exit codes: 0=all pass (declared gaps only warn, they do not block), 1=violations found.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from usage_surface import (  # noqa: E402  — 必须在 sys.path 就位之后
+from usage_surface import (  # noqa: E402  — must come after sys.path is in place
     AGGREGATE_REQUIRED_FIELDS,
     COVERAGE_MARKERS,
     FRONTEND_COVERAGE_GAP,
@@ -52,7 +52,7 @@ TYPES_PY = ROOT / "src" / "aiteam" / "types.py"
 
 
 def _model_source(model: str) -> str:
-    """取 ``types.py`` 里一个模型的源码块（class 行到下一个顶层 class 之前）。"""
+    """Get the source block of one model in ``types.py`` (from its class line to before the next top-level class)."""
     text = TYPES_PY.read_text(encoding="utf-8")
     match = re.search(rf"^class {re.escape(model)}\(", text, re.MULTILINE)
     if not match:
@@ -76,79 +76,79 @@ def check_python() -> tuple[list[str], list[str]]:
     for surface in PY_SURFACES:
         model = getattr(t, surface.model, None)
         if model is None:
-            problems.append(f"注册表声明的模型 aiteam.types.{surface.model} 不存在")
+            problems.append(f"The model aiteam.types.{surface.model} declared in the registry does not exist")
             continue
         if surface.kind not in ("row", "aggregate"):
-            problems.append(f"{surface.model}: kind='{surface.kind}' 非法，只能是 row / aggregate")
+            problems.append(f"{surface.model}: kind='{surface.kind}' is invalid, must be row / aggregate")
             continue
         source = _model_source(surface.model)
         fields = model.model_fields
         token_fields = {n: s for n, s in surface.fields.items() if s.dimension == "token"}
 
         for name, spec in sorted(token_fields.items()):
-            # 守卫 1：口径必标
+            # Guard 1: metric must be labeled
             if not spec.metric:
                 problems.append(
-                    f"{surface.model}.{name}: token 数值未标口径 —— "
-                    f"脱离口径的 token 数没有意义（usage_sum 与 ctx_last 实测差 5~25 倍）"
+                    f"{surface.model}.{name}: metric not labeled — "
+                    f"a token number detached from its metric is meaningless (usage_sum and ctx_last measured 5-25x apart)"
                 )
                 continue
             if spec.metric not in allowed_metrics:
                 problems.append(
-                    f"{surface.model}.{name}: 口径 '{spec.metric}' 不在 aiteam.types."
-                    f"TOKEN_METRIC_LABELS（{sorted(allowed_metrics)}）"
+                    f"{surface.model}.{name}: metric '{spec.metric}' is not in the aiteam.types."
+                    f"TOKEN_METRIC_LABELS ({sorted(allowed_metrics)})"
                 )
                 continue
-            # 守卫 2：口径同屏（标注要贴在字段旁边，不能只活在注册表里）。
-            # 不区分大小写：写字面量 "ctx_last" 与写符号 ``TokenMetric.CTX_LAST``
-            # 同等有效——要的是口径在字段旁边看得见，不是要一种特定拼法。
+            # Guard 2: metric on the same screen (the label must sit next to the field, not live only in the registry).
+            # Case-insensitive: writing the literal "ctx_last" and writing the symbol ``TokenMetric.CTX_LAST`` are
+            # equally valid — what matters is that the metric is visible next to the field, not one particular spelling.
             if spec.metric.lower() not in source.lower():
                 problems.append(
-                    f"{surface.model}.{name}: 口径 '{spec.metric}' 只写在注册表里，"
-                    f"types.py 的 {surface.model} 定义块内看不到 —— 口径标注必须与字段同屏"
+                    f"{surface.model}.{name}: metric '{spec.metric}' is only written in the registry,"
+                    f"and is not visible inside the {surface.model} definition block in types.py — the metric label must be on the same screen as the field"
                 )
 
         if surface.kind == "aggregate":
-            # 守卫 3：聚合面必带分母与未归因分类
+            # Guard 3: aggregate surfaces must carry the denominator and the unattributed classification
             missing = [f for f in AGGREGATE_REQUIRED_FIELDS if f not in fields]
             if missing:
                 problems.append(
-                    f"{surface.model}: 聚合呈现面缺同层覆盖率字段 {missing} —— "
-                    f"数值与分母、未归因必须同生共死，否则就是局部冒充全貌"
+                    f"{surface.model}: aggregate presentation surface missing same-level coverage fields {missing} — "
+                    f"values, denominator and unattributed must live and die together, otherwise a part impersonates the whole"
                 )
             if surface.coverage_gap and any(s.metric == "usage_sum" for s in token_fields.values()):
                 problems.append(
-                    f"{surface.model}: usage_sum 聚合面申报了覆盖率缺口 "
-                    f"{sorted(surface.coverage_gap)} —— 归因数字的分母不接受缺口申报"
+                    f"{surface.model}: a usage_sum aggregate surface does not accept gap declarations "
+                    f"(declared {sorted(surface.coverage_gap)}) — the denominator of attribution numbers has no exceptions"
                 )
             continue
 
-        # 守卫 4：row 面 no-data ≠ zero
+        # Guard 4: row surfaces, no-data ≠ zero
         for name in sorted(token_fields):
             info = fields.get(name)
             if info is None:
-                continue  # 字段存在性由 I12 双向比对负责
+                continue  # Field existence is the responsibility of I12's bidirectional comparison
             optional = _is_optional(info.annotation)
             declared = name in surface.coverage_gap
             if not optional and not declared:
                 problems.append(
-                    f"{surface.model}.{name}: 非 Optional 的 token 列，0 同时表示"
-                    f"'未采集'与'真的是 0' —— 要么改成可空，要么在 coverage_gap 具名申报"
+                    f"{surface.model}.{name}: a non-Optional token column where 0 simultaneously means"
+                    f"'not collected' and 'really 0' — either make it nullable, or declare it by name in coverage_gap"
                 )
             elif optional and declared:
                 problems.append(
-                    f"{surface.model}.{name}: 字段已可空却仍挂着 coverage_gap 申报 —— 缺口已收口，请清理注册表"
+                    f"{surface.model}.{name}: the field is already nullable yet still carries a coverage_gap declaration — gap already closed, please clean the registry"
                 )
             elif declared:
-                warnings.append(f"已申报覆盖率缺口 {surface.model}.{name}: {surface.coverage_gap[name]}")
+                warnings.append(f"declared coverage gap {surface.model}.{name}: {surface.coverage_gap[name]}")
     return problems, warnings
 
 
 def check_frontend() -> tuple[list[str], list[str]]:
-    """前端：usage_sum 数值一旦上页面，必须同屏带未归因标注。
+    """Frontend: once a usage_sum value reaches a page, it must carry an unattributed annotation on the same screen.
 
-    今天这条是上膛未击发——四层用量列还没有出现在任何页面上。阶段 5 的 ``/usage``
-    页一落地它就自动生效，那正是最容易"先把数字放上去，覆盖率下个版本再说"的时刻。
+    Today this one is cocked but not fired — the four usage layers have not yet appeared on any page. The moment stage 5's ``/usage``
+    page lands, it takes effect automatically, and that is exactly the moment when it is easiest to "put the numbers up first and do coverage next version".
     """
     import aiteam.types as t
 
@@ -156,7 +156,7 @@ def check_frontend() -> tuple[list[str], list[str]]:
     warnings: list[str] = []
     dash = ROOT / "dashboard" / "src"
     if not dash.is_dir():
-        warnings.append("dashboard/src 缺失（未构建环境），前端覆盖率检查跳过")
+        warnings.append("dashboard/src missing (unbuilt environment), frontend coverage check skipped")
         return problems, warnings
 
     layers = re.compile("|".join(re.escape(x) for x in t.TOKEN_LAYERS))
@@ -170,10 +170,10 @@ def check_frontend() -> tuple[list[str], list[str]]:
         rel = path.relative_to(ROOT).as_posix()
         if not any(m in text for m in COVERAGE_MARKERS):
             problems.append(
-                f"{rel}: 呈现了 usage_sum 四层用量却没有任何未归因/覆盖率标注 —— "
-                f"同屏红线（需出现其一：{'/'.join(COVERAGE_MARKERS)}）"
+                f"{rel}: presents the four usage_sum layers but has no unattributed/coverage annotation — "
+                f"the same-screen red line (one of these must appear: {'/'.join(COVERAGE_MARKERS)})"
             )
-    warnings.append(f"前端整体缺口: {FRONTEND_COVERAGE_GAP}")
+    warnings.append(f"Overall frontend gap: {FRONTEND_COVERAGE_GAP}")
     return problems, warnings
 
 
@@ -185,10 +185,10 @@ def main() -> int:
     for w in py_warnings + fe_warnings:
         print(f"⚠️  {w}")
     if problems:
-        print("❌ 覆盖率同屏红线违规 —— token 数值不得脱离口径与分母出现:")
+        print("❌ Coverage same-screen red-line violations — token values may not appear detached from metric and denominator:")
         for p in problems:
             print(f"  {p}")
-        print(f"\n共 {len(problems)} 处。规格见 docs/token-attribution-v1-design.md §4.4 / §2.5")
+        print(f"\nTotal {len(problems)} places. Spec in docs/token-attribution-v1-design.md §4.4 / §2.5")
         return 1
 
     token_fields = sum(
@@ -196,8 +196,8 @@ def main() -> int:
     )
     gaps = sum(len(s.coverage_gap) for s in PY_SURFACES)
     print(
-        f"✅ 覆盖率同屏红线通过: {token_fields} 个 token 字段全部带口径且口径与字段同屏 · "
-        f"{len(FRONTEND_SURFACES)} 个前端呈现面零裸 usage_sum · 已申报缺口 {gaps} 处（见上方警告）"
+        f"✅ Coverage same-screen red line passed: {token_fields} token fields all carry a metric and the metric is on the same screen as the field · "
+        f"{len(FRONTEND_SURFACES)} frontend presentation surfaces with zero bare usage_sum · {gaps} declared gaps (see warnings above)"
     )
     return 0
 

@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""红线机检 I11 — 全库只许有一个时钟。
+"""Red-line machine check I11 — the whole database may have only one clock.
 
-事故背景（docs/utc-unification-design.md）：这个库曾同时跑两个墙钟，核心域写
-``datetime.now()``（宿主本地），ecosystem 域写 ``datetime.now(tz=UTC)``。SQLite
-落库把 aware datetime 的 offset 静默剥掉，两制的行长得一模一样，于是跨域比较
-返回一个偏 8 小时的答案而**不抛任何异常**。它活了几个月，一次审计抓到三处。
+Incident background (docs/utc-unification-design.md): this database once ran two wall clocks at the same time: the core domain wrote
+``datetime.now()`` (host-local), and the ecosystem domain wrote ``datetime.now(tz=UTC)``. When SQLite
+stores an aware datetime it silently strips the offset, so rows of the two conventions look exactly alike, and cross-domain comparisons
+return an answer off by 8 hours **without raising any exception**. It lived for several months before one audit caught three places.
 
-双墙钟不是谁决定的，是一个模块一个模块随手写出来的。所以修完还不够——没有机检，
-同样的事会再发生一次，而且同样不会有人看见。
+The dual wall clocks were not decided by anyone; they were written casually, one module at a time. So fixing it is not enough — without a machine check,
+the same thing will happen again, and again nobody will see it.
 
-三条守卫：
+Three guards:
 
-1. Python 侧不许有裸墙钟：``datetime.now()`` / ``datetime.now(UTC)`` /
-   ``datetime.fromtimestamp()`` 一律走 ``aiteam.clock``。
-2. Python 侧不许手工去偏移：``astimezone().replace(tzinfo=None)`` 是把值搬回本地
-   时钟的老动作，已由 ``to_naive_utc()`` 取代。
-3. 前端不许裸解析服务端时间串：``new Date(<字符串>)`` 对不带偏移的串按浏览器本地
-   时区读，正是 ecosystem 页时间偏早 8 小时的成因。一律走 ``@/lib/datetime``。
+1. The Python side may not use bare wall clocks: ``datetime.now()`` / ``datetime.now(UTC)`` /
+   ``datetime.fromtimestamp()`` must all go through ``aiteam.clock``.
+2. The Python side may not strip offsets by hand: ``astimezone().replace(tzinfo=None)`` is the old action that moves a value back to the local
+   clock; it has been replaced by ``to_naive_utc()``.
+3. The frontend may not bare-parse server time strings: ``new Date(<string>)`` reads a string without an offset in the browser's local
+   timezone, which is exactly why ecosystem page times were 8 hours early. Always go through ``@/lib/datetime``.
 
-退出码：0=全过，1=有违规。
+Exit codes: 0=all pass, 1=violations found.
 """
 
 from __future__ import annotations
@@ -29,36 +29,36 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# hook 脚本是脱离 aiteam 包运行的独立进程（且必须与 plugin/hooks 逐字节一致，I1），
-# 无法 import aiteam.clock；它们本就只用 UTC。
+# Hook scripts are standalone processes running outside the aiteam package (and must be byte-for-byte identical to plugin/hooks, I1),
+# so they cannot import aiteam.clock; they only use UTC anyway.
 PY_EXEMPT_DIRS = ("src/aiteam/hooks",)
 PY_EXEMPT_FILES = (
     "src/aiteam/clock.py",
     "src/aiteam/storage/utc_type.py",
-    "scripts/check_clock_convention.py",  # 本文件的模式串会匹配自己
+    "scripts/check_clock_convention.py",  # this file's pattern strings match themselves
 )
 SCRIPT_EXEMPT = (
-    "scripts/hn_monitor.py",  # 与生产数据无关的独立小工具
-    # 平移脚本的职责就是把本地墙钟值换算成 UTC，比较"本地 now"与"UTC now"正是它的
-    # 判据本身。它也刻意不 import aiteam —— 要能对着一个裸 .db 文件跑，不依赖包。
+    "scripts/hn_monitor.py",  # a standalone small tool unrelated to production data
+    # The shift script's job is precisely to convert local wall-clock values to UTC; comparing "local now" with "UTC now" is its
+    # very criterion. It also deliberately does not import aiteam — it must be able to run against a bare .db file without depending on the package.
     "scripts/migrate_timestamps_utc.py",
 )
 
 TS_EXEMPT = ("dashboard/src/lib/datetime.ts",)
 
 PY_RULES = [
-    (r"\bdatetime\.now\(", "裸墙钟调用 —— 改用 aiteam.clock.utc_now()"),
+    (r"\bdatetime\.now\(", "bare wall-clock call — use aiteam.clock.utc_now() instead"),
     (
         r"\bdatetime\.fromtimestamp\(",
-        "裸 fromtimestamp 会给时刻贴上宿主本地偏移 —— 改用 aiteam.clock.from_timestamp()",
+        "bare fromtimestamp tags the instant with the host-local offset — use aiteam.clock.from_timestamp() instead",
     ),
     (
         r"astimezone\(\)\s*\.replace\(tzinfo=None\)",
-        "手工去偏移 —— 改用 aiteam.clock.to_naive_utc()",
+        "manually stripping the offset — use aiteam.clock.to_naive_utc() instead",
     ),
 ]
 
-# new Date(<非空、非纯数字、非模板串的参数>)
+# new Date(<non-empty, non-pure-number, non-template-string argument>)
 TS_RULE = re.compile(r"new Date\(\s*(?!\s*\))(?![\d`])")
 
 
@@ -103,11 +103,11 @@ def check_dashboard() -> list[str]:
             for m in TS_RULE.finditer(line):
                 tail = line[m.end() :]
                 arg = tail.split(")")[0].strip()
-                # 纪元数值（如 ts * 1000）是绝对时刻，本来就没有时区歧义
+                # Epoch numbers (e.g. ts * 1000) are absolute instants and inherently have no timezone ambiguity
                 if "* 1000" in arg or re.fullmatch(r"[\d_.]+", arg):
                     continue
                 problems.append(
-                    f"{rel}:{lineno}: 裸解析服务端时间串 —— 改用 @/lib/datetime\n"
+                    f"{rel}:{lineno}: bare parsing of a server time string — use @/lib/datetime instead\n"
                     f"    {line.strip()}"
                 )
     return problems
@@ -116,16 +116,16 @@ def check_dashboard() -> list[str]:
 def main() -> int:
     problems = check_python() + check_dashboard()
     if problems:
-        print("❌ 时钟约定违规 —— 库里不许出现第二个时钟:")
+        print("❌ Clock convention violations — no second clock may appear in the database:")
         for p in problems:
             print(f"  {p}")
-        print(f"\n共 {len(problems)} 处。规格见 docs/utc-unification-design.md")
+        print(f"\nTotal {len(problems)} places. Spec in docs/utc-unification-design.md")
         return 1
     py = sum(1 for _ in (ROOT / "src").rglob("*.py"))
     ts = sum(1 for _ in (ROOT / "dashboard" / "src").rglob("*.ts*")) if (
         ROOT / "dashboard" / "src"
     ).is_dir() else 0
-    print(f"✅ 时钟约定统一: {py} 个 Python 模块 / {ts} 个前端模块，零裸墙钟、零裸解析")
+    print(f"✅ Clock convention unified: {py} Python modules / {ts} frontend modules, zero bare wall clocks, zero bare parsing")
     return 0
 
 

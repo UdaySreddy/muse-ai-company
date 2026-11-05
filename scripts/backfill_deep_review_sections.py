@@ -187,7 +187,7 @@ def _via_sqlite(db_path: str, project_id: str, dry_run: bool) -> int:
         if "integration_md" in payload:
             sep = "\n\n" if learnings_md else ""
             learnings_md = (
-                f"{learnings_md}{sep}## 5. 集成建议\n"
+                f"{learnings_md}{sep}## 5. Integration recommendations\n"
                 f"{payload['integration_md'].strip()}"
             )
 

@@ -1,40 +1,40 @@
 #!/usr/bin/env python3
-"""历史回填：agents.session_id + Leader 行 transcript_path。默认 dry-run。
+"""Historical backfill: agents.session_id + Leader-row transcript_path. Dry-run by default.
 
-规格见 docs/token-attribution-v1-design.md §2.6 / §7 阶段1。要解决的问题是：归因链
-上「session → agent」这一跳在库里等于不存在（取证时 2,568 行只有 2 行 session_id
-非空），而这一跳**根本不需要新采集**——它编码在 transcript 路径里：
+Spec in docs/token-attribution-v1-design.md §2.6 / §7 stage 1. The problem to solve: on the attribution chain,
+the "session → agent" hop effectively does not exist in the database (forensics: of 2,568 rows only 2 had a non-empty session_id),
+and this hop **needs no new collection at all** — it is encoded in the transcript path:
 
     ~/.claude/projects/<slug>/<session_id>/subagents/[workflows/<wf>/]agent-<cc>.jsonl
 
-三件事决定了这个脚本的形状：
+Three things determine the shape of this script:
 
-1. **只写空列，从不覆盖非空值。** 幂等因此是结构性的而不是靠标记位：跑完一次目标列
-   就非空了，再跑天然零变更。已有值与派生值冲突的行**一行都不动**，只在报告里点名
-   （``conflict``）——覆盖等于用推断抹掉观测。
-2. **写不了的行必须分类，不许静默跳过。** 每一行要么被写，要么带一个原因码进报告
-   （no-data ≠ zero，Council 纪律①）。原因码与设计 §3.4 的未归因分类同源。
-3. **改变活体行为的部分单独开关。** 回填 Leader 的 session_id 会改变
-   ``_find_leader`` / ``_on_session_start`` 的解析结果（它们取同会话 leader 里
-   **created_at 最早**的一行），这是活体行为变更而不是纯补数，所以默认**不做**，
-   要做得显式加 ``--leader-session-id``，且 dry-run 会逐个会话打印"将改成哪一行"。
+1. **Only write empty columns, never overwrite a non-empty value.** Idempotency is therefore structural rather than marker-based: after one run the target column
+   is non-empty, so re-running naturally changes nothing. Rows where an existing value conflicts with the derived value are **not touched at all**; they are only named
+   in the report (``conflict``) — overwriting would mean erasing an observation with an inference.
+2. **Rows that cannot be written must be classified, never silently skipped.** Every row is either written, or enters the report with a reason code
+   (no-data ≠ zero, Council discipline 1). The reason codes share their source with the unattributed classification in design §3.4.
+3. **The parts that change live behavior are behind a separate switch.** Backfilling a Leader's session_id changes
+   the resolution result of ``_find_leader`` / ``_on_session_start`` (they take the row with the
+   **earliest created_at** among the leaders of the same session), which is a live behavior change rather than pure data repair, so it is **not done** by default;
+   doing it requires an explicit ``--leader-session-id``, and the dry-run prints, session by session, "which row it will change to".
 
-前置条件（务必先读报告的「风险」栏）：``agents`` 的登记去重有一条按
-``session_id + name`` 的旁路（``repository.find_agent_by_session``，``limit(1)`` 且
-无 ORDER BY，实际取最早那行）。回填让历史行重新进入这条旁路的可见范围，于是未来
-一次**同名同会话**的新派工可能被判成"复用旧行"而就地覆盖旧行的 token 列。取证时刻
-待回填的 1,923 行里 ``(session, name)`` 全部唯一、零现存碰撞，但通用名（``Explore``
-这类）未来重名是可能的。脚本会实测这一点：一旦发现会新造碰撞，``--apply`` 硬拒，
-除非显式 ``--ack-collisions``。
+Precondition (be sure to read the "Risks" column of the report first): the ``agents`` registration dedup has a bypass keyed on
+``session_id + name`` (``repository.find_agent_by_session``, ``limit(1)`` with
+no ORDER BY, in practice taking the earliest row). Backfilling brings historical rows back into this bypass's visible range, so in the future
+a new dispatch with the **same name in the same session** may be judged a "reuse of the old row" and overwrite the old row's token columns in place. At forensics time,
+among the 1,923 rows awaiting backfill, all ``(session, name)`` pairs were unique with zero existing collisions, but generic names (``Explore``
+and the like) may collide in the future. The script measures this: once it finds that new collisions would be created, ``--apply`` hard-refuses,
+unless ``--ack-collisions`` is given explicitly.
 
-用法::
+Usage::
 
-    python3 scripts/backfill_agent_session_ids.py                     # dry-run 全量报告
-    python3 scripts/backfill_agent_session_ids.py --db /tmp/copy.db   # 对副本演练
-    python3 scripts/backfill_agent_session_ids.py --sample 30         # 抽 30 行供人工核对
-    python3 scripts/backfill_agent_session_ids.py --apply             # 缔造者亲自执行
+    python3 scripts/backfill_agent_session_ids.py                     # dry-run, full report
+    python3 scripts/backfill_agent_session_ids.py --db /tmp/copy.db   # rehearse against a copy
+    python3 scripts/backfill_agent_session_ids.py --sample 30         # sample 30 rows for human checking
+    python3 scripts/backfill_agent_session_ids.py --apply             # executed personally by the Founder
 
-``--apply`` 前先备份::
+Back up before ``--apply``::
 
     cp ~/.claude/data/ai-team-os/aiteam.db \
        ~/aiteam.db.bak-sessionid-$(date +%Y%m%d%H%M%S)
@@ -61,27 +61,27 @@ from aiteam.services.transcript_path import (  # noqa: E402
 DEFAULT_DB = Path.home() / ".claude" / "data" / "ai-team-os" / "aiteam.db"
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
-# 原因码 —— 与设计 §3.4 的未归因分类同源。"写不了"不是一种状态，是好几种，
-# 处置方式各不相同，所以报告必须分列而不是给一个总数。
+# Reason codes — sharing their source with the unattributed classification in design §3.4. "Cannot write" is not one state but several,
+# and each is handled differently, so the report must list them separately rather than give one total.
 REASONS = {
-    "written": "可写入（本次 dry-run 的候选 / --apply 的实际写入）",
-    "already_set": "目标列已有值且与派生值一致 —— 幂等重跑必然全部落在这里",
-    "conflict": "目标列已有值但与派生值不同 —— 不动，留待人判",
-    "no_transcript_path": "该行从未登记 transcript 路径，无从派生",
-    "unparseable_path": "登记了路径但不符合 CC 的目录形态，解析器拒绝猜",
-    "no_session_id": "Leader 行既无 session_id 也无 team.config.owner_session_id",
-    "no_root_path": "解析不到项目 root_path，拼不出 slug",
-    "transcript_gone": "路径拼得出但文件已不在磁盘上 —— 回采窗口已关闭，只增不减",
-    "slug_mismatch": "文件在磁盘上但落在另一个 slug 下 —— 归属存疑，人看一眼",
+    "written": "writable (a candidate in this dry-run / actually written by --apply)",
+    "already_set": "the target column already has a value and it agrees with the derived value — an idempotent re-run necessarily lands entirely here",
+    "conflict": "the target column already has a value but it differs from the derived value — do not touch, leave for a human to judge",
+    "no_transcript_path": "this row never registered a transcript path, so there is nothing to derive from",
+    "unparseable_path": "a path was registered but does not match CC's directory shape; the parser refuses to guess",
+    "no_session_id": "the Leader row has neither session_id nor team.config.owner_session_id",
+    "no_root_path": "the project root_path cannot be resolved, so no slug can be assembled",
+    "transcript_gone": "the path can be assembled but the file is no longer on disk — the backfill window has closed; this only ever grows",
+    "slug_mismatch": "the file is on disk but sits under another slug — ownership in doubt; a human should look",
 }
 
 
 @dataclass
 class Row:
-    """一行的判定结果。``value`` 只在 written 时有意义。
+    """One row's verdict. ``value`` is only meaningful when the verdict is written.
 
-    ``warn`` 与 ``note`` 分开：前者是"这行有事"（报告里带 ⚠，人必须看），后者只是
-    补充上下文。混成一个字段会让真警告淹在噪声里。
+    ``warn`` and ``note`` are separate: the former means "something is up with this row" (carries ⚠ in the report, a human must look), the latter is only
+    supplementary context. Merging them into one field would drown real warnings in noise.
     """
 
     agent_id: str
@@ -109,10 +109,10 @@ class Job:
 
 
 # ---------------------------------------------------------------------------
-# 读取面
+# Read side
 # ---------------------------------------------------------------------------
 def open_db(path: Path, *, writable: bool) -> sqlite3.Connection:
-    """写模式才用普通连接；只读一律走 ``mode=ro`` URI，物理上写不进去。"""
+    """Only write mode uses a normal connection; reads always go through a ``mode=ro`` URI, physically incapable of writing."""
     if writable:
         con = sqlite3.connect(str(path))
     else:
@@ -138,7 +138,7 @@ def load_agents(con: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def index_main_transcripts() -> dict[str, list[str]]:
-    """磁盘上全部主会话 transcript：session_id -> [slug, ...]（可能多个）。"""
+    """All main-session transcripts on disk: session_id -> [slug, ...] (possibly several)."""
     index: dict[str, list[str]] = {}
     if not PROJECTS_DIR.is_dir():
         return index
@@ -156,11 +156,11 @@ def index_main_transcripts() -> dict[str, list[str]]:
 
 
 def owner_session_of(row: sqlite3.Row) -> str:
-    """Leader 行的会话身份：自身列优先，其次队 config 里出生时盖的 owner_session_id。
+    """A Leader row's session identity: its own column first, then the owner_session_id stamped in the team config at birth.
 
-    容器队的 ``config.owner_session_id`` 是建队那一刻盖上的（见
-    ``hook_translator._find_or_create_session_team``），比队名前缀可靠——队名只留了
-    session 的前 8 位，理论上会撞。队名前缀**不**作为兜底：8 位前缀不是身份。
+    A container team's ``config.owner_session_id`` is stamped at the moment the team is created (see
+    ``hook_translator._find_or_create_session_team``), which is more reliable than the team-name prefix — the team name only keeps
+    the first 8 characters of the session and could theoretically collide. The team-name prefix is **not** used as a fallback: an 8-character prefix is not an identity.
     """
     if row["session_id"]:
         return str(row["session_id"])
@@ -172,11 +172,11 @@ def owner_session_of(row: sqlite3.Row) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 三个 Job
+# The three Jobs
 # ---------------------------------------------------------------------------
 def job_subagent_session_id(agents: list[sqlite3.Row]) -> Job:
-    """Job A：子 agent 的 session_id ← transcript 路径派生。"""
-    job = Job("A. agents.session_id ← transcript_path 派生（子 agent）")
+    """Job A: a sub-agent's session_id ← derived from its transcript path."""
+    job = Job("A. agents.session_id ← derived from transcript_path (sub-agents)")
     for a in agents:
         if a["role"] == "leader":
             continue
@@ -192,8 +192,8 @@ def job_subagent_session_id(agents: list[sqlite3.Row]) -> Job:
             continue
         warn = ""
         if a["root_path"] and not slug_matches_root(ref.project_slug, a["root_path"]):
-            # 归属**不**因此改写：slug 是有损映射，对不上只说明值得人看一眼。
-            warn = f"slug={ref.project_slug} 与登记项目 root_path 对不上"
+            # Ownership is **not** rewritten because of this: the slug is a lossy mapping, and a mismatch only means it is worth a human look.
+            warn = f"slug={ref.project_slug} does not match the registered project root_path"
         current = a["session_id"] or ""
         if current == ref.session_id:
             job.rows.append(
@@ -202,7 +202,7 @@ def job_subagent_session_id(agents: list[sqlite3.Row]) -> Job:
         elif current:
             job.rows.append(
                 Row(a["id"], a["name"], "conflict", "session_id", ref.session_id,
-                    warn=f"库中已有 {current}，派生得 {ref.session_id}")
+                    warn=f"the database already has {current}, the derivation gives {ref.session_id}")
             )
         else:
             job.rows.append(
@@ -214,8 +214,8 @@ def job_subagent_session_id(agents: list[sqlite3.Row]) -> Job:
 def job_leader_transcript_path(
     agents: list[sqlite3.Row], disk: dict[str, list[str]]
 ) -> Job:
-    """Job B：Leader 行的 transcript_path ← 按 slug + session_id 反查主会话文件。"""
-    job = Job("B. agents.transcript_path ← session_probe 反查（Leader 行）")
+    """Job B: a Leader row's transcript_path ← reverse-looking-up the main-session file by slug + session_id."""
+    job = Job("B. agents.transcript_path ← session_probe reverse lookup (Leader rows)")
     for a in agents:
         if a["role"] != "leader":
             continue
@@ -236,10 +236,10 @@ def job_leader_transcript_path(
         if expected_slug in on_disk:
             slug, reason, warn = expected_slug, "written", ""
         else:
-            # 文件在，但落在别的 slug 下。以**文件真相**为准写路径（回采要的是文件），
-            # 但单独标一类原因码，且绝不因此改写 project_id —— 归属只认登记列。
+            # The file is there, but sits under another slug. Write the path taking the **file as truth** (backfill wants the file),
+            # but mark a separate reason code for it, and never rewrite project_id because of it — ownership only recognizes the registered column.
             slug, reason = on_disk[0], "slug_mismatch"
-            warn = f"期望 {expected_slug}，实际落在 {'/'.join(on_disk)}"
+            warn = f"expected {expected_slug}, actually sits in {'/'.join(on_disk)}"
         path = str(PROJECTS_DIR / slug / f"{sid}.jsonl")
         current = a["transcript_path"] or ""
         if current == path:
@@ -249,7 +249,7 @@ def job_leader_transcript_path(
         elif current:
             job.rows.append(
                 Row(a["id"], a["name"], "conflict", "transcript_path", path,
-                    warn=f"库中已有 {current}")
+                    warn=f"the database already has {current}")
             )
         else:
             job.rows.append(Row(a["id"], a["name"], reason, "transcript_path", path, warn))
@@ -257,15 +257,15 @@ def job_leader_transcript_path(
 
 
 def job_leader_session_id(agents: list[sqlite3.Row]) -> Job:
-    """Job C：Leader 行的 session_id ← team.config.owner_session_id。**默认不执行。**
+    """Job C: a Leader row's session_id ← team.config.owner_session_id. **Not executed by default.**
 
-    这一项与 A/B 不同：它会改变**活体解析结果**。``_on_session_start`` 复用
-    Leader 的判据是"同 session_id 的 leader 行里 created_at 最早的一条"，所以一旦
-    同一会话的多个幽灵行都补上 session_id，下次会话恢复复用的将是**最早**那行，
-    而不是当前这行。设计上这正是"一会话一 Leader 行"想要的收敛方向（幽灵行的成因
-    正是身份被抹后每次恢复都新建），但它是行为变更，必须由人拍板。
+    This item differs from A/B: it changes the **live resolution result**. ``_on_session_start`` reuses
+    a Leader by the criterion "the leader row with the earliest created_at among those with the same session_id", so once
+    several ghost rows of the same session all get a session_id, the next session restore will reuse the **earliest** row,
+    rather than the current one. By design this is exactly the convergence direction "one session, one Leader row" wants (ghost rows arise
+    precisely because, with identity erased, every restore creates a new one), but it is a behavior change and must be decided by a human.
     """
-    job = Job("C. agents.session_id ← team.config.owner_session_id（Leader 行，需 --leader-session-id）")
+    job = Job("C. agents.session_id ← team.config.owner_session_id (Leader rows, requires --leader-session-id)")
     for a in agents:
         if a["role"] != "leader":
             continue
@@ -279,7 +279,7 @@ def job_leader_session_id(agents: list[sqlite3.Row]) -> Job:
         elif current:
             job.rows.append(
                 Row(a["id"], a["name"], "conflict", "session_id", sid,
-                    warn=f"库中已有 {current}")
+                    warn=f"the database already has {current}")
             )
         else:
             job.rows.append(
@@ -290,16 +290,16 @@ def job_leader_session_id(agents: list[sqlite3.Row]) -> Job:
 
 
 # ---------------------------------------------------------------------------
-# 风险检测
+# Risk detection
 # ---------------------------------------------------------------------------
 def detect_name_collisions(
     agents: list[sqlite3.Row], job_a: Job, job_c: Job, include_c: bool
 ) -> list[str]:
-    """回填后是否出现 ``(session_id, name)`` 重复 —— 登记去重旁路的踩雷点。
+    """Whether ``(session_id, name)`` duplicates appear after the backfill — the landmine of the registration-dedup bypass.
 
-    ``repository.find_agent_by_session(session_id, name)`` 是 ``limit(1)`` 且无
-    ORDER BY，取到的是最早那行。同一 (session, name) 下有多行时，未来一次同名新派工
-    会被判成"复用"并就地覆盖旧行的 token 列——正好毁掉本项目要建的账。
+    ``repository.find_agent_by_session(session_id, name)`` is ``limit(1)`` with no
+    ORDER BY, and takes the earliest row. When several rows exist under the same (session, name), a future new dispatch of the same name
+    will be judged a "reuse" and overwrite the old row's token columns in place — exactly destroying the accounts this project sets out to build.
     """
     planned: dict[str, str] = {}
     for job, on in ((job_a, True), (job_c, include_c)):
@@ -314,20 +314,20 @@ def detect_name_collisions(
         sid = planned.get(a["id"]) or (a["session_id"] or "")
         if not sid:
             continue
-        # workflow 扇出走独立注册路径（按 cc_agent_id 去重，不按名字），不受这条旁路影响
+        # Workflow fan-out takes an independent registration path (dedup by cc_agent_id, not by name), so this bypass does not affect it
         if a["role"] == "workflow-subagent":
             continue
         buckets.setdefault((sid, a["name"]), []).append(a["id"])
 
     return [
-        f"(session={sid[:8]}, name={name!r}) → {len(ids)} 行"
+        f"(session={sid[:8]}, name={name!r}) → {len(ids)} rows"
         for (sid, name), ids in sorted(buckets.items(), key=lambda kv: -len(kv[1]))
         if len(ids) > 1
     ]
 
 
 def describe_leader_resolution_shift(agents: list[sqlite3.Row], job_c: Job) -> list[str]:
-    """Job C 会把每个会话的 Leader 解析结果改成哪一行 —— 逐会话打印，供人拍板。"""
+    """Which row Job C will change each session's Leader resolution to — printed session by session, for a human to decide."""
     by_session: dict[str, list[sqlite3.Row]] = {}
     planned = {r.agent_id: r.value for r in job_c.written()}
     for a in agents:
@@ -341,7 +341,7 @@ def describe_leader_resolution_shift(agents: list[sqlite3.Row], job_c: Job) -> l
         rows.sort(key=lambda r: r["created_at"] or "")
         winner = rows[0]
         lines.append(
-            f"session {sid[:8]}: {len(rows)} 个 Leader 行 → 解析将命中最早的 "
+            f"session {sid[:8]}: {len(rows)} Leader rows → resolution will hit the earliest, "
             f"{winner['id'][:8]}（{winner['created_at']}, team={winner['team_name']}, "
             f"status={winner['status']}）"
         )
@@ -349,7 +349,7 @@ def describe_leader_resolution_shift(agents: list[sqlite3.Row], job_c: Job) -> l
 
 
 # ---------------------------------------------------------------------------
-# 报告
+# Report
 # ---------------------------------------------------------------------------
 def print_job(job: Job, sample_n: int, rng: random.Random) -> None:
     print()
@@ -361,7 +361,7 @@ def print_job(job: Job, sample_n: int, rng: random.Random) -> None:
     for reason, desc in REASONS.items():
         if reason in counts:
             print(f"  {counts[reason]:6d}  {reason:<20} {desc}")
-    print(f"  {total:6d}  合计")
+    print(f"  {total:6d}  Total")
 
     writable = [r for r in job.rows if r.reason in ("written", "slug_mismatch")]
     if not writable:
@@ -369,7 +369,7 @@ def print_job(job: Job, sample_n: int, rng: random.Random) -> None:
     picks = writable if len(writable) <= sample_n else rng.sample(writable, sample_n)
     picks.sort(key=lambda r: r.agent_id)
     print()
-    print(f"  ── 抽样 {len(picks)}/{len(writable)} 行（供人工核对）──")
+    print(f"  ── Sampled {len(picks)}/{len(writable)} rows (for human checking) ──")
     for r in picks:
         flag = "" if r.reason == "written" else f"  [{r.reason}]"
         extra = f"  ({r.note})" if r.note else ""
@@ -378,17 +378,17 @@ def print_job(job: Job, sample_n: int, rng: random.Random) -> None:
 
 
 def apply_job(con: sqlite3.Connection, job: Job) -> int:
-    """只写空列：SQL 自带 ``(col IS NULL OR col='')`` 守卫，与判定层双保险。
+    """Only write empty columns: the SQL itself carries an ``(col IS NULL OR col='')`` guard, as double insurance with the verdict layer.
 
-    判定已经过滤过一次，这里再守一次是因为 dry-run 与 apply 之间库可能已经变了
-    （活体系统随时在写）。守卫在 SQL 里意味着并发下也不会覆盖别人刚写的值。
+    The verdict has already filtered once; guarding again here is because the database may have changed between dry-run and apply
+    (the live system is writing at all times). A guard in the SQL means that even concurrently it will not overwrite a value someone else just wrote.
     """
     n = 0
     for r in job.rows:
         if r.reason not in ("written", "slug_mismatch"):
             continue
         cur = con.execute(
-            f"update agents set {r.column} = ? "  # noqa: S608 — 列名来自本文件常量，非外部输入
+            f"update agents set {r.column} = ? "  # noqa: S608 — the column name comes from a constant in this file, not external input
             f"where id = ? and ({r.column} is null or {r.column} = '')",
             (r.value, r.agent_id),
         )
@@ -398,22 +398,22 @@ def apply_job(con: sqlite3.Connection, job: Job) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--db", type=Path, default=DEFAULT_DB, help="目标库（默认生产库）")
-    ap.add_argument("--apply", action="store_true", help="真正写入（默认只出报告）")
-    ap.add_argument("--sample", type=int, default=30, help="每个 Job 抽样打印的行数")
-    ap.add_argument("--seed", type=int, default=0, help="抽样随机种子（默认 0，可复现）")
+    ap.add_argument("--db", type=Path, default=DEFAULT_DB, help="target database (default: the production database)")
+    ap.add_argument("--apply", action="store_true", help="actually write (default: report only)")
+    ap.add_argument("--sample", type=int, default=30, help="number of rows sampled and printed per Job")
+    ap.add_argument("--seed", type=int, default=0, help="sampling random seed (default 0, reproducible)")
     ap.add_argument(
         "--leader-session-id", action="store_true",
-        help="额外执行 Job C（回填 Leader 的 session_id）—— 会改变活体 Leader 解析结果",
+        help="additionally run Job C (backfill Leaders' session_id) — this changes live Leader resolution results",
     )
     ap.add_argument(
         "--ack-collisions", action="store_true",
-        help="已人审 (session,name) 碰撞清单，允许带碰撞写入",
+        help="the (session,name) collision list has been human-reviewed; allow writing with collisions",
     )
     args = ap.parse_args()
 
     if not args.db.exists():
-        print(f"库不存在：{args.db}", file=sys.stderr)
+        print(f"Database does not exist: {args.db}", file=sys.stderr)
         return 2
 
     rng = random.Random(args.seed)
@@ -426,37 +426,37 @@ def main() -> int:
         job_b = job_leader_transcript_path(agents, disk)
         job_c = job_leader_session_id(agents)
 
-        print(f"库：{args.db}")
-        print(f"模式：{'APPLY（写入）' if args.apply else 'DRY-RUN（只读，mode=ro）'}")
-        print(f"agents 总行数：{len(agents)}；磁盘主会话 transcript：{sum(len(v) for v in disk.values())} 份")
-        print("口径：只写空列，从不覆盖非空值；重跑必然零变更（全部落进 already_set）")
+        print(f"Database: {args.db}")
+        print(f"Mode: {'APPLY (writing)' if args.apply else 'DRY-RUN (read-only, mode=ro)'}")
+        print(f"Total agents rows: {len(agents)}; main-session transcripts on disk: {sum(len(v) for v in disk.values())}")
+        print("Rule: only write empty columns, never overwrite a non-empty value; a re-run necessarily changes nothing (everything lands in already_set)")
 
         print_job(job_a, args.sample, rng)
         print_job(job_b, args.sample, rng)
         print_job(job_c, args.sample, rng)
         if not args.leader_session_id:
             print()
-            print("  Job C 默认不执行（需 --leader-session-id）。上面只是它的判定预览。")
+            print("  Job C is not executed by default (it requires --leader-session-id). The above is only a preview of its verdicts.")
 
         print()
         print("=" * 78)
-        print("风险栏")
+        print("Risks")
         print("-" * 78)
         collisions = detect_name_collisions(agents, job_a, job_c, args.leader_session_id)
         if collisions:
-            print("  ⚠ 回填后出现 (session_id, name) 重复 —— 未来同名派工可能被判成"
-                  "「复用旧行」并覆盖其 token 列：")
+            print("  ⚠ After the backfill, (session_id, name) duplicates appear — a future same-name dispatch may be judged"
+                  "a \"reuse of the old row\" and overwrite its token columns:")
             for line in collisions[:20]:
                 print(f"      {line}")
             if len(collisions) > 20:
-                print(f"      …… 另有 {len(collisions) - 20} 组")
+                print(f"      …… {len(collisions) - 20} more groups")
         else:
-            print("  ✓ 回填后 (session_id, name) 全部唯一，登记去重旁路不会踩到历史行")
+            print("  ✓ After the backfill, (session_id, name) pairs are all unique; the registration-dedup bypass will not step on historical rows")
 
         shift = describe_leader_resolution_shift(agents, job_c if args.leader_session_id else Job(""))
         if args.leader_session_id:
             print()
-            print("  Job C 将改变以下会话的 Leader 解析结果：")
+            print("  Job C will change the Leader resolution result of the following sessions:")
             for line in shift:
                 print(f"      {line}")
 
@@ -464,20 +464,20 @@ def main() -> int:
         planned = sum(len([r for r in j.rows if r.reason in ("written", "slug_mismatch")]) for j in jobs)
         print()
         print("=" * 78)
-        print(f"待写入合计：{planned} 行")
+        print(f"Total to write: {planned} rows")
 
         if not args.apply:
-            print("dry-run 结束，一个字节都没写。确认无误后由缔造者执行 --apply（先备份）。")
+            print("Dry-run finished; not one byte was written. Once confirmed correct, the Founder runs --apply (back up first).")
             return 0
 
         if collisions and not args.ack_collisions:
-            print("拒绝写入：存在 (session,name) 碰撞且未 --ack-collisions。", file=sys.stderr)
+            print("Write refused: (session,name) collisions exist and --ack-collisions was not given.", file=sys.stderr)
             return 3
 
         written = sum(apply_job(con, j) for j in jobs)
         con.commit()
-        print(f"已写入：{written} 行（判定候选 {planned} 行；差额=期间已被活体写上的行）")
-        print("重跑本脚本应报告 0 待写入 —— 这就是幂等验收。")
+        print(f"Written: {written} rows (verdict candidates {planned} rows; the difference = rows the live system has written in the meantime)")
+        print("Re-running this script should report 0 pending writes — that is the idempotency acceptance test.")
         return 0
     finally:
         con.close()

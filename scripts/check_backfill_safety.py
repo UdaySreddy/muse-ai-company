@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""I14 红线机检：历史回采脚本的三条硬约束（设计 §6.4）必须始终成立。
+"""I14 red-line machine check: the three hard constraints of the historical backfill script (design §6.4) must always hold.
 
-``scripts/backfill_token_usage.py`` 会一次性改写两千余行生产数据。它的三条硬约束里，
-**第一条错了就无法挽回**：``workflow_agents.tokens`` 是 ctx_last 口径（末轮上下文水位），
-本脚本产出的是 usage_sum（用量累加），实测差 5~25 倍。一旦把后者写进前者，混口径就被
-**永久固化进历史数据且事后不可分辨**——比不回采糟糕得多（风险 R3）。
+``scripts/backfill_token_usage.py`` rewrites more than two thousand rows of production data in one pass. Of its three hard constraints,
+**if the first one goes wrong it is irrecoverable**: ``workflow_agents.tokens`` is in the ctx_last metric (last-turn context watermark),
+while what this script produces is usage_sum (accumulated usage), measured 5-25x apart. Writing the latter into the former would
+**permanently solidify the mixed metrics into the historical data, indistinguishable afterwards** — far worse than not backfilling at all (risk R3).
 
-所以这条检查是**行为式**而不是文本式的：它真的建一个临时库、真的跑一次 ``--apply``、
-真的比对禁改列的逐行指纹。文本扫描挡不住动态拼出来的 SQL，而这里的判据是"跑完之后那
-一列有没有变"——任何将来的改动，不管用什么写法，只要碰了那一列就会被抓住。
+So this check is **behavioral** rather than textual: it really builds a temporary database, really runs ``--apply`` once,
+and really compares per-row fingerprints of the forbidden column. A text scan cannot stop dynamically assembled SQL, while the criterion here is "after the run, did
+that column change" — any future change, whatever style it is written in, is caught as long as it touches that column.
 
-全程只用 tempfile，一个字节都不碰生产库。
+It uses tempfile throughout and does not touch one byte of the production database.
 
-用法::
+Usage::
 
     python3 scripts/check_backfill_safety.py
 """
@@ -46,11 +46,11 @@ USAGE = {
     "cache_creation_input_tokens": 2000,
     "cache_read_input_tokens": 90000,
 }
-SENTINEL_TOKENS = 424242  # 禁改列里放一个显眼的哨兵值
+SENTINEL_TOKENS = 424242  # Put a conspicuous sentinel value in the forbidden column
 
 
 def seed(tmp: Path) -> Path:
-    """建一个最小但覆盖各分支的库：有/无 transcript、已测量、别名/完整型号。"""
+    """Build a minimal database that still covers every branch: with/without transcript, already measured, alias/full model names."""
     transcript = tmp / "agent-cc1.jsonl"
     transcript.write_text(
         "\n".join(
@@ -130,18 +130,18 @@ def fingerprint(db: Path, bf) -> dict:
 
 
 def check() -> list[str]:
-    """返回违规清单，空 = 通过。"""
+    """Return the list of violations; empty = pass."""
     bad: list[str] = []
     bf = load_backfill()
 
-    # ── 硬约束① 静态面：禁改列不在写列白名单里 ───────────────────────────
+    # ── Hard constraint 1, static side: the forbidden column is not in the writable-column allowlist ──
     if bf.FORBIDDEN_COLUMN != ("workflow_agents", "tokens"):
-        bad.append(f"FORBIDDEN_COLUMN 被改成了 {bf.FORBIDDEN_COLUMN} —— 禁改列的定义不该动")
+        bad.append(f"FORBIDDEN_COLUMN was changed to {bf.FORBIDDEN_COLUMN} — the definition of the forbidden column should not move")
     if bf.FORBIDDEN_COLUMN in bf.WRITABLE_COLUMNS:
-        bad.append("workflow_agents.tokens 出现在写列白名单里 —— usage_sum 会污染 ctx_last 列")
+        bad.append("workflow_agents.tokens appears in the writable-column allowlist — usage_sum would pollute the ctx_last column")
     wa_writable = {c for t, c in bf.WRITABLE_COLUMNS if t == "workflow_agents"}
     if wa_writable - {"model"}:
-        bad.append(f"workflow_agents 上多出可写列 {sorted(wa_writable - {'model'})} —— 只该写 model")
+        bad.append(f"workflow_agents gained writable columns {sorted(wa_writable - {'model'})} — only model should be writable")
     agents_writable = {c for t, c in bf.WRITABLE_COLUMNS if t == "agents"}
     expected_agents = {
         "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens",
@@ -149,67 +149,67 @@ def check() -> list[str]:
     }
     if agents_writable != expected_agents:
         bad.append(
-            f"agents 的可写列集合变了：多 {sorted(agents_writable - expected_agents)} / "
-            f"少 {sorted(expected_agents - agents_writable)}"
+            f"The writable column set of agents changed: added {sorted(agents_writable - expected_agents)} / "
+            f"removed {sorted(expected_agents - agents_writable)}"
         )
 
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
 
-        # ── 硬约束③ dry-run 不写 ────────────────────────────────────────
+        # ── Hard constraint 3: dry-run writes nothing ───────────────────────
         db = seed(tmp)
         before = fingerprint(db, bf)
         if run_script(bf, db) != 0:
-            bad.append("dry-run 返回非 0")
+            bad.append("dry-run returned non-zero")
         con = sqlite3.connect(db)
         if con.execute("select count(*) from agents where tokens_measured_at is not null")\
                 .fetchone()[0] != 1:
-            bad.append("dry-run 写了数据 —— 默认必须只出报告")
+            bad.append("dry-run wrote data — by default it must only report")
         con.close()
 
-        # ── 硬约束③ --apply 必须带 journal，且不覆盖已存在的 journal ──────
+        # ── Hard constraint 3: --apply requires a journal, and must not overwrite an existing journal ──
         if run_script(bf, db, "--apply") != 2:
-            bad.append("--apply 没有 --journal 时未被拒绝 —— journal 是唯一的恢复凭证")
+            bad.append("--apply without --journal was not rejected — the journal is the only recovery credential")
         occupied = tmp / "taken.json"
         occupied.write_text("{}")
         if run_script(bf, db, "--apply", "--journal", str(occupied)) != 2:
-            bad.append("已存在的 journal 未被拒绝 —— 二次 apply 会覆盖掉回采前基线")
+            bad.append("An existing journal was not rejected — a second apply would overwrite the pre-backfill baseline")
 
-        # ── 硬约束① 行为面：真跑一次，禁改列逐行未变 ─────────────────────
+        # ── Hard constraint 1, behavioral side: really run it once, the forbidden column unchanged row by row ──
         journal = tmp / "j.json"
         if run_script(bf, db, "--apply", "--journal", str(journal)) != 0:
-            bad.append("--apply 返回非 0")
+            bad.append("--apply returned non-zero")
         after = fingerprint(db, bf)
         if after["sha256"] != before["sha256"]:
             bad.append(
-                f"❗ workflow_agents.tokens 被回采改动了："
+                f"❗ workflow_agents.tokens was changed by the backfill:"
                 f"sum {before['sum']} → {after['sum']}（sha {before['sha256'][:12]} → "
-                f"{after['sha256'][:12]}）—— ctx_last 口径已被 usage_sum 污染"
+                f"{after['sha256'][:12]}) — the ctx_last metric has been polluted by usage_sum"
             )
         con = sqlite3.connect(db)
         if con.execute("select tokens from workflow_agents where id='wa1'").fetchone()[0] \
                 != SENTINEL_TOKENS:
-            bad.append("哨兵行的 tokens 被动了")
-        # apply 确实干了活（否则"未变"是因为什么都没做，这条检查就成了空转）
+            bad.append("The sentinel row's tokens were touched")
+        # apply must actually have done work (otherwise "unchanged" is because nothing was done, and this check becomes an idle spin)
         measured = con.execute(
             "select count(*) from agents where tokens_measured_at is not null"
         ).fetchone()[0]
         if measured != 2:
-            bad.append(f"回采未生效（已测量行 {measured}，期望 2）—— 机检可能在空转")
+            bad.append(f"Backfill did not take effect ({measured} rows measured, expected 2) — the machine check may be spinning idly")
         if con.execute("select model from workflow_agents where id='wa1'").fetchone()[0] \
                 != "claude-opus-4-8":
-            bad.append("model 观测回填未生效 —— 机检可能在空转")
+            bad.append("Model observation backfill did not take effect — the machine check may be spinning idly")
         con.close()
         if not journal.is_file():
-            bad.append("journal 未落盘")
+            bad.append("The journal was not written to disk")
         else:
             data = json.loads(journal.read_text())
             if not data.get("forbidden_column", {}).get("unchanged"):
-                bad.append("journal 未记录禁改列未变的凭证")
+                bad.append("The journal did not record the credential that the forbidden column is unchanged")
             if data.get("metric") != "usage_sum":
-                bad.append("journal 未标注口径 —— 脱离口径的 token 数值没有意义")
+                bad.append("The journal did not label the metric — a token value detached from its metric is meaningless")
 
-        # ── 硬约束③ 幂等：重跑零变更 ────────────────────────────────────
+        # ── Hard constraint 3: idempotency, re-running changes nothing ───────
         saved_out = sys.stdout
         import contextlib
         import io
@@ -219,22 +219,22 @@ def check() -> list[str]:
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()):
             bf.main()
         sys.stdout = saved_out
-        if "待写入合计：0 行" not in buf.getvalue():
-            bad.append("--apply 后重跑仍有待写入行 —— 幂等失守")
+        if "Total to write: 0 rows" not in buf.getvalue():
+            bad.append("Re-running after --apply still has rows pending write — idempotency breached")
 
-        # ── 硬约束① 第二道拦：写入层对越界列当场炸 ───────────────────────
+        # ── Hard constraint 1, second gate: the write layer blows up on the spot for an out-of-bounds column ──
         job = bf.Job("probe", "workflow_agents")
         job.rows.append(bf.Row("workflow_agents", "wa1", "l1", "written", values={"tokens": 1}))
         con = sqlite3.connect(db)
         try:
             bf.apply_job(con, job)
-            bad.append("apply_job 接受了越界列写入 —— 白名单 assert 已失效")
+            bad.append("apply_job accepted an out-of-bounds column write — the allowlist assert has failed")
         except RuntimeError:
             pass
         finally:
             con.close()
 
-        # ── 硬约束② 覆盖率分窗 ──────────────────────────────────────────
+        # ── Hard constraint 2: coverage window split ─────────────────────────
         con = bf.open_db(db, writable=False)
         agents = bf.load_agents(con)
         cohorts = bf.detect_backfill_cohorts(con)
@@ -242,19 +242,19 @@ def check() -> list[str]:
         cov = bf.measure_coverage(agents, cohorts, leader=False)
         if cov.total != 3:
             bad.append(
-                f"覆盖率分母 {cov.total} ≠ 3 —— 没有 transcript 的行被移出了分母，"
-                "那正是局部冒充全貌（R2）"
+                f"Coverage denominator {cov.total} ≠ 3 — rows without a transcript were moved out of the denominator,"
+                "which is exactly a part impersonating the whole (R2)"
             )
         projected = bf.project_coverage(cov, 5)
         if projected.incremental != cov.incremental:
-            bad.append("回采改动了'增量采集'那一格 —— 一个数字掩盖了另一个数字（6.3-2）")
+            bad.append("The backfill changed the 'incremental collection' cell — one number masked another number (6.3-2)")
         if projected.total != cov.total:
-            bad.append("回采改动了分母")
+            bad.append("The backfill changed the denominator")
         line = cov.line()
-        if not all(k in line for k in ("增量采集", "历史回采", "未归因")):
-            bad.append("覆盖率呈现缺少三分之一 —— 未归因必须与已归因同屏")
-        if "合计" in line or "总计" in line:
-            bad.append("覆盖率行给出了合计 —— 两个口径的数相加没有意义")
+        if not all(k in line for k in ("incremental collection", "historical backfill", "unattributed")):
+            bad.append("The coverage presentation is missing one of the three — unattributed must be on the same screen as attributed")
+        if "Total" in line or "Grand total" in line:
+            bad.append("The coverage row gives a total — adding numbers of two metrics together is meaningless")
 
     return bad
 
@@ -262,16 +262,16 @@ def check() -> list[str]:
 def main() -> int:
     try:
         bad = check()
-    except Exception as exc:  # noqa: BLE001 —— 机检自身炸了要说清楚，不能静默通过
-        print(f"❌ 机检执行失败：{type(exc).__name__}: {exc}")
+    except Exception as exc:  # noqa: BLE001 — if the machine check itself blows up it must say so clearly, not silently pass
+        print(f"❌ Machine check execution failed: {type(exc).__name__}: {exc}")
         return 1
     if bad:
         for line in bad:
             print(f"  - {line}")
         return 1
     print(
-        "✅ 回采红线通过: workflow_agents.tokens 逐行未变(指纹) / "
-        "覆盖率分窗不合并 / dry-run 默认+journal 必需+重跑零变更"
+        "✅ Backfill red line passed: workflow_agents.tokens unchanged row by row (fingerprint) / "
+        "coverage windows not merged / dry-run by default + journal required + re-running changes nothing"
     )
     return 0
 

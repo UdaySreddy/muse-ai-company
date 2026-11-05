@@ -46,7 +46,7 @@ def migrate() -> None:
         fm, content = parse_frontmatter(raw)
 
         # Derive fields — fall back to filename parsing
-        name = f.stem  # e.g. "algo-researcher_量化策略_2026-04-04"
+        name = f.stem  # e.g. "algo-researcher_quant-strategy_2026-04-04"
         parts = name.split("_")
 
         author = fm.get("author") or (parts[0] if parts else "unknown")

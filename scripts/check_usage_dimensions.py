@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""I12 — 用量呈现面的量纲白名单机检。
+"""I12 — dimension allowlist machine check for usage presentation surfaces.
 
-红线（token 用量归因 v1 设计 §4.4 / P1）：
+Red line (token usage attribution v1 design §4.4 / P1):
 
-    用量相关的呈现面（API schema 字段名 + 前端展示单位）只允许四种量纲：
-    token（四层分列）、次数、时长毫秒、百分比。出现任何第四类之外的量纲即失败。
+    Usage-related presentation surfaces (API schema field names + frontend display units) may only use four kinds of dimensions:
+    tokens (four layers, listed separately), counts, duration in milliseconds, percentages. The appearance of any dimension outside these kinds fails.
 
-为什么是白名单而不是禁用词表：黑名单要穷举所有越界写法（多语言、符号、缩写、俚语）
-才能生效，漏一个就破防；白名单只需确认四个合法值，新增量纲必须显式过审。
+Why an allowlist rather than a banned-word list: a blacklist has to exhaustively enumerate every out-of-bounds phrasing (multiple languages, symbols, abbreviations, slang)
+to work, and missing one breaks the defense; an allowlist only has to confirm four legal values, and a new dimension must be explicitly reviewed.
 
-白名单要成立，前提是"没有未申报的呈现面"，所以本检查是三件事而不是一件：
+For the allowlist to hold, the precondition is "there are no undeclared presentation surfaces", so this check is three things rather than one:
 
-1. **申报完整**：注册表里每个模型的数值字段，与 Pydantic 内省出来的实际字段**双向**
-   一致。新加字段没申报 = 红；申报了却已删除 = 也红（注册表腐烂会让白名单静默失效）。
-2. **量纲合法**：每个申报的量纲 ∈ 四类白名单；申报为"非用量字段"的必须写明理由。
-3. **无未登记呈现面**：``aiteam.types`` 里任何带 token 字段的模型都必须在注册表里；
-   前端 ``dashboard/src`` 下任何出现 token 标识符的文件同理。另加一道安全网：呈现面
-   上出现金额/工时这类第五类量纲词干即红。
+1. **Complete declaration**: every numeric field of every model in the registry must agree **bidirectionally** with the actual fields
+   introspected from Pydantic. A new field with no declaration = red; a declaration for a deleted field = also red (a rotting registry silently disables the allowlist).
+2. **Legal dimensions**: every declared dimension must be in the four-kind allowlist; anything declared a "non-usage field" must state its reason.
+3. **No unregistered presentation surfaces**: any model in ``aiteam.types`` carrying token fields must be in the registry;
+   the same goes for any file under frontend ``dashboard/src`` in which a token identifier appears. Plus a safety net: a presentation surface
+   on which a fifth-kind dimension word stem such as money/person-hours appears is red.
 
-用法: python3 scripts/check_usage_dimensions.py   （仓库根目录执行）
-退出码: 0=全过, 1=有违规。
+Usage: python3 scripts/check_usage_dimensions.py   (run from the repo root)
+Exit codes: 0=all pass, 1=violations found.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from usage_surface import (  # noqa: E402  — 必须在 sys.path 就位之后
+from usage_surface import (  # noqa: E402  — must come after sys.path is in place
     ALLOWED_DIMENSIONS,
     FORBIDDEN_UNIT_WORDS,
     FRONTEND_IDENTIFIERS,
@@ -42,10 +42,10 @@ from usage_surface import (  # noqa: E402  — 必须在 sys.path 就位之后
     PY_SURFACES,
 )
 
-# 标识符里带 token 词干 = 一个 token 量纲的数值（或它的展示载体）。
+# An identifier containing a token word stem = a numeric value of a token dimension (or its display carrier).
 TOKEN_STEM = re.compile(r"token", re.IGNORECASE)
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-# camelCase / snake_case 切词：HTTPServer → ["http", "server"]，ctx_pct → ["ctx", "pct"]
+# camelCase / snake_case word splitting: HTTPServer → ["http", "server"], ctx_pct → ["ctx", "pct"]
 WORD = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z0-9]+|[A-Z]+")
 
 
@@ -54,10 +54,10 @@ def _words(identifier: str) -> list[str]:
 
 
 def _forbidden_word(identifier: str) -> str:
-    """返回该标识符命中的第五类量纲词，未命中返回空串。
+    """Return the fifth-kind dimension word this identifier hits, or an empty string if it hits none.
 
-    单复数同判（``costs`` = ``cost``）；相邻词合并再判一次，接住 ``manHour`` /
-    ``man_hour`` 这类拆开后单看都无辜的写法。
+    Singular and plural judged the same (``costs`` = ``cost``); adjacent words are merged and judged again, catching ``manHour`` /
+    ``man_hour`` style spellings that each look innocent when split apart.
     """
     words = _words(identifier)
     for w in words:
@@ -71,7 +71,7 @@ def _forbidden_word(identifier: str) -> str:
 
 
 def _is_numeric(annotation: object) -> bool:
-    """int / float（含 ``X | None``）为真；bool 不算数值量纲。"""
+    """True for int / float (including ``X | None``); bool does not count as a numeric dimension."""
     args = typing.get_args(annotation)
     candidates = list(args) if args else [annotation]
     return any(c in (int, float) for c in candidates)
@@ -86,7 +86,7 @@ def _numeric_fields(model: object) -> set[str]:
 
 
 def _code_lines(path: Path) -> list[tuple[int, str]]:
-    """按行返回源码，跳过整行注释（注释里的解释性文字不是呈现面）。"""
+    """Return the source by line, skipping whole-line comments (explanatory text in comments is not a presentation surface)."""
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -101,36 +101,36 @@ def _code_lines(path: Path) -> list[tuple[int, str]]:
 
 
 def check_python_schema() -> list[str]:
-    """API schema 侧：注册表与 Pydantic 实际字段双向比对 + 量纲白名单。"""
+    """API schema side: bidirectional comparison of the registry against actual Pydantic fields + dimension allowlist."""
     import aiteam.types as t
 
     problems: list[str] = []
     for surface in PY_SURFACES:
         model = getattr(t, surface.model, None)
         if model is None:
-            problems.append(f"注册表声明的模型 aiteam.types.{surface.model} 不存在 —— 注册表腐烂")
+            problems.append(f"The model aiteam.types.{surface.model} declared in the registry does not exist — registry rot")
             continue
         actual = _numeric_fields(model)
         declared = set(surface.fields)
         for name in sorted(actual - declared):
             problems.append(
-                f"{surface.model}.{name}: 用量呈现面新增了未申报量纲的数值字段 —— "
-                f"在 scripts/usage_surface.py 申报其量纲（{'/'.join(ALLOWED_DIMENSIONS)}）或具名豁免"
+                f"{surface.model}.{name}: the usage presentation surface gained a numeric field with an undeclared dimension — "
+                f"declare its dimension in scripts/usage_surface.py ({'/'.join(ALLOWED_DIMENSIONS)}) or exempt it by name"
             )
         for name in sorted(declared - actual):
-            problems.append(f"{surface.model}.{name}: 注册表申报了不存在的字段 —— 删字段时请同步注册表")
+            problems.append(f"{surface.model}.{name}: the registry declares a field that does not exist — when deleting a field, sync the registry")
         for name in sorted(declared & actual):
             spec = surface.fields[name]
             if spec.dimension == NON_USAGE:
                 if not spec.note:
-                    problems.append(f"{surface.model}.{name}: 申报为非用量字段但没写理由 —— 豁免必须具名")
+                    problems.append(f"{surface.model}.{name}: declared a non-usage field but gave no reason — exemptions must be named")
             elif spec.dimension not in ALLOWED_DIMENSIONS:
                 problems.append(
-                    f"{surface.model}.{name}: 量纲 '{spec.dimension}' 不在白名单 —— "
-                    f"只允许 {'/'.join(ALLOWED_DIMENSIONS)}；新增量纲必须显式过审"
+                    f"{surface.model}.{name}: dimension '{spec.dimension}' is not in the whitelist — "
+                    f"only {'/'.join(ALLOWED_DIMENSIONS)} are allowed; a new dimension must be explicitly reviewed"
                 )
 
-    # 无未登记呈现面：带 token 字段的模型必须在注册表里
+    # No unregistered presentation surfaces: a model with token fields must be in the registry
     registered = {s.model for s in PY_SURFACES}
     for name in dir(t):
         model = getattr(t, name)
@@ -140,14 +140,14 @@ def check_python_schema() -> list[str]:
         hits = sorted(f for f in fields if TOKEN_STEM.search(f))
         if hits:
             problems.append(
-                f"aiteam.types.{name}: 出现 token 字段 {hits} 却未登记为用量呈现面 —— "
-                f"在 scripts/usage_surface.py 的 PY_SURFACES 登记"
+                f"aiteam.types.{name}: has token fields {hits} but is not registered as a usage presentation surface — "
+                f"register it in PY_SURFACES in scripts/usage_surface.py"
             )
     return problems
 
 
 def check_forbidden_units() -> list[str]:
-    """安全网：呈现面上出现第五类量纲词干（金额/工时……）即红。"""
+    """Safety net: a fifth-kind dimension word stem (money / person-hours …) on a presentation surface is red."""
     problems: list[str] = []
     targets = [ROOT / "src" / "aiteam" / "types.py"]
     dash = ROOT / "dashboard" / "src"
@@ -160,19 +160,19 @@ def check_forbidden_units() -> list[str]:
                 hit = _forbidden_word(ident)
                 if hit:
                     problems.append(
-                        f"{rel}:{lineno}: 标识符 '{ident}' 命中第五类量纲词 '{hit}' —— "
-                        f"用量呈现只以 token 表达，禁止跨量纲换算（P1）"
+                        f"{rel}:{lineno}: identifier '{ident}' hits fifth-kind dimension word '{hit}' — "
+                        f"usage presentation may only be expressed in tokens, cross-dimension conversion is forbidden (P1)"
                     )
     return problems
 
 
 def check_frontend() -> tuple[list[str], list[str]]:
-    """前端：呈现面文件双向登记 + token 标识符量纲白名单。"""
+    """Frontend: bidirectional registration of presentation-surface files + dimension allowlist for token identifiers."""
     problems: list[str] = []
     warnings: list[str] = []
     dash = ROOT / "dashboard" / "src"
     if not dash.is_dir():
-        warnings.append("dashboard/src 缺失（未构建环境），前端量纲检查跳过")
+        warnings.append("dashboard/src missing (unbuilt environment), frontend dimension check skipped")
         return problems, warnings
 
     declared = set(FRONTEND_SURFACES)
@@ -190,23 +190,23 @@ def check_frontend() -> tuple[list[str], list[str]]:
 
     for rel in sorted(set(found) - declared):
         problems.append(
-            f"{rel}: 出现 token 标识符 {sorted(found[rel])} 却未登记为用量呈现面 —— "
-            f"在 scripts/usage_surface.py 的 FRONTEND_SURFACES 登记"
+            f"{rel}: has token identifiers {sorted(found[rel])} but is not registered as a usage presentation surface — "
+            f"register it in FRONTEND_SURFACES in scripts/usage_surface.py"
         )
     for rel in sorted(declared - set(found)):
-        problems.append(f"{rel}: 注册表登记为用量呈现面，但文件已不含 token 标识符（或文件不存在）—— 请同步注册表")
+        problems.append(f"{rel}: registered in the registry as a usage presentation surface, but the file no longer contains token identifiers (or the file does not exist) — please sync the registry")
     for rel in sorted(set(found) & declared):
         for ident in sorted(found[rel]):
             dim = FRONTEND_IDENTIFIERS.get(ident)
             if dim is None:
                 problems.append(
-                    f"{rel}: token 标识符 '{ident}' 未登记量纲 —— "
-                    f"在 FRONTEND_IDENTIFIERS 里说清它是什么量纲"
+                    f"{rel}: token identifier '{ident}' has no dimension registered — "
+                    f"state what dimension it is in FRONTEND_IDENTIFIERS"
                 )
             elif dim not in ALLOWED_DIMENSIONS:
-                problems.append(f"{rel}: 标识符 '{ident}' 的量纲 '{dim}' 不在白名单")
+                problems.append(f"{rel}: identifier '{ident}''s dimension '{dim}' is not in the whitelist")
     for ident in sorted(set(FRONTEND_IDENTIFIERS) - {i for s in found.values() for i in s}):
-        warnings.append(f"FRONTEND_IDENTIFIERS 里的 '{ident}' 已无人使用，可清理")
+        warnings.append(f"'{ident}' in FRONTEND_IDENTIFIERS is no longer used by anyone and can be cleaned up")
     return problems, warnings
 
 
@@ -218,17 +218,17 @@ def main() -> int:
     for w in warnings:
         print(f"⚠️  {w}")
     if problems:
-        print("❌ 量纲白名单违规 —— 用量呈现面只许出现 token/次数/时长毫秒/百分比:")
+        print("❌ Dimension allowlist violations — usage presentation surfaces may only show tokens/counts/duration in milliseconds/percentages:")
         for p in problems:
             print(f"  {p}")
-        print(f"\n共 {len(problems)} 处。规格见 docs/token-attribution-v1-design.md §4.4")
+        print(f"\nTotal {len(problems)} places. Spec in docs/token-attribution-v1-design.md §4.4")
         return 1
 
     py_fields = sum(len(s.fields) for s in PY_SURFACES)
     print(
-        f"✅ 量纲白名单通过: {len(PY_SURFACES)} 个 API schema 呈现面 / {py_fields} 个数值字段 · "
-        f"{len(FRONTEND_SURFACES)} 个前端呈现面 / {len(FRONTEND_IDENTIFIERS)} 个 token 标识符，"
-        f"零第五类量纲"
+        f"✅ Dimension allowlist passed: {len(PY_SURFACES)} API schema presentation surfaces / {py_fields} numeric fields · "
+        f"{len(FRONTEND_SURFACES)} frontend presentation surfaces / {len(FRONTEND_IDENTIFIERS)} token identifiers,"
+        f"zero fifth-kind dimensions"
     )
     return 0
 

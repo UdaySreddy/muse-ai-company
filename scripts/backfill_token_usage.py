@@ -1,63 +1,63 @@
 #!/usr/bin/env python3
-"""历史回采：agents 四层 token + tokens_measured_at + tokens_source。默认 dry-run。
+"""Historical backfill: the agents four token layers + tokens_measured_at + tokens_source. Dry-run by default.
 
-规格见 docs/token-attribution-v1-design.md §6 全节 / §7 阶段3。要解决的问题是：计费口径
-的用量采集（``usage_sum``）2026-07-28 才上线，此前近两千次派工的 token 全部没落库，而
-**它们的 transcript 还都在磁盘上**。取证时 1,957 个候选行的文件 1,957 份全部存活——但
-CC 会清理较早的本地会话历史，``transcript_gone`` 这一类**只增不减**。这是整个 v1 里
-唯一一件"晚做就永远做不了"的事（§6.2-2），其余各项晚做只是晚做。
+Spec in docs/token-attribution-v1-design.md §6 (whole section) / §7 stage 3. The problem to solve: billing-metric
+usage collection (``usage_sum``) only went live on 2026-07-28; before that, the tokens of nearly two thousand dispatches never landed in the database, while
+**their transcripts are all still on disk**. At forensics time, all 1,957 files of the 1,957 candidate rows were alive — but
+CC cleans up older local session history, and the ``transcript_gone`` class **only ever grows**. This is the one thing in all of v1
+that "done late means doable never" (§6.2-2); everything else done late is just done late.
 
-回采的对象只有一个：``agents`` 表的五列 + ``tokens_source``（外加 ``model`` 的观测
-回填，见下）。四条纪律决定了这个脚本的形状：
+The backfill has exactly one target: five columns of the ``agents`` table + ``tokens_source`` (plus the observational
+backfill of ``model``, see below). Four disciplines determine the shape of this script:
 
-1. **绝不触碰 ``workflow_agents.tokens``**（§6.4-1，风险 R3）。那一列是 ``ctx_last``
-   口径——末轮上下文水位，与本脚本产出的 ``usage_sum`` 实测差 5~25 倍。把回采值写进
-   去会把混口径**永久固化进历史数据**且事后不可分辨，比不回采糟糕得多。所以这里不是
-   靠"小心别写"，而是：写列白名单 :data:`WRITABLE_COLUMNS` 是封闭集合，
-   ``(workflow_agents, tokens)`` 不在其中；``--apply`` 前后各算一次该列的
-   **逐行 sha256 校验和**，不一致就整事务回滚。静态面另有 I14 机检（见
+1. **Never touch ``workflow_agents.tokens``** (§6.4-1, risk R3). That column is in the ``ctx_last``
+   metric — the last-turn context watermark, measured 5-25x apart from the ``usage_sum`` this script produces. Writing backfilled values
+   into it would **permanently solidify the mixed metrics into the historical data**, indistinguishable afterwards — far worse than not backfilling. So this is not
+   a matter of "being careful not to write": the writable-column allowlist :data:`WRITABLE_COLUMNS` is a closed set,
+   ``(workflow_agents, tokens)`` is not in it; the column's **per-row sha256 checksum** is computed once before and once after ``--apply``,
+   and any mismatch rolls back the whole transaction. The static side has the I14 machine check as well (see
    ``scripts/check_backfill_safety.py``）。
-2. **覆盖率按 ``tokens_measured_at`` 分窗**（§6.4-2，对策 6.3-2）。回采会让总覆盖率从
-   0.5% 跳到 78%，而"新派工有没有被采到"是**另一回事**——后者才是采集链路健不健康的
-   指标。一个数字掩盖另一个数字，所以报告里这两个数**从不合并呈现**。分窗靠的是：活体
-   链路写的 ``tokens_measured_at`` 是**逐行微秒级唯一**的停止时刻，而一次回采给上千行
-   盖的是**同一个**批次时刻，于是"同一时间戳被 ≥ :data:`BATCH_COHORT_MIN` 行共享"就是
-   回采批次的天然签名（批次时刻同时记进 journal，供精确审计）。
-3. **只写空列、幂等、dry-run 先行**（§6.4-3）。幂等是结构性的而不是靠标记位：判定的第
-   一分支就是"``tokens_measured_at`` 非空 → ``already_measured``"，跑完一次目标列就非
-   空了，重跑必然全部落进这一类、零变更。SQL 层另带 ``IS NULL`` 守卫，防的是 dry-run
-   与 apply 之间活体系统已经把值写上的竞态。
-4. **写不了的行必须分类，不许静默跳过**（Council 纪律① no-data ≠ zero）。原因码见
-   :data:`REASONS`，与设计 §3.4 的未归因分类同源。``transcript_gone`` 的行**逐行列出**
-   ——那不是噪声，报告本身就是"回采窗口在这些行上已经关闭"的存证。
+2. **Coverage windowed by ``tokens_measured_at``** (§6.4-2, countermeasure 6.3-2). The backfill makes overall coverage jump
+   from 0.5% to 78%, while "are new dispatches being collected" is **a different question** — the latter is the indicator of whether the collection chain is healthy.
+   One number masks another, so these two numbers are **never presented merged** in the report. The windowing relies on this: the ``tokens_measured_at`` written by the live
+   chain is a **per-row, microsecond-unique** stop time, while one backfill stamps thousands of rows with
+   **the same** batch time, so "the same timestamp shared by ≥ :data:`BATCH_COHORT_MIN` rows" is
+   the natural signature of a backfill batch (the batch time is also recorded in the journal, for precise auditing).
+3. **Only write empty columns, idempotent, dry-run first** (§6.4-3). Idempotency is structural rather than marker-based: the first branch of
+   the verdict is "``tokens_measured_at`` non-empty → ``already_measured``"; after one run the target column is non-empty,
+   so re-running necessarily lands everything in that class with zero changes. The SQL layer also carries an ``IS NULL`` guard, defending against the race where
+   the live system has already written the value between dry-run and apply.
+4. **Rows that cannot be written must be classified, never silently skipped** (Council discipline 1, no-data ≠ zero). The reason codes are in
+   :data:`REASONS`, sharing their source with the unattributed classification in design §3.4. ``transcript_gone`` rows are **listed one by one**
+   — that is not noise; the report itself is the evidence that "the backfill window has closed on these rows".
 
-**model 列的观测回填**（§6.2-4）：transcript 的 ``message.model`` 永远是完整型号，从不
-是别名。所以 ``workflow_agents.model`` 里那些还写着别名 ``opus`` 的行（实测 170 行，其中
-138 行经 ``os_agent_id`` 能关到存活的 transcript）可以直接读出真实型号——这是**观测回填**，
-正是"模型默认值留空、由观测回填"这条刻意决策想要的样子，与"禁止写死型号"不冲突。两条
-边界：**别名台账（``MODEL_ALIAS_LEDGER``）的解析结果绝不写进任何行**（那是读侧兜底，不是
-观测）；**无 transcript 的行不猜、不动**。``agents.model`` 同理（候选行里 1,913 行该列为
-空），与活体 ``SubagentStop`` 路径的行为一致；不想要可以 ``--no-model`` 关掉。
+**The observational backfill of the model column** (§6.2-4): a transcript's ``message.model`` is always a full model name, never
+an alias. So rows in ``workflow_agents.model`` still carrying the alias ``opus`` (170 measured, of which
+138 can be joined via ``os_agent_id`` to a surviving transcript) can directly read out their real model name — this is **observational backfill**,
+exactly the shape the deliberate decision "model defaults stay empty, backfilled by observation" wants, and it does not conflict with "never hardcode model names". Two
+boundaries: **the resolution result of the alias ledger (``MODEL_ALIAS_LEDGER``) is never written into any row** (that is a read-side fallback, not
+an observation); **rows without a transcript are not guessed at and not touched**. The same holds for ``agents.model`` (1,913 of the candidate rows have that column
+empty), consistent with the behavior of the live ``SubagentStop`` path; if unwanted it can be turned off with ``--no-model``.
 
-**Leader 主会话默认不采**（``--include-leader`` 才做），有两条独立理由，任一条都足够：
+**Leader main sessions are not collected by default** (only with ``--include-leader``), for two independent reasons, either of which suffices:
 
-* **一份文件被多行共享。** 实测 47 个有路径的 Leader 行只指向 **13 份**主会话
-  transcript，最多的一份被 11 行共享（幽灵行的成因见 ``backfill_agent_session_ids.py``）。
-  照单全收会把同一份 8.5 亿 token 的用量**重复计入 11 次**。所以即便显式开启，本脚本也
-  只给每份文件的**首行**（created_at 最早，与 ``_find_leader`` 的解析规则同源）写值，其
-  余行记 ``duplicate_main_transcript``。
-* **语义与阶段4 相反。** 主会话 transcript 是**活的、还在长**的文件，阶段4 对它的语义是
-  ``snapshot 覆写``；而本脚本是 ``只写空列、写完不再更新``。用后者去碰前者，会把一个会话
-  中途的部分值永久冻成"已测量"。主会话采集归阶段4。
+* **One file shared by multiple rows.** Measured: 47 Leader rows with a path point to only **13** main-session
+  transcripts, the most-shared one being shared by 11 rows (for the origin of ghost rows see ``backfill_agent_session_ids.py``).
+  Taking everything as-is would count the same 850 million tokens of usage **repeatedly, 11 times**. So even when explicitly enabled, this script
+  only writes values for the **first row** of each file (earliest created_at, sharing its source with ``_find_leader``'s resolution rule); the
+  remaining rows are recorded as ``duplicate_main_transcript``.
+* **The semantics are the opposite of stage 4.** A main-session transcript is a **live, still-growing** file, and stage 4's semantics for it are
+  ``snapshot overwrite``; while this script is ``only write empty columns, never update after writing``. Touching the former with the latter would permanently freeze a mid-session
+  partial value as "measured". Main-session collection belongs to stage 4.
 
-用法::
+Usage::
 
-    python3 scripts/backfill_token_usage.py                      # dry-run 全量报告
-    python3 scripts/backfill_token_usage.py --db /tmp/copy.db    # 对副本演练
-    python3 scripts/backfill_token_usage.py --sample 30          # 抽 30 行供人工核对
+    python3 scripts/backfill_token_usage.py                      # dry-run, full report
+    python3 scripts/backfill_token_usage.py --db /tmp/copy.db    # rehearse against a copy
+    python3 scripts/backfill_token_usage.py --sample 30          # sample 30 rows for human checking
     python3 scripts/backfill_token_usage.py --apply --journal ~/token-backfill.json
 
-``--apply`` 前先备份（journal 是唯一的恢复凭证，目标文件已存在时硬拒覆盖）::
+Back up before ``--apply`` (the journal is the only recovery credential; if the target file already exists, overwriting is hard-refused)::
 
     cp ~/.claude/data/ai-team-os/aiteam.db \\
        ~/aiteam.db.bak-tokenusage-$(date +%Y%m%d%H%M%S)
@@ -83,8 +83,8 @@ from aiteam.services.token_attribution import parse_transcript_usage  # noqa: E4
 
 DEFAULT_DB = Path.home() / ".claude" / "data" / "ai-team-os" / "aiteam.db"
 
-# 本脚本**可能**写到的列的封闭集合。加一列必须同时改这里、改 I14 机检的期望集合，
-# 于是"顺手多写一列"在评审时是可见的。(workflow_agents, tokens) 永远不在其中。
+# The closed set of columns this script **may** write. Adding a column requires changing this and the I14 machine check's expected set at the same time,
+# so "writing one more column while at it" is visible in review. (workflow_agents, tokens) is never in it.
 WRITABLE_COLUMNS: frozenset[tuple[str, str]] = frozenset(
     {
         ("agents", "input_tokens"),
@@ -98,11 +98,11 @@ WRITABLE_COLUMNS: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
-# 这一列是 ctx_last 口径的历史资产，本脚本的产出（usage_sum）与它差 5~25 倍。
-# 单列成常量是为了让机检能直接引用，而不是靠读注释。
+# This column is a historical asset in the ctx_last metric; this script's output (usage_sum) differs from it by 5-25x.
+# Making it a standalone constant lets the machine check reference it directly, rather than relying on reading the comments.
 FORBIDDEN_COLUMN: tuple[str, str] = ("workflow_agents", "tokens")
 
-# 四层 token 的列名，顺序固定（呈现面永远分列，不给合计）。
+# The column names of the four token layers, in fixed order (presentation surfaces always list them separately and never give a total).
 TOKEN_COLUMNS = (
     "input_tokens",
     "output_tokens",
@@ -110,37 +110,37 @@ TOKEN_COLUMNS = (
     "cache_read_tokens",
 )
 
-# 一次回采给上千行盖同一个时刻；活体链路逐行写各自的停止时刻（微秒级唯一）。
-# 于是"被这么多行共享的同一时间戳"= 回采批次签名。阈值取 50：活体不可能在同一微秒
-# 停下 50 个 agent，而任何一次真实回采都远多于 50 行。
+# One backfill stamps thousands of rows with the same instant; the live chain writes each row's own stop time (microsecond-unique).
+# So "the same timestamp shared by this many rows" = a backfill batch signature. The threshold is 50: the live chain cannot possibly stop
+# 50 agents in the same microsecond, while any real backfill is far more than 50 rows.
 BATCH_COHORT_MIN = 50
 
-# 完整型号一律以此开头（transcript 实测 claude-opus-5 / claude-opus-4-8[1m] …）；
-# 别名是 opus / fable / '' 这类。用"是不是完整型号"判定，比枚举别名健壮——将来多一个
-# 别名不需要改这里。
+# Full model names always start with this (measured in transcripts: claude-opus-5 / claude-opus-4-8[1m] …);
+# aliases are things like opus / fable / ''. Judging by "is it a full model name" is more robust than enumerating aliases — a future new
+# alias needs no change here.
 CONCRETE_MODEL_PREFIX = "claude-"
 
 REASONS: dict[str, str] = {
-    "written": "可写入（dry-run 的候选 / --apply 的实际写入）",
-    "already_measured": "tokens_measured_at 已有值 —— 幂等重跑必然全部落在这里，不重测不覆盖",
-    "already_set": "目标列已有值且与观测一致",
-    "no_transcript_path": "该行从未登记 transcript 路径，无从回采（历史行，新行已覆盖）",
-    "transcript_gone": "路径有但文件已不在磁盘 —— 回采窗口已在这些行上关闭，只增不减",
-    "unreadable_transcript": "文件在但解析不出任何 usage 快照（空文件/全损坏行）",
-    "duplicate_main_transcript": "同一份主会话 transcript 已由更早的行代表 —— 再写就是重复计入",
-    "no_observed_model": "transcript 里没读到完整型号（只有合成行 <synthetic> 之类）",
-    "already_concrete": "model 已是完整型号，不是别名 —— 观测值不覆盖观测值",
-    "transcript_grew": "重算值全面 ≥ 库中值 —— transcript 在测量后仍有写入（agent 仍活着），不改",
-    "recompute_mismatch": "重算值与库中值对不上且非增长 —— 真异常，人必须看",
+    "written": "writable (a candidate in a dry-run / actually written by --apply)",
+    "already_measured": "tokens_measured_at already has a value — an idempotent re-run necessarily lands entirely here; no re-measuring, no overwriting",
+    "already_set": "the target column already has a value and it agrees with the observation",
+    "no_transcript_path": "this row never registered a transcript path, so there is nothing to backfill from (historical rows; new rows are covered)",
+    "transcript_gone": "the path exists but the file is no longer on disk — the backfill window has closed on these rows; this only ever grows",
+    "unreadable_transcript": "the file is there but no usage snapshot can be parsed out of it (empty file / all lines corrupt)",
+    "duplicate_main_transcript": "the same main-session transcript is already represented by an earlier row — writing again would double-count",
+    "no_observed_model": "no full model name was read from the transcript (only synthetic rows like <synthetic>)",
+    "already_concrete": "model is already a full model name, not an alias — an observation does not overwrite an observation",
+    "transcript_grew": "the recomputed values are all ≥ the database values — the transcript was still written after measurement (the agent is still alive); do not change",
+    "recompute_mismatch": "the recomputed values do not match the database values and it is not growth — a real anomaly; a human must look",
 }
 
-# 报告里按这个顺序打印（先给能行动的，再给不能行动的）。
+# The report prints in this order (actionable first, then non-actionable).
 REASON_ORDER = list(REASONS)
 
 
 @dataclass
 class Row:
-    """一行的判定结果。``values`` 只在 written 时有意义。"""
+    """One row's verdict. ``values`` is only meaningful when the verdict is written."""
 
     table: str
     row_id: str
@@ -181,10 +181,10 @@ class Job:
 
 
 # ---------------------------------------------------------------------------
-# 读取面
+# Read side
 # ---------------------------------------------------------------------------
 def open_db(path: Path, *, writable: bool) -> sqlite3.Connection:
-    """写模式才用普通连接；只读一律走 ``mode=ro`` URI，物理上写不进去。"""
+    """Only write mode uses a normal connection; reads always go through a ``mode=ro`` URI, physically incapable of writing."""
     if writable:
         con = sqlite3.connect(str(path))
     else:
@@ -206,8 +206,8 @@ def load_agents(con: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def load_workflow_agents(con: sqlite3.Connection) -> list[sqlite3.Row]:
-    """workflow_agents **没有** transcript_path 列 —— 文件只能经 os_agent_id 借道
-    agents 行拿到。实测 os_agent_id 全表无重复，所以这个 join 不会扇出。"""
+    """``workflow_agents`` has **no** transcript_path column — a file can only be reached via os_agent_id, borrowing the path through
+    the agents row. Measured: os_agent_id has no duplicates in the whole table, so this join does not fan out."""
     return con.execute(
         """
         select wa.id, wa.label, wa.model, wa.os_agent_id, wa.cc_agent_id,
@@ -220,10 +220,10 @@ def load_workflow_agents(con: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def workflow_tokens_fingerprint(con: sqlite3.Connection) -> dict[str, Any]:
-    """``workflow_agents.tokens`` 的逐行指纹 —— 硬约束① 的验收凭据。
+    """The per-row fingerprint of ``workflow_agents.tokens`` — the acceptance credential of hard constraint 1.
 
-    只比对合计是不够的：两行一增一减能让 sum 不变。所以取 ``(id, tokens)`` 按 id 排序
-    后的 sha256，任何一行被动过都会变。
+    Comparing only the total is not enough: one row up and another down can leave the sum unchanged. So take the sha256 of ``(id, tokens)`` sorted by id;
+    any row being touched changes it.
     """
     h = hashlib.sha256()
     n = 0
@@ -238,13 +238,13 @@ def workflow_tokens_fingerprint(con: sqlite3.Connection) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# 解析（唯一的磁盘 IO 面）
+# Parsing (the only disk IO surface)
 # ---------------------------------------------------------------------------
 class Parser:
-    """带缓存与进度的 transcript 解析器。
+    """A transcript parser with cache and progress.
 
-    缓存是必需的而不是优化：47 个 Leader 行只指向 13 份文件，同一份 35 MB 的文件解析
-    11 次纯属浪费。缓存键是路径，值是解析结果（可能是 None）。
+    The cache is a necessity, not an optimization: 47 Leader rows point to only 13 files, and parsing the same 35 MB file
+    11 times would be pure waste. The cache key is the path; the value is the parse result (which may be None).
     """
 
     def __init__(self, *, verbose: bool = True) -> None:
@@ -265,7 +265,7 @@ class Parser:
         self.parsed += 1
         if self._verbose and self.parsed % 200 == 0:
             print(
-                f"  …已解析 {self.parsed} 份 transcript（{self.bytes_read / 1e6:.0f} MB）",
+                f"  …parsed {self.parsed} transcripts so far ({self.bytes_read / 1e6:.0f} MB)",
                 file=sys.stderr,
             )
         return result
@@ -279,17 +279,17 @@ def transcript_exists(path: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Job A —— 子 agent 的四层 token + tokens_measured_at + tokens_source
+# Job A — sub-agents' four token layers + tokens_measured_at + tokens_source
 # ---------------------------------------------------------------------------
 def job_subagent_usage(
     agents: list[sqlite3.Row], parser: Parser, batch_ts: str, *, with_model: bool = True
 ) -> Job:
-    """主回采：``role != 'leader'`` 且 ``tokens_measured_at`` 为空的行。
+    """The main backfill: rows with ``role != 'leader'`` and an empty ``tokens_measured_at``.
 
-    分支顺序即幂等的实现：``already_measured`` 排在最前，所以第二次跑的时候所有被写过
-    的行在**读到文件之前**就已经出局——重跑既零变更也不重复解析 700 MB。
+    The branch order is the implementation of idempotency: ``already_measured`` comes first, so on a second run every written
+    row is out **before any file is read** — a re-run changes nothing and does not re-parse 700 MB either.
     """
-    job = Job("A. agents 四层 token + tokens_measured_at + tokens_source（子 agent）", "agents")
+    job = Job("A. agents four token layers + tokens_measured_at + tokens_source (sub-agents)", "agents")
     for a in agents:
         if a["role"] == "leader":
             continue
@@ -317,12 +317,12 @@ def job_subagent_usage(
         warn = ""
         observed = usage.get("model") or ""
         if with_model and observed and not (a["model"] or ""):
-            # 观测回填：库里那一列是空的，transcript 里是完整型号。与活体
-            # SubagentStop 路径同一行为（hook_translator 也写这一列）。
+            # Observational backfill: that column in the database is empty, and the transcript holds a full model name. The same behavior as
+            # the live SubagentStop path (hook_translator also writes this column).
             values["model"] = observed
         elif observed and (a["model"] or "") and a["model"] != observed:
-            # 已有值与观测不一致：**不动**，只报。覆盖观测值不是本脚本的事。
-            warn = f"库中 model={a['model']} 与 transcript 观测 {observed} 不一致（未改动）"
+            # An existing value disagrees with the observation: **do not touch it**, only report. Overwriting observed values is not this script's business.
+            warn = f"the database model={a['model']} is inconsistent with the transcript observation {observed} (unchanged)"
         job.rows.append(
             Row(
                 "agents",
@@ -339,20 +339,20 @@ def job_subagent_usage(
 
 
 # ---------------------------------------------------------------------------
-# Job B —— 已测量行的 tokens_source 补标（顺带做一次独立重算对账）
+# Job B — back-labeling tokens_source on already-measured rows (with an independent recomputation reconciliation on the side)
 # ---------------------------------------------------------------------------
 def job_source_label(agents: list[sqlite3.Row], parser: Parser) -> Job:
-    """``tokens_measured_at`` 非空但 ``tokens_source`` 为空的行（实测 13 行）。
+    """Rows whose ``tokens_measured_at`` is non-empty but ``tokens_source`` is empty (13 measured).
 
-    这些是 D1 活体链路采到的行，``tokens_source`` 那一列比它们晚落地。补标之前先做一件
-    更有价值的事：**用本脚本的解析器重算一遍，与活体链路当时写下的四层值逐字段比对**。
-    相等才补标——于是这一列的值不是"我假设它来自 transcript"，而是"我重算过，确实是"。
-    这同时是设计 §4.4 闸2① 要求的那种零容差同口径对账（解析器是纯函数，容差为零）。
+    These are rows the D1 live chain collected; the ``tokens_source`` column landed later than they did. Before back-labeling, do one
+    more valuable thing: **recompute with this script's parser and compare field by field against the four-layer values the live chain wrote at the time**.
+    Only label when they are equal — so the value in this column is not "I assume it came from the transcript" but "I recomputed it, and it really is".
+    This is also the zero-tolerance same-metric reconciliation design §4.4 gate 2-1 asks for (the parser is a pure function; the tolerance is zero).
 
-    重算值全面 ≥ 库中值说明 transcript 在测量之后又长了（agent 还活着，比如跑这个脚本
-    的这一个）——那不是异常，单独归一类；其余对不上的才是真异常。
+    Recomputed values all ≥ the database values mean the transcript grew after measurement (the agent is still alive, e.g. the one
+    running this script) — that is not an anomaly, and gets its own class; the rest of the mismatches are the real anomalies.
     """
-    job = Job("B. agents.tokens_source 补标（已测量行，重算比对后才写）", "agents")
+    job = Job("B. agents.tokens_source back-labeling (already-measured rows; written only after recomputation matches)", "agents")
     for a in agents:
         if not a["tokens_measured_at"]:
             continue
@@ -381,7 +381,7 @@ def job_source_label(agents: list[sqlite3.Row], parser: Parser) -> Job:
                     "written",
                     values={"tokens_source": "transcript"},
                     guard={"tokens_source": None},
-                    note="重算逐字段相等",
+                    note="recomputation equal field by field",
                 )
             )
         elif all(fresh[c] >= stored[c] for c in TOKEN_COLUMNS):
@@ -392,7 +392,7 @@ def job_source_label(agents: list[sqlite3.Row], parser: Parser) -> Job:
                     a["id"],
                     a["name"],
                     "transcript_grew",
-                    note=f"增量 {delta}",
+                    note=f"increment {delta}",
                 )
             )
         else:
@@ -402,27 +402,27 @@ def job_source_label(agents: list[sqlite3.Row], parser: Parser) -> Job:
                     a["id"],
                     a["name"],
                     "recompute_mismatch",
-                    warn=f"库中 {stored} vs 重算 {fresh}",
+                    warn=f"in database {stored} vs recomputed {fresh}",
                 )
             )
     return job
 
 
 # ---------------------------------------------------------------------------
-# Job C —— workflow_agents.model 的观测回填
+# Job C — observational backfill of workflow_agents.model
 # ---------------------------------------------------------------------------
 def job_workflow_model(rows: list[sqlite3.Row], parser: Parser) -> Job:
-    """把 ``workflow_agents.model`` 里的**别名**换成 transcript 观测到的完整型号。
+    """Replace the **aliases** in ``workflow_agents.model`` with the full model names observed in transcripts.
 
-    这是本脚本唯一写 ``workflow_agents`` 的地方，写的是 ``model`` 列。``tokens`` 列不在
-    白名单里、不在这个函数里、也过不了 apply 后的指纹比对——三道独立的拦。
+    This is the only place this script writes ``workflow_agents``, and it writes the ``model`` column. The ``tokens`` column is not in
+    the allowlist, not in this function, and would not pass the post-apply fingerprint comparison either — three independent gates.
 
-    "只写空列"在这里的正确形态不是字面照搬：别名 ``opus`` 是**请求规格**（要什么模型），
-    不是观测结果。用观测替换请求规格是补真，方向与"用推断覆盖观测"相反。所以判据是
-    **不是完整型号才动**，且 SQL 守卫钉死"仍等于我读到的那个别名"——期间被别人写成完整
-    型号就自动让路。
+    The correct form of "only write empty columns" here is not a literal copy: the alias ``opus`` is a **request specification** (which model is wanted),
+    not an observation result. Replacing a request specification with an observation is completing the truth, the opposite direction from "overwriting an observation with an inference". So the criterion is
+    **only touch it when it is not a full model name**, and the SQL guard pins "still equal to the alias I read" — if in the meantime someone wrote a full
+    model name there, it yields automatically.
     """
-    job = Job("C. workflow_agents.model ← transcript 观测（别名换真名）", "workflow_agents")
+    job = Job("C. workflow_agents.model ← transcript observation (aliases replaced by real names)", "workflow_agents")
     for r in rows:
         current = r["model"] or ""
         label = r["label"] or r["cc_agent_id"] or ""
@@ -454,37 +454,37 @@ def job_workflow_model(rows: list[sqlite3.Row], parser: Parser) -> Job:
                 "written",
                 values={"model": observed},
                 guard={"model": current},
-                note=f"别名 {current!r} → 观测 {observed}",
+                note=f"alias {current!r} → observed {observed}",
             )
         )
     return job
 
 
 # ---------------------------------------------------------------------------
-# Job D —— Leader 主会话（默认关闭）
+# Job D — Leader main sessions (off by default)
 # ---------------------------------------------------------------------------
 def job_leader_usage(
     agents: list[sqlite3.Row], parser: Parser, batch_ts: str, *, enabled: bool
 ) -> Job:
-    """Leader 行的四层 token。**默认不执行**，理由见模块 docstring。
+    """Leader rows' four token layers. **Not executed by default**; see the module docstring for the reasons.
 
-    即便开启也**按文件去重**：同一份主会话 transcript 只由 created_at 最早的那一行代表
-    （与 ``_find_leader`` 的解析规则同源），其余记 ``duplicate_main_transcript``。不去重
-    的话，实测那份被 11 行共享的 transcript 会让同一份用量重复计入 11 次。
+    Even when enabled, it **dedupes by file**: the same main-session transcript is represented only by the row with the earliest created_at
+    (sharing its source with ``_find_leader``'s resolution rule); the rest are recorded as ``duplicate_main_transcript``. Without dedup,
+    the measured transcript shared by 11 rows would count the same usage 11 times over.
     """
     job = Job(
-        "D. agents 四层 token（Leader 主会话，需 --include-leader）", "agents", enabled=enabled
+        "D. agents four token layers (Leader main sessions, requires --include-leader)", "agents", enabled=enabled
     )
-    seen: dict[str, str] = {}  # transcript_path -> 已代表它的 agent_id
-    # 两遍扫：已测量行先占文件代表权。代表权必须跟着"谁已经挂了这份文件的账"走，
-    # 而不是谁在本轮先被扫到——否则 --apply 一轮之后，代表行落进 already_measured
-    # 提前 continue、不再占位，同文件的幽灵行躲过 duplicate 拦截升格为候选，重跑
-    # --apply 就会把同一份主会话的用量重复计入（2026-08-03 生产复跑实测抓获：
-    # 首轮写 10 行后复跑报 5 行"待写入"，全是已测文件的幽灵行）。
+    seen: dict[str, str] = {}  # transcript_path -> the agent_id already representing it
+    # Two-pass scan: already-measured rows claim file representation rights first. Representation rights must follow "who already carries this file's account",
+    # not whoever happens to be scanned first in this round — otherwise, after one --apply round, the representative row lands in already_measured,
+    # continues early and no longer claims its place, and the ghost rows of the same file dodge the duplicate gate and are promoted to candidates; re-running
+    # --apply would then count the same main session's usage again (caught by a production re-run on 2026-08-03:
+    # after the first round wrote 10 rows, the re-run reported 5 rows "pending write", all ghost rows of already-measured files).
     for a in agents:
         if a["role"] == "leader" and a["tokens_measured_at"] and (a["transcript_path"] or ""):
             seen.setdefault(a["transcript_path"], a["id"])
-    for a in agents:  # load_agents 已按 created_at 排序 → 先到者即最早
+    for a in agents:  # load_agents is already sorted by created_at → the first to arrive is the earliest
         if a["role"] != "leader":
             continue
         if a["tokens_measured_at"]:
@@ -497,7 +497,7 @@ def job_leader_usage(
         if path in seen:
             job.rows.append(
                 Row("agents", a["id"], a["name"], "duplicate_main_transcript",
-                    note=f"已由 {seen[path][:8]} 代表：{path}")
+                    note=f"already represented by {seen[path][:8]}: {path}")
             )
             continue
         if not transcript_exists(path):
@@ -515,7 +515,7 @@ def job_leader_usage(
             Row(
                 "agents", a["id"], a["name"], "written", values=values,
                 guard={"tokens_measured_at": None},
-                warn="主会话是活文件，此值是回采时刻的快照；持续采集归阶段4",
+                warn="the main session is a live file; this value is a snapshot at backfill time; continuous collection belongs to stage 4",
                 note=f"api_calls={usage.get('api_calls')}",
             )
         )
@@ -523,10 +523,10 @@ def job_leader_usage(
 
 
 # ---------------------------------------------------------------------------
-# 覆盖率分窗（硬约束②）
+# Coverage windowing (hard constraint 2)
 # ---------------------------------------------------------------------------
 def detect_backfill_cohorts(con: sqlite3.Connection) -> set[str]:
-    """已存在于库中的回采批次时刻 —— "同一时间戳被 ≥ BATCH_COHORT_MIN 行共享"。"""
+    """The backfill batch times already present in the database — "the same timestamp shared by ≥ BATCH_COHORT_MIN rows"."""
     return {
         str(ts)
         for ts, n in con.execute(
@@ -539,16 +539,16 @@ def detect_backfill_cohorts(con: sqlite3.Connection) -> set[str]:
 
 @dataclass
 class Coverage:
-    """一个分母下的覆盖率三分：增量采集 / 历史回采 / 未归因。
+    """The coverage three-way split under one denominator: incremental collection / historical backfill / unattributed.
 
-    三个数**从不合并成一个**。§6.3-2 说得很直接：回采后总覆盖率跳到 78%，但"新派工的
-    采集率"是另一回事，后者才是判断采集链路健不健康的指标——一个数字会掩盖另一个数字。
+    The three numbers are **never merged into one**. §6.3-2 is direct about it: after backfill, overall coverage jumps to 78%, but "the collection
+    rate of new dispatches" is a different matter — the latter is the indicator for judging whether the collection chain is healthy — one number would mask another.
     """
 
     label: str
     total: int
-    incremental: int  # 活体链路采到的（逐行唯一时间戳）
-    backfilled: int  # 回采批次采到的（共享批次时间戳）
+    incremental: int  # collected by the live chain (per-row unique timestamps)
+    backfilled: int  # collected by a backfill batch (shared batch timestamp)
 
     @property
     def measured(self) -> int:
@@ -559,21 +559,21 @@ class Coverage:
             return f"{n / self.total * 100:5.1f}%" if self.total else "  n/a"
 
         return (
-            f"  {self.label:<26} 分母 {self.total:5d} │ "
-            f"增量采集 {self.incremental:5d} {pct(self.incremental)} │ "
-            f"历史回采 {self.backfilled:5d} {pct(self.backfilled)} │ "
-            f"未归因 {self.total - self.measured:5d} {pct(self.total - self.measured)}"
+            f"  {self.label:<26} Denominator {self.total:5d} │ "
+            f"incremental collection {self.incremental:5d} {pct(self.incremental)} │ "
+            f"historical backfill {self.backfilled:5d} {pct(self.backfilled)} │ "
+            f"unattributed {self.total - self.measured:5d} {pct(self.total - self.measured)}"
         )
 
 
 def measure_coverage(
     agents: list[sqlite3.Row], cohorts: set[str], *, leader: bool
 ) -> Coverage:
-    """§4.1：分母是**该 scope 的全部派工行**，含没有 transcript 的行。
+    """§4.1: the denominator is **all dispatch rows of that scope**, including rows without a transcript.
 
-    不得以"没路径所以不算"为由把行移出分母——那正是让局部冒充全貌（风险 R2）。
-    分母按行是否存在算，**不按 tokens_measured_at**，否则未测量的行会从分母里消失、
-    覆盖率恒等于 100%。
+    Rows may not be moved out of the denominator on the grounds of "no path, so it does not count" — that is exactly letting a part impersonate the whole (risk R2).
+    The denominator is counted by whether a row exists, **not by tokens_measured_at**; otherwise unmeasured rows would disappear from the denominator and
+    coverage would be a constant 100%.
     """
     rows = [a for a in agents if (a["role"] == "leader") == leader]
     incremental = backfilled = 0
@@ -586,67 +586,67 @@ def measure_coverage(
         else:
             incremental += 1
     return Coverage(
-        "Leader 主会话" if leader else "子 agent（派工）", len(rows), incremental, backfilled
+        "Leader main session" if leader else "Sub-agents (dispatches)", len(rows), incremental, backfilled
     )
 
 
 def project_coverage(before: Coverage, newly_written: int) -> Coverage:
-    """回采**只加历史回采那一格**，增量采集那一格逐字不动 —— 这正是要给人看的。"""
+    """The backfill **only adds to the historical-backfill cell**; the incremental-collection cell is untouched word for word — that is exactly what people need to see."""
     return Coverage(before.label, before.total, before.incremental, before.backfilled + newly_written)
 
 
 # ---------------------------------------------------------------------------
-# 报告
+# Report
 # ---------------------------------------------------------------------------
 def print_job(job: Job, sample_n: int, rng: random.Random) -> None:
     print()
     print("=" * 88)
-    print(job.title + ("" if job.enabled else "   〔本次不执行，以下仅为判定预览〕"))
+    print(job.title + ("" if job.enabled else "   [not executed this time; the following is a verdict preview only]"))
     print("-" * 88)
     counts = job.counts()
     for reason in REASON_ORDER:
         if reason in counts:
             print(f"  {counts[reason]:6d}  {reason:<26} {REASONS[reason]}")
-    print(f"  {sum(counts.values()):6d}  合计")
+    print(f"  {sum(counts.values()):6d}  Total")
 
     written = job.written()
     if written:
         picks = written if len(written) <= sample_n else rng.sample(written, sample_n)
         picks.sort(key=lambda r: r.row_id)
         print()
-        print(f"  ── 抽样 {len(picks)}/{len(written)} 行（供人工核对）──")
+        print(f"  ── Sampled {len(picks)}/{len(written)} rows (for human checking) ──")
         for r in picks:
             note = f"  ({r.note})" if r.note else ""
             warn = f"  ⚠ {r.warn}" if r.warn else ""
             print(f"    {r.row_id[:8]}  {r.name[:26]:<26} {r.value_repr()}{note}{warn}")
 
-    # 有 warn 的行单独再列一次：抽样可能抽不到它们，而它们恰恰是要人看的。
+    # Rows with a warn are listed once more separately: sampling may miss them, and they are exactly what a human needs to see.
     warned = [r for r in job.rows if r.warn and r.reason != "written"]
     warned += [r for r in written if r.warn]
     if warned:
         print()
-        print(f"  ── 需人工过目 {len(warned)} 行 ──")
+        print(f"  ── {len(warned)} rows needing human review ──")
         for r in warned[:20]:
             print(f"    ⚠ {r.row_id[:8]}  {r.name[:26]:<26} [{r.reason}] {r.warn or r.note}")
         if len(warned) > 20:
-            print(f"      …… 另有 {len(warned) - 20} 行")
+            print(f"      …… {len(warned) - 20} more rows")
 
 
 def print_transcript_gone(jobs: list[Job]) -> None:
-    """``transcript_gone`` 逐行列出 —— §3.4 要求，且这类只增不减。
+    """List ``transcript_gone`` rows one by one — §3.4 requires it, and this class only ever grows.
 
-    这不是噪声：报告本身就是"回采窗口已在这些行上永久关闭"的存证。今天列出来的每一行，
-    都是将来任何人再想回采都拿不到的那一行。
+    This is not noise: the report itself is the evidence that "the backfill window has permanently closed on these rows". Every row listed today
+    is a row nobody will ever be able to backfill again.
     """
     print()
     print("=" * 88)
-    print("transcript_gone 逐行清单（§3.4：只增不减，报告即窗口关闭的存证）")
+    print("transcript_gone row-by-row list (§3.4: only ever grows; the report is the evidence that the window has closed)")
     print("-" * 88)
     gone = [(j, r) for j in jobs for r in j.by_reason("transcript_gone")]
     if not gone:
-        print("  ✓ 0 行 —— 本次回采窗口完全敞开，登记过的 transcript 一份不少地还在磁盘上。")
+        print("  ✓ 0 rows — this backfill window is fully open: every registered transcript is still on disk, not one missing.")
         return
-    print(f"  {len(gone)} 行的 transcript 已不在磁盘，这些用量永久不可回采：")
+    print(f"  The transcripts of {len(gone)} rows are no longer on disk; this usage can never be backfilled:")
     for job, r in gone:
         print(f"    [{job.table}] {r.row_id[:8]}  {r.name[:26]:<26} {r.note}")
 
@@ -656,38 +656,38 @@ def print_coverage(
 ) -> None:
     print()
     print("=" * 88)
-    print("覆盖率分窗（硬约束②：历史回采与增量采集永远是两个数，不合并）")
+    print("Coverage windowing (hard constraint 2: historical backfill and incremental collection are always two numbers, never merged)")
     print("-" * 88)
     sub_before = measure_coverage(agents, cohorts, leader=False)
     lead_before = measure_coverage(agents, cohorts, leader=True)
     sub_after = project_coverage(sub_before, len(job_a.written()))
     lead_after = project_coverage(lead_before, len(job_d.written()) if job_d.enabled else 0)
 
-    print("  回采前：")
+    print("  Before backfill:")
     print(sub_before.line())
     print(lead_before.line())
-    print("  回采后（预计）：")
+    print("  After backfill (projected):")
     print(sub_after.line())
     print(lead_after.line())
     print()
-    print("  读法：'增量采集'那一格**回采前后逐字不变** —— 它才是采集链路健不健康的指标；")
-    print("        回采只抬高'历史回采'一格。两格相加没有意义，本报告也不给这个和。")
-    print("  分母口径：agents 表按 role 分的全部行，**含没有 transcript 的行**（§4.1）。")
+    print("  How to read it: the 'incremental collection' cell is **word-for-word unchanged before and after backfill** — it is the indicator of whether the collection chain is healthy;")
+    print("        the backfill only raises the 'historical backfill' cell. Adding the two cells together is meaningless, and this report does not give that sum.")
+    print("  Denominator convention: all agents-table rows split by role, **including rows without a transcript** (§4.1).")
 
 
 def print_fingerprint(fp: dict[str, Any], *, title: str) -> None:
-    print(f"  {title}: {fp['rows']} 行 / sum={fp['sum']:,} / sha256={fp['sha256'][:16]}…")
+    print(f"  {title}: {fp['rows']} rows / sum={fp['sum']:,} / sha256={fp['sha256'][:16]}…")
 
 
 # ---------------------------------------------------------------------------
-# 写入
+# Writing
 # ---------------------------------------------------------------------------
 def apply_job(con: sqlite3.Connection, job: Job) -> int:
-    """逐行写入，带 SQL 级守卫。
+    """Write row by row, with SQL-level guards.
 
-    守卫在 SQL 里而不只在判定层，是因为 dry-run 与 apply 之间库随时可能被活体系统改写：
-    ``tokens_measured_at IS NULL`` 让并发下也不会覆盖别人刚写的观测值；
-    ``model = <我读到的那个别名>`` 让期间被写成完整型号的行自动让路。
+    The guards live in the SQL and not only in the verdict layer because the database may be rewritten by the live system at any moment between dry-run and apply:
+    ``tokens_measured_at IS NULL`` ensures that even concurrently it will not overwrite an observation someone just wrote;
+    ``model = <the alias I read>`` makes a row that in the meantime was written as a full model name yield automatically.
     """
     if not job.enabled:
         return 0
@@ -696,7 +696,7 @@ def apply_job(con: sqlite3.Connection, job: Job) -> int:
         for col in r.values:
             if (job.table, col) not in WRITABLE_COLUMNS:
                 raise RuntimeError(
-                    f"写列白名单拦截：({job.table}, {col}) 不在 WRITABLE_COLUMNS 中"
+                    f"write-column whitelist interception: ({job.table}, {col}) is not in WRITABLE_COLUMNS"
                 )
         assign = ", ".join(f"{c} = ?" for c in r.values)
         params: list[Any] = list(r.values.values())
@@ -709,7 +709,7 @@ def apply_job(con: sqlite3.Connection, job: Job) -> int:
                 where.append(f"{col} = ?")
                 params.append(expected)
         cur = con.execute(
-            f"update {job.table} set {assign} where {' and '.join(where)}",  # noqa: S608 — 表名/列名全部来自本文件常量与白名单，非外部输入
+            f"update {job.table} set {assign} where {' and '.join(where)}",  # noqa: S608 — table/column names all come from constants and the allowlist in this file, not external input
             params,
         )
         n += cur.rowcount
@@ -724,7 +724,7 @@ def build_journal(
     fp_after: dict[str, Any],
     written: int,
 ) -> dict[str, Any]:
-    """journal = 唯一的恢复凭证：批次时刻 + 逐行写入内容 + 禁改列的前后指纹。"""
+    """journal = the only recovery credential: the batch time + the per-row written content + the before/after fingerprints of the forbidden column."""
     return {
         "script": "backfill_token_usage.py",
         "db": str(args.db),
@@ -766,40 +766,40 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--db", type=Path, default=DEFAULT_DB, help="目标库（默认生产库）")
-    ap.add_argument("--apply", action="store_true", help="真正写入（默认只出报告）")
-    ap.add_argument("--journal", type=Path, help="--apply 必给：恢复凭证落点（已存在则硬拒）")
-    ap.add_argument("--sample", type=int, default=30, help="每个 Job 抽样打印的行数")
-    ap.add_argument("--seed", type=int, default=0, help="抽样随机种子（默认 0，可复现）")
+    ap.add_argument("--db", type=Path, default=DEFAULT_DB, help="target database (default: the production database)")
+    ap.add_argument("--apply", action="store_true", help="actually write (default: report only)")
+    ap.add_argument("--journal", type=Path, help="required with --apply: where the recovery credential lands (hard-refused if it already exists)")
+    ap.add_argument("--sample", type=int, default=30, help="number of rows sampled and printed per Job")
+    ap.add_argument("--seed", type=int, default=0, help="sampling random seed (default 0, reproducible)")
     ap.add_argument(
         "--include-leader", action="store_true",
-        help="额外执行 Job D（Leader 主会话回采）—— 语义与阶段4 的 snapshot 覆写相反，默认不做",
+        help="additionally run Job D (Leader main-session backfill) — its semantics are the opposite of stage 4's snapshot overwrite, so it is not done by default",
     )
     ap.add_argument(
         "--no-model", action="store_true",
-        help="不做 model 观测回填（Job C 全禁 + Job A 不写 model 列）",
+        help="do no model observational backfill (Job C fully disabled + Job A does not write the model column)",
     )
-    ap.add_argument("--quiet", action="store_true", help="不打印解析进度")
+    ap.add_argument("--quiet", action="store_true", help="do not print parsing progress")
     args = ap.parse_args()
 
     if not args.db.exists():
-        print(f"库不存在：{args.db}", file=sys.stderr)
+        print(f"Database does not exist: {args.db}", file=sys.stderr)
         return 2
     if args.apply and args.journal is None:
-        print("❌ --apply 必须给 --journal —— 那是唯一的恢复凭证", file=sys.stderr)
+        print("❌ --apply requires --journal — that is the only recovery credential", file=sys.stderr)
         return 2
     if args.journal is not None and args.journal.exists():
         print(
-            f"❌ journal 目标文件已存在：{args.journal}\n"
-            "   二次 apply 会把它覆盖成回采后的状态，恢复凭证就没了。换个文件名。",
+            f"❌ The journal target file already exists: {args.journal}\n"
+            "   A second apply would overwrite it with the post-backfill state, and the recovery credential would be gone. Choose another filename.",
             file=sys.stderr,
         )
         return 2
 
     rng = random.Random(args.seed)
-    # 批次时刻：一次回采的全部行共享同一个值，这既是事实（就是这一刻测的），也是
-    # 硬约束② 分窗的签名。走 aiteam.clock 的唯一时钟（I11 红线：库里不许有第二个
-    # 时钟）；naive_utc_now 的落盘形态与 UtcDateTime 一致，两边天然对齐。
+    # Batch time: all rows of one backfill share the same value — that is both the fact (they were measured at this very moment) and
+    # the windowing signature of hard constraint 2. It goes through aiteam.clock's single clock (I11 red line: no second clock may
+    # exist in the database); the persisted form of naive_utc_now agrees with UtcDateTime, so the two sides align naturally.
     batch_ts = naive_utc_now().isoformat(sep=" ")
 
     con = open_db(args.db, writable=args.apply)
@@ -809,15 +809,15 @@ def main() -> int:
         cohorts = detect_backfill_cohorts(con)
         fp_before = workflow_tokens_fingerprint(con)
 
-        print(f"库：{args.db}")
-        print(f"模式：{'APPLY（写入）' if args.apply else 'DRY-RUN（只读，mode=ro）'}")
-        print("口径：usage_sum（按 requestId 分组取末条快照再跨组累加）—— 与 "
-              "workflow_agents.tokens 的 ctx_last 口径实测差 5~25 倍，两者永不相加")
-        print(f"批次时刻：{batch_ts}（本次全部写入行共享此值，即分窗签名）")
-        print(f"agents {len(agents)} 行；workflow_agents {len(wa_rows)} 行；"
-              f"已识别历史回采批次 {len(cohorts)} 个")
+        print(f"Database: {args.db}")
+        print(f"Mode: {'APPLY (writing)' if args.apply else 'DRY-RUN (read-only, mode=ro)'}")
+        print("Metric: usage_sum (grouped by requestId, take the last snapshot, then accumulate across groups) — it differs from"
+              "the ctx_last metric of workflow_agents.tokens by a measured 5-25x, and the two are never added together")
+        print(f"Batch time: {batch_ts} (all rows written this time share this value; that is the windowing signature)")
+        print(f"agents {len(agents)} rows; workflow_agents {len(wa_rows)} rows;"
+              f"{len(cohorts)} historical backfill batches identified")
         print()
-        print("开始解析 transcript……", file=sys.stderr)
+        print("Starting to parse transcripts…", file=sys.stderr)
 
         parser = Parser(verbose=not args.quiet)
         job_a = job_subagent_usage(agents, parser, batch_ts, with_model=not args.no_model)
@@ -827,43 +827,43 @@ def main() -> int:
         job_d = job_leader_usage(agents, parser, batch_ts, enabled=args.include_leader)
         jobs = [job_a, job_b, job_c, job_d]
 
-        print(f"解析完成：{parser.parsed} 份文件 / {parser.bytes_read / 1e6:.1f} MB",
+        print(f"Parsing complete: {parser.parsed} files / {parser.bytes_read / 1e6:.1f} MB",
               file=sys.stderr)
 
         for job in jobs:
             print_job(job, args.sample, rng)
         if not args.include_leader:
             print()
-            print("  Job D 默认不执行（需 --include-leader）。上面只是它的判定预览。")
-            print("  两条独立理由：① 47 个 Leader 行只指向 13 份 transcript，照单全收会把")
-            print("  同一份用量重复计入最多 11 次；② 主会话是活文件，持续采集归阶段4（snapshot")
-            print("  覆写语义），本脚本的'只写空列、写完不再更新'会把中途值永久冻成'已测量'。")
+            print("  Job D is not executed by default (it requires --include-leader). The above is only a preview of its verdicts.")
+            print("  Two independent reasons: 1) 47 Leader rows point to only 13 transcripts, and taking everything as-is would")
+            print("  repeatedly count the same usage up to 11 times; 2) a main session is a live file, and continuous collection belongs to stage 4 (snapshot")
+            print("  overwrite semantics), while this script's 'only write empty columns, never update after writing' would permanently freeze a mid-way value as 'measured'.")
 
         print_transcript_gone(jobs)
         print_coverage(agents, cohorts, job_a, job_d)
 
         print()
         print("=" * 88)
-        print("硬约束① workflow_agents.tokens 逐行未变（ctx_last 口径不得被 usage_sum 污染）")
+        print("Hard constraint 1: workflow_agents.tokens unchanged row by row (the ctx_last metric must not be polluted by usage_sum)")
         print("-" * 88)
-        print(f"  写列白名单：{sorted(f'{t}.{c}' for t, c in WRITABLE_COLUMNS)}")
-        print(f"  禁改列：{FORBIDDEN_COLUMN[0]}.{FORBIDDEN_COLUMN[1]} —— 不在白名单内，"
-              f"apply 层的 assert 与前后指纹比对是第二、三道拦")
-        print_fingerprint(fp_before, title="回采前指纹")
+        print(f"  Writable-column allowlist: {sorted(f'{t}.{c}' for t, c in WRITABLE_COLUMNS)}")
+        print(f"  Forbidden column: {FORBIDDEN_COLUMN[0]}.{FORBIDDEN_COLUMN[1]} — not in the allowlist;"
+              f"the apply layer's assert and the before/after fingerprint comparison are the second and third gates")
+        print_fingerprint(fp_before, title="Pre-backfill fingerprint")
 
         planned = sum(len(j.written()) for j in jobs if j.enabled)
         print()
         print("=" * 88)
-        print(f"待写入合计：{planned} 行"
+        print(f"Total to write: {planned} rows"
               f"（agents {len(job_a.written()) + (len(job_d.written()) if job_d.enabled else 0)}"
-              f" + tokens_source 补标 {len(job_b.written())}"
+              f" + tokens_source back-labels {len(job_b.written())}"
               f" + workflow_agents.model {len(job_c.written()) if job_c.enabled else 0}）")
 
         if not args.apply:
-            print("dry-run 结束，一个字节都没写。确认无误后由缔造者执行 "
-                  "--apply --journal <路径>（先备份）。")
-            print("幂等验收：--apply 之后重跑本脚本，待写入应为 0 行"
-                  "（全部落进 already_measured / already_set / already_concrete）。")
+            print("Dry-run finished; not one byte was written. Once confirmed correct, the Founder executes"
+                  " --apply --journal <path> (back up first).")
+            print("Idempotency acceptance: after --apply, re-run this script and pending writes should be 0 rows"
+                  "(everything lands in already_measured / already_set / already_concrete).")
             return 0
 
         written = 0
@@ -874,10 +874,10 @@ def main() -> int:
             if fp_after["sha256"] != fp_before["sha256"]:
                 con.rollback()
                 print()
-                print("❌ 硬约束① 失守：workflow_agents.tokens 指纹变了，整事务已回滚。",
+                print("❌ Hard constraint 1 breached: the workflow_agents.tokens fingerprint changed; the whole transaction has been rolled back.",
                       file=sys.stderr)
-                print_fingerprint(fp_before, title="回采前")
-                print_fingerprint(fp_after, title="回采后")
+                print_fingerprint(fp_before, title="Before backfill")
+                print_fingerprint(fp_after, title="After backfill")
                 return 4
             con.commit()
         except Exception:
@@ -886,11 +886,11 @@ def main() -> int:
 
         fp_final = workflow_tokens_fingerprint(con)
         print()
-        print(f"已写入：{written} 行（判定候选 {planned} 行；"
-              f"差额 = 期间已被活体写上的行，守卫让路是预期行为）")
-        print_fingerprint(fp_before, title="回采前指纹")
-        print_fingerprint(fp_final, title="回采后指纹")
-        print(f"  ✓ 硬约束① 通过：{FORBIDDEN_COLUMN[0]}.{FORBIDDEN_COLUMN[1]} 逐行未变")
+        print(f"Written: {written} rows (verdict candidates {planned} rows;"
+              f"the difference = rows the live system has written in the meantime; guards yielding is the expected behavior)")
+        print_fingerprint(fp_before, title="Pre-backfill fingerprint")
+        print_fingerprint(fp_final, title="Post-backfill fingerprint")
+        print(f"  ✓ Hard constraint 1 passed: {FORBIDDEN_COLUMN[0]}.{FORBIDDEN_COLUMN[1]} unchanged row by row")
 
         args.journal.parent.mkdir(parents=True, exist_ok=True)
         args.journal.write_text(
@@ -900,8 +900,8 @@ def main() -> int:
             ),
             encoding="utf-8",
         )
-        print(f"journal 已落盘：{args.journal}")
-        print("重跑本脚本应报告 0 待写入 —— 这就是幂等验收。")
+        print(f"Journal written to disk: {args.journal}")
+        print("Re-running this script should report 0 pending writes — that is the idempotency acceptance test.")
         return 0
     finally:
         con.close()
