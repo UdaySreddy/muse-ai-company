@@ -2,7 +2,7 @@ const API_BASE = import.meta.env.VITE_API_URL || '';
 
 export const WS_URL = import.meta.env.VITE_WS_URL || `ws://${window.location.host}/ws/events`;
 
-// Project scope state — backs the ecosystem 项目筛选 (EcosystemProjectFilter via ProjectContext).
+// Project scope state — backs the ecosystem project filter (EcosystemProjectFilter via ProjectContext).
 // The selected X-Project-Id is attached ONLY to /api/ecosystem requests (see apiFetch gate below),
 // so the backend scopes ecosystem data WITHOUT scoping other endpoints (teams/tasks/reports/...).
 // NOTE: this is NOT a global app switcher. The only UI that sets it is the ecosystem filter;

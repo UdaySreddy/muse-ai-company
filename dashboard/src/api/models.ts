@@ -1,13 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/api/client';
 
-/** 模型治理 — 可用模型自动拉取（文件真相源：本机 transcript 实际出现过的模型）。 */
+/** Model governance — available models are auto-discovered (file source of truth: models that have actually appeared in this machine's transcripts). */
 
 export interface AvailableModel {
   model: string;
   file_count: number;
   last_seen_ts: number;
-  /** 层级别名（如 "opus"），不进默认下拉主列表 */
+  /** Tier alias (e.g. "opus"); not included in the main default dropdown list */
   alias: boolean;
 }
 

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/api/client';
 
-/** 后端版本真相源：/api/health 直出 aiteam.__version__（勿在前端写死版本号）。 */
+/** Source of truth for the backend version: /api/health returns aiteam.__version__ directly (never hardcode a version in the frontend). */
 export function useApiVersion() {
   return useQuery({
     queryKey: ['health', 'version'],

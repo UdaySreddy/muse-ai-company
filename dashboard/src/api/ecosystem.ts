@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from './client';
 
-// 与后端 /api/ecosystem/profiles 返回格式对齐
+// Aligned with the backend /api/ecosystem/profiles response format
 export interface EcosystemRepoProfile {
   id: string;
   repo_full_name: string;
@@ -14,43 +14,43 @@ export interface EcosystemRepoProfile {
   homepage: string | null;
   last_commit_at: string | null;
   needs_deep_review: boolean;
-  /** @deprecated v1.6.1: relevance_category 启发式分类已弃用，后端不再返回 */
+  /** @deprecated v1.6.1: the relevance_category heuristic classification is deprecated; the backend no longer returns it */
   relevance_category?: string | null;
-  /** @deprecated v1.6.1: relevance_score 硬编码评分无参考价值，后端不再返回 */
+  /** @deprecated v1.6.1: the hardcoded relevance_score has no reference value; the backend no longer returns it */
   relevance_score?: number;
   one_line_summary: string | null;
   last_scanned_at: string;
   first_seen_at: string;
-  // Stage B 扩展字段（v2 API 返回时填充）
+  // Stage B extension fields (populated when the v2 API returns them)
   pushed_at?: string | null;
   is_archived?: boolean;
   scan_run_id?: string | null;
   description_excerpt?: string;
-  // v1.5.0-A 扩展字段（前端 stage 徽章 / failed 提示 / 活跃集 tab 依赖）
+  // v1.5.0-A extension fields (relied on by the frontend stage badge / failed notice / active-set tab)
   shallow_summary?: string;
   last_shallow_refreshed_at?: string | null;
   is_deleted?: boolean;
   is_private_now?: boolean;
   last_fetch_error?: string;
   fetch_failure_count?: number;
-  /** @deprecated v1.6.0 P1.A: 使用 last_active_status 替代（'active' / 'archived' / 'manual_archived' / 'pinned'） */
+  /** @deprecated v1.6.0 P1.A: use last_active_status instead ('active' / 'archived' / 'manual_archived' / 'pinned') */
   is_active?: boolean;
-  /** @deprecated v1.6.0 P1.A: 排名机制已废弃，使用 last_active_status + manual_status 表达活跃度 */
+  /** @deprecated v1.6.0 P1.A: the ranking mechanism is retired; use last_active_status + manual_status to express activity */
   active_rank?: number | null;
-  // v1.5.1：透出渐进漏斗 stage 状态（取自 latest deep_review，无 review = "queued"）
+  // v1.5.1: exposes the progressive-funnel stage state (from the latest deep_review; no review = "queued")
   stage_status?: string | null;
-  // v1.5.1：研究次数（关联的 deep_review 行数，0 = 未深扫）
+  // v1.5.1: research count (number of associated deep_review rows; 0 = never deep-reviewed)
   research_count?: number;
   // v1.6.0：last_active_status — 'active' / 'archived' / 'manual_archived' / 'pinned' / null
   last_active_status?: string | null;
-  // v1.6.1 多源：sources 列表 + primary_source
+  // v1.6.1 multi-source: sources list + primary_source
   sources?: { kind: string; id: string; url: string; [k: string]: unknown }[];
   primary_source?: string;
   canonical_id?: string | null;
   source_kind?: string;
 }
 
-// v1.5.0 漏斗 stage 状态
+// v1.5.0 funnel stage states
 export const ECOSYSTEM_STAGE_STATUSES = [
   'queued',
   'shallow_done',
@@ -65,20 +65,20 @@ export const ECOSYSTEM_STAGE_STATUSES = [
 
 export type EcosystemStageStatus = (typeof ECOSYSTEM_STAGE_STATUSES)[number];
 
-/** stage 中文标签 */
+/** Stage labels */
 export const STAGE_STATUS_LABELS: Record<EcosystemStageStatus, string> = {
-  queued: '待浅扫',
-  shallow_done: '浅扫完成',
-  shallow_failed: '浅扫失败',
-  architecture_done: '架构已分析',
-  architecture_failed: '架构失败',
-  debated: '已辩论',
-  debated_failed: '辩论失败',
-  referenced: '✓ 参考',
-  integrated: '★ 已集成',
+  queued: 'Pending Shallow Scan',
+  shallow_done: 'Shallow Scan Done',
+  shallow_failed: 'Shallow Scan Failed',
+  architecture_done: 'Architecture Analyzed',
+  architecture_failed: 'Architecture Failed',
+  debated: 'Debated',
+  debated_failed: 'Debate Failed',
+  referenced: '✓ Referenced',
+  integrated: '★ Integrated',
 };
 
-/** stage 颜色（与设计稿 §8.1 对齐：灰/蓝/黄/橙/绿/紫/红） */
+/** Stage colors (aligned with design §8.1: gray/blue/yellow/orange/green/purple/red) */
 export const STAGE_STATUS_TONE: Record<
   EcosystemStageStatus,
   'gray' | 'blue' | 'yellow' | 'orange' | 'green' | 'purple' | 'red'
@@ -94,7 +94,7 @@ export const STAGE_STATUS_TONE: Record<
   integrated: 'purple',
 };
 
-/** stage 徽章 className（Tailwind 同构色） */
+/** Stage badge className (Tailwind isomorphic colors) */
 export function stageBadgeClass(stage: EcosystemStageStatus | string): string {
   const tone = STAGE_STATUS_TONE[stage as EcosystemStageStatus] ?? 'gray';
   switch (tone) {
@@ -121,11 +121,11 @@ export interface EcosystemFacetCounts {
   category: Record<string, number>;
   language: Record<string, number>;
   archived: Record<string, number>; // {"true": n, "false": n}
-  // v1.5.1：渐进漏斗 stage 分布（不被 limit 截断的全量统计）
-  // 例如：{"queued": 162, "shallow_done": 100, "debated": 3}
+  // v1.5.1: progressive-funnel stage distribution (full statistics, not truncated by limit)
+  // Example: {"queued": 162, "shallow_done": 100, "debated": 3}
   stage?: Record<string, number>;
-  // v1.6.0 SST: GitHub topics 维度全量统计（取代基于启发式的 category）
-  // 例如：{"mcp": 120, "claude-code": 80, "ai": 75, ...}
+  // v1.6.0 SST: full statistics over the GitHub topics dimension (replaces the heuristic-based category)
+  // Example: {"mcp": 120, "claude-code": 80, "ai": 75, ...}
   topics?: Record<string, number>;
 }
 
@@ -141,9 +141,9 @@ export interface EcosystemProfilesResponse {
 export interface EcosystemFilters {
   keyword?: string;
   topic?: string;
-  /** @deprecated v1.6.0: relevance_category 启发式分类已废弃，UI 改用 topics 多选筛选 */
+  /** @deprecated v1.6.0: the relevance_category heuristic classification is retired; the UI uses topics multi-select filtering instead */
   category?: string;
-  /** v1.6.0: GitHub topics 多选筛选（客户端 filter；与 profile.topics 求交集） */
+  /** v1.6.0: GitHub topics multi-select filter (client-side filter; intersected with profile.topics) */
   topics?: string[];
   minStars?: number;
   maxStars?: number;
@@ -151,15 +151,15 @@ export interface EcosystemFilters {
   limit?: number;
   offset?: number;
   facetCounts?: boolean;
-  // v1.5.0-E 新增：活跃/全量/已删除 tab + stage 维度筛选
+  // v1.5.0-E addition: active/all/deleted tabs + stage-dimension filtering
   isActive?: boolean | null;
   isDeleted?: boolean | null;
-  stageStatus?: string; // 多个用逗号分隔
+  stageStatus?: string; // Multiple values separated by commas
 }
 
 /**
- * 列表查询：检索生态仓档案。
- * 对接 GET /api/ecosystem/profiles
+ * List query: search ecosystem repo profiles.
+ * Backed by GET /api/ecosystem/profiles
  */
 export function useEcosystemProfiles(filters: EcosystemFilters = {}) {
   const {
@@ -198,8 +198,8 @@ export function useEcosystemProfiles(filters: EcosystemFilters = {}) {
 }
 
 /**
- * 单仓档案 hook（基础信息）— 用于不需要深度档案的场景。
- * 通过 /profiles 列表回退查找（保持向后兼容）。
+ * Single-repo profile hook (basic info) — for scenarios that do not need the full profile.
+ * Falls back to lookup via the /profiles list (kept for backward compatibility).
  */
 export function useEcosystemRepoDetail(repoId: string | null) {
   return useQuery({
@@ -214,10 +214,10 @@ export function useEcosystemRepoDetail(repoId: string | null) {
 }
 
 // ============================================================
-// v2 API: 单仓全息详情 (BUG-023 修复)
+// v2 API: single-repo full detail (BUG-023 fix)
 // ============================================================
 
-/** 能力 / 成熟度 / 风险 标签 */
+/** Capability / maturity / risk tags */
 export interface EcosystemTag {
   tag_id: string;
   name: string;
@@ -230,11 +230,11 @@ export interface EcosystemTag {
   created_at: string;
 }
 
-/** 深扫记录 */
+/** Deep-review record */
 export interface EcosystemDeepReview {
   id: string;
   repo_id: string;
-  status: string; // stage_status 的派生只读视图：queued / completed / failed（'running' 仅历史行）
+  status: string; // Derived read-only view of stage_status: queued / completed / failed ('running' only on historic rows)
   agent_id: string | null;
   summary_md: string;
   architecture_md: string;
@@ -248,7 +248,7 @@ export interface EcosystemDeepReview {
   started_at?: string | null;
   completed_at?: string | null;
   duration_seconds?: number;
-  // v1.5.0-A 字段（前端 timeline 依赖）
+  // v1.5.0-A fields (relied on by the frontend timeline)
   stage_status?: EcosystemStageStatus | string;
   integration_md?: string;
   shallow_completed_at?: string | null;
@@ -259,7 +259,7 @@ export interface EcosystemDeepReview {
   integration_task_id?: string | null;
 }
 
-/** 仓与仓的关联关系 */
+/** Repo-to-repo relations */
 export interface EcosystemRelation {
   id: string;
   source_repo_id: string;
@@ -272,17 +272,17 @@ export interface EcosystemRelation {
   created_at: string;
 }
 
-/** 扫描运行记录（与后端 /api/ecosystem/scan-runs 返回对齐） */
+/** Scan run record (aligned with the backend /api/ecosystem/scan-runs response) */
 export interface EcosystemScanRun {
   id: string;
   agent_id: string | null;
-  /** 后端原始字段（incremental / full / topic / trending 等） */
+  /** Raw backend field (incremental / full / topic / trending, etc.) */
   strategy: string;
-  /** 前端派生：等同 strategy（向后兼容 UI 字段名） */
+  /** Frontend-derived: same as strategy (legacy UI field name kept for compatibility) */
   scan_type: string;
   started_at: string;
   completed_at: string | null;
-  /** 前端派生：completed_at != null → 'completed'，否则 'running'；errors 非空 → 'failed' */
+  /** Frontend-derived: completed_at != null -> 'completed', otherwise 'running'; non-empty errors -> 'failed' */
   status: 'completed' | 'running' | 'failed' | string;
   duration_seconds?: number | null;
   repos_added: number;
@@ -295,7 +295,7 @@ export interface EcosystemScanRun {
   notes: string | null;
 }
 
-/** 后端 /api/ecosystem/scan-runs 原始响应（字段在 hook 中映射） */
+/** Raw response of the backend /api/ecosystem/scan-runs (fields are mapped in the hook) */
 interface ScanRunsApiResponse {
   runs: Array<{
     id: string;
@@ -315,7 +315,7 @@ interface ScanRunsApiResponse {
   total: number;
 }
 
-/** v2 全息响应 — 与后端 EcosystemRepoFullResponse 对齐 */
+/** v2 full response — aligned with the backend EcosystemRepoFullResponse */
 export interface EcosystemRepoFullResponse {
   profile: EcosystemRepoProfile;
   tags: EcosystemTag[];
@@ -325,25 +325,25 @@ export interface EcosystemRepoFullResponse {
   scan_run: EcosystemScanRun | null;
 }
 
-/** 深扫列表响应 — 用于统计真实 completed/running/failed 数 */
+/** Deep-review list response — used to count the real completed/running/failed numbers */
 export interface EcosystemDeepReviewListResponse {
   reviews: EcosystemDeepReview[];
   total: number;
 }
 
 /**
- * 列出深扫记录，可按 status 过滤（queued / completed / failed；'running' 仅历史行）。
- * 用于 StatsBar 计算真实"已深扫"数量（语义 = DeepReview.status='completed' 的行数；
- * D5 收敛后 status 为 stage_status 的派生只读视图，'completed' 等价 stage 已达
- * shallow_done 及以上，口径自动正确化）。
+ * List deep-review records, filterable by status (queued / completed / failed; 'running' only on historic rows).
+ * Used by StatsBar to compute the real "deep-reviewed" count (semantics = number of rows with DeepReview.status='completed';
+ * after the D5 convergence, status is a derived read-only view of stage_status, and 'completed' is equivalent to the stage having reached
+ * shallow_done or above, so the definition corrects itself automatically).
  *
- * 注意：profile.needs_deep_review 字段语义是"是否需要被深扫"，false 不等于"已完成深扫"。
- * 必须用本接口拉真实 DeepReview 行为准。
+ * Note: the profile.needs_deep_review field means "needs a deep review"; false does not mean "deep review completed".
+ * The real DeepReview rows from this endpoint are the source of truth.
  */
 /**
- * GET /api/ecosystem/scan-runs?limit=N — 最近 N 次批次扫描记录（生态档案级）
- * 用于 EcosystemListPage 顶部展示"最近批次扫描"概览。
- * 返回按 started_at 倒序，最近一次 = list[0]。
+ * GET /api/ecosystem/scan-runs?limit=N — the most recent N batch scan records (ecosystem-profile level)
+ * Used at the top of EcosystemListPage to show the "recent batch scans" overview.
+ * Returned in started_at descending order; the most recent is list[0].
  */
 export function useEcosystemRecentScanRuns(limit: number = 5) {
   return useQuery({
@@ -354,8 +354,8 @@ export function useEcosystemRecentScanRuns(limit: number = 5) {
       const body = await apiFetch<ScanRunsApiResponse>(
         `/api/ecosystem/scan-runs?${params.toString()}`,
       );
-      // 后端返回 {runs, total}，前端 hook 历来期望 {data, total}。
-      // 同时派生 scan_type（= strategy）与 status（completed_at + errors 推断）。
+      // The backend returns {runs, total}, while the frontend hook has historically expected {data, total}.
+      // Also derives scan_type (= strategy) and status (inferred from completed_at + errors).
       const data: EcosystemScanRun[] = body.runs.map((r) => {
         const hasErrors = Array.isArray(r.errors) && r.errors.length > 0;
         const status: EcosystemScanRun['status'] = r.completed_at
@@ -381,7 +381,7 @@ export function useEcosystemDeepReviews(status: string = '') {
     queryFn: () => {
       const params = new URLSearchParams();
       if (status) params.set('status', status);
-      params.set('limit', '100'); // 后端上限 100；当前数据量 < 100 充足
+      params.set('limit', '100'); // Backend cap is 100; the current data volume (< 100) fits comfortably
       return apiFetch<EcosystemDeepReviewListResponse>(
         `/api/ecosystem/deep_reviews?${params.toString()}`,
       );
@@ -391,10 +391,10 @@ export function useEcosystemDeepReviews(status: string = '') {
 }
 
 /**
- * v2: GET /api/ecosystem/profiles/{repo_full_name:path}/full — 全息详情
+ * v2: GET /api/ecosystem/profiles/{repo_full_name:path}/full — full detail
  *
- * 接受 UUID 或 repo_full_name。若传 UUID，会先在缓存的列表里查找对应 full_name。
- * 失败时返回 null（不抛错），上层降级展示基础信息。
+ * Accepts a UUID or a repo_full_name. Given a UUID, the corresponding full_name is first looked up in the cached list.
+ * Returns null on failure (never throws); the caller degrades to showing basic info.
  */
 export function useEcosystemRepoFull(repoIdOrName: string | null) {
   return useQuery({
@@ -402,31 +402,31 @@ export function useEcosystemRepoFull(repoIdOrName: string | null) {
     queryFn: async (): Promise<EcosystemRepoFullResponse | null> => {
       if (!repoIdOrName) return null;
 
-      // 判定是 UUID 还是 owner/name
+      // Decide whether it is a UUID or owner/name
       let repoFullName = repoIdOrName;
       const looksLikeUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
         repoIdOrName,
       );
       if (looksLikeUuid) {
-        // 后端 limit 上限 200，分页拉取所有页直到命中
+        // Backend limit cap is 200; fetch pages until a hit
         const pageSize = 200;
         let offset = 0;
         let hit: EcosystemRepoProfile | undefined;
-        // 防御性兜底：最多 10 页（2000 仓），避免循环
+        // Defensive cap: at most 10 pages (2000 repos) to avoid looping
         for (let page = 0; page < 10; page++) {
           const list = await apiFetch<EcosystemProfilesResponse & { offset?: number }>(
             `/api/ecosystem/profiles?limit=${pageSize}&offset=${offset}`,
           );
           hit = list.profiles.find((p) => p.id === repoIdOrName);
           if (hit) break;
-          if (list.profiles.length < pageSize) break; // 末页
+          if (list.profiles.length < pageSize) break; // Last page
           offset += pageSize;
         }
         if (!hit) return null;
         repoFullName = hit.repo_full_name;
       }
 
-      // path 参数包含斜杠：单段 encode 即可（path-converter 接受 /）
+      // The path parameter contains a slash: a single-segment encode suffices (the path converter accepts /)
       const encoded = repoFullName
         .split('/')
         .map((seg) => encodeURIComponent(seg))
@@ -444,36 +444,36 @@ export function useEcosystemRepoFull(repoIdOrName: string | null) {
   });
 }
 
-/** 评审 status 中文映射 — 通用语义（v1.5.2: "深扫中" → "评审中"，因为 status 不区分浅/深 stage） */
+/** Review status labels — generic semantics (v1.5.2: wording unified to "In Review" because status does not distinguish shallow/deep stages) */
 export const DEEP_REVIEW_STATUS_LABELS: Record<string, string> = {
-  pending: '待评审',
-  running: '评审中',
-  completed: '已完成',
-  failed: '失败',
-  skipped: '已跳过',
+  pending: 'Pending Review',
+  running: 'In Review',
+  completed: 'Completed',
+  failed: 'Failed',
+  skipped: 'Skipped',
 };
 
-/** 集成建议中文映射 */
+/** Integration recommendation labels */
 export const INTEGRATION_RECOMMENDATION_LABELS: Record<string, string> = {
-  adopt: '采纳',
-  experiment: '试验',
-  hold: '观望',
-  avoid: '回避',
+  adopt: 'Adopt',
+  experiment: 'Experiment',
+  hold: 'Hold',
+  avoid: 'Avoid',
 };
 
-/** 关联关系类型中文映射 */
+/** Relation type labels */
 export const RELATION_TYPE_LABELS: Record<string, string> = {
-  depends_on: '依赖',
-  inspired_by: '受启发',
-  fork_of: 'Fork 自',
-  replaces: '替代',
-  similar_to: '相似',
-  extends: '扩展',
-  uses: '使用',
+  depends_on: 'Depends On',
+  inspired_by: 'Inspired By',
+  fork_of: 'Fork Of',
+  replaces: 'Replaces',
+  similar_to: 'Similar To',
+  extends: 'Extends',
+  uses: 'Uses',
 };
 
 /**
- * 类别选项 — 与后端 EcosystemRepoProfile.relevance_category 对齐。
+ * Category options — aligned with the backend EcosystemRepoProfile.relevance_category.
  */
 export const RELEVANCE_CATEGORIES = [
   'agent-framework',
@@ -486,9 +486,9 @@ export const RELEVANCE_CATEGORIES = [
 export type RelevanceCategory = (typeof RELEVANCE_CATEGORIES)[number];
 
 /**
- * v1.6.0: Topic badge 动态颜色调色板 (StatsBar + RepoCard 共享).
- * 按位置 idx % length 循环, top N 排名变化时颜色自动跟随位置.
- * 用低饱和度 (secondary variant 基础 + 柔和边框/文字色), 保持简洁不刺眼.
+ * v1.6.0: dynamic topic-badge color palette (shared by StatsBar + RepoCard).
+ * Cycles by position idx % length; when the top-N ranking changes, colors follow the position automatically.
+ * Uses low saturation (secondary-variant base + soft border/text colors) to stay clean and easy on the eyes.
  */
 export const TOPIC_COLOR_PALETTE: readonly string[] = [
   'border-blue-500/30 text-blue-700 dark:text-blue-300',
@@ -502,22 +502,22 @@ export const TOPIC_COLOR_PALETTE: readonly string[] = [
 ] as const;
 
 /**
- * @deprecated v1.6.0 SST: relevance_category 启发式分类已废弃，UI 改用真实 GitHub topics。
- * 此映射保留仅作老数据回显兼容。新代码不应使用。
+ * @deprecated v1.6.0 SST: the relevance_category heuristic classification is retired; the UI uses real GitHub topics.
+ * This mapping is kept only for legacy-data display compatibility. New code must not use it.
  */
 export const CATEGORY_LABELS: Record<string, string> = {
-  'agent-framework': 'Agent 框架',
-  'mcp-server': 'MCP 服务器',
-  'memory-system': '记忆系统',
-  'skill-system': '技能系统',
-  tooling: '开发工具',
+  'agent-framework': 'Agent Framework',
+  'mcp-server': 'MCP Server',
+  'memory-system': 'Memory System',
+  'skill-system': 'Skill System',
+  tooling: 'Developer Tools',
 };
 
 // ============================================================
-// v1.5.0-E: Project Settings (决策 12.1)
+// v1.5.0-E: Project Settings (decision 12.1)
 // ============================================================
 
-/** 项目级 ecosystem 配置 — 与后端 EcosystemProjectSettings 对齐 */
+/** Project-level ecosystem config — aligned with the backend EcosystemProjectSettings */
 export interface EcosystemProjectSettings {
   project_id: string;
   min_stars: number;
@@ -528,13 +528,13 @@ export interface EcosystemProjectSettings {
   focus_languages: string[];
   shallow_concurrency: number;
   deep_concurrency: number;
-  /** v1.6.1 Phase 2: 每次扫描最多允许新增的仓数（超过触发告警），从 scan_profile 迁移 */
+  /** v1.6.1 Phase 2: maximum repos a single scan may add (exceeding it triggers an alert); migrated from scan_profile */
   alert_max_new_per_scan: number;
   created_at: string | null;
   updated_at: string | null;
 }
 
-/** 用 PUT 提交时的入参（不带 timestamps） */
+/** Payload when submitting via PUT (without timestamps) */
 export type EcosystemProjectSettingsInput = Omit<
   EcosystemProjectSettings,
   'project_id' | 'created_at' | 'updated_at'
@@ -577,7 +577,7 @@ export function useUpdateProjectSettings(projectId: string | null) {
 // v1.5.0-E: Failed repo retry
 // ============================================================
 
-/** POST /api/ecosystem/profiles/{repo_id}/retry — 立即重试失败的仓 */
+/** POST /api/ecosystem/profiles/{repo_id}/retry — immediately retry a failed repo */
 export function useRetryFailedRepo() {
   const qc = useQueryClient();
   return useMutation({
@@ -672,22 +672,22 @@ export function useRepoEvents(repoId: string | null, limit = 50) {
 }
 
 // ============================================================
-// v1.6.0: 扫描研究历程 — events + deep_reviews 合并 timeline
+// v1.6.0: scan/research history — merged timeline of events + deep_reviews
 // ============================================================
 
-/** scan_history entry — 合并 event 与 deep_review，按时间倒序 */
+/** scan_history entry — merges events and deep_reviews, in reverse chronological order */
 export interface ScanHistoryEntry {
   kind: 'event' | 'deep_review';
-  /** 事件类型 / 'deep_review_<stage_status>' */
+  /** Event type / 'deep_review_<stage_status>' */
   type: string;
   timestamp: string;
-  /** 人类可读一句话 */
+  /** One human-readable sentence */
   summary: string;
   source?: string;
   scan_run_id?: string | null;
-  /** event 详情 payload */
+  /** Event detail payload */
   payload?: Record<string, unknown>;
-  /** deep_review 5 段式 markdown */
+  /** deep_review five-section markdown */
   expandable_md?: {
     summary?: string;
     architecture?: string;
@@ -719,10 +719,10 @@ export function useScanHistory(repoId: string | null, limit = 50) {
 }
 
 // ============================================================
-// v1.7.0: 浅扫批次管理
+// v1.7.0: shallow-scan batch management
 // ============================================================
 
-/** 浅扫批次 — 与后端 EcosystemShallowBatch 对齐 */
+/** Shallow-scan batch — aligned with the backend EcosystemShallowBatch */
 export interface ShallowBatch {
   id: string;
   project_id: string | null;
@@ -741,7 +741,7 @@ export interface ShallowBatch {
   updated_at: string;
 }
 
-/** 批次候选仓条目 */
+/** Batch candidate repo entry */
 export interface ShallowBatchItem {
   repo_id: string;
   repo_full_name: string;

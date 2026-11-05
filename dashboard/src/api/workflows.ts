@@ -3,13 +3,13 @@ import { apiFetch } from './client';
 import type { APIListResponse, APIResponse } from '@/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 类型：对齐 docs/workflow-observability-design.md §2.1 / §2.2 的表结构。
-// 观测层新表 workflow_runs / workflow_agents 是「不可变文件的可重建缓存」，
-// 前端只读展示，不做任何写投影。
+// Types: aligned with the table structures in docs/workflow-observability-design.md §2.1 / §2.2.
+// The new observability tables workflow_runs / workflow_agents are a "rebuildable cache of immutable files";
+// the frontend only displays them read-only and performs no write projection.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// killed/failed 是真实存在的终态（本机实测约 10% 的 run 以此收尾），
-// 后端 status 为自由字符串——保留 (string & {}) 兜底未知新状态不炸类型。
+// killed/failed are real terminal states (about 10% of runs on this machine end this way);
+// the backend status is a free-form string — the (string & {}) fallback keeps unknown new states from breaking the types.
 export type WorkflowStatus =
   | 'planned'
   | 'running'
@@ -34,7 +34,7 @@ export interface WorkflowRun {
   cc_task_id?: string | null;
   name: string;
   status: WorkflowStatus;
-  /** 数据面溯源：hook（仅骨架）/ file（文件对账）/ hook+file */
+  /** Data-plane provenance: hook (skeleton only) / file (file reconcile) / hook+file */
   source: string;
   phases: WorkflowPhase[];
   planned_agent_count: number;
@@ -50,14 +50,14 @@ export interface WorkflowRun {
   completed_at?: string | null;
   created_at: string;
   updated_at: string;
-  // ── Phase 2 live 观测列（运行期近似值，终态由 wf_<id>.json 文件值覆盖，design §10.1）──
-  /** 运行期 token 估值 = Σ agent lastCtx（cached agent 记 0）；终态 UI 切回 total_tokens */
+  // ── Phase 2 live observability columns (runtime approximations; terminal values are overwritten by the wf_<id>.json file values, design §10.1)──
+  /** Runtime token estimate = Σ agent lastCtx (cached agents count 0); the terminal UI switches back to total_tokens */
   live_tokens?: number | null;
-  /** max(journal 与全部 agent-*.jsonl 的 mtime)；interrupted 判定依据 + UI「最后活动」 */
+  /** max(mtime of the journal and all agent-*.jsonl); basis for the interrupted judgement + the UI "last activity" */
   last_activity_at?: string | null;
-  /** journal.jsonl 已消费字节水位（服务端 tail 用，UI 仅透传不展示） */
+  /** Consumed-byte watermark of journal.jsonl (used by the server-side tail; the UI only passes it through, never displays it) */
   journal_offset?: number | null;
-  /** wf_<id>.json 的 mtime_ns:size 指纹（reconcile 廉价跳过，UI 仅透传不展示） */
+  /** mtime_ns:size fingerprint of wf_<id>.json (cheap reconcile skip; the UI only passes it through, never displays it) */
   source_fingerprint?: string | null;
 }
 
@@ -84,7 +84,7 @@ export interface WorkflowAgent {
   queued_at?: string | null;
   created_at: string;
   updated_at: string;
-  /** Phase 2：该 agent jsonl 的 mtime；泳道 running bar 右端锚点 */
+  /** Phase 2: mtime of this agent's jsonl; right-end anchor of the swim-lane running bar */
   last_activity_at?: string | null;
 }
 
@@ -99,16 +99,16 @@ export interface ReconcileResult {
   updated: number;
 }
 
-// 兼容两种端点契约：APIListResponse<T>（{data,total,message}，对齐 events/teams）
-// 或裸数组 T[]（frontendPlan 里的 apiFetch<WorkflowRun[]> 简写）。API 尚在并行开发，
-// 两种形态都归一为数组，保证真实调用路径落地即可用。
+// Supports both endpoint contracts: APIListResponse<T> ({data,total,message}, aligned with events/teams)
+// or a bare array T[] (the apiFetch<WorkflowRun[]> shorthand in frontendPlan). The API is still being developed in parallel;
+// both shapes are normalized to an array so the real call path works as soon as it lands.
 function toList<T>(res: APIListResponse<T> | T[] | null | undefined): T[] {
   if (!res) return [];
   if (Array.isArray(res)) return res;
   return res.data ?? [];
 }
 
-// 详情端点契约为裸 WorkflowRun（design §4），但也兼容被 APIResponse 包裹的情况。
+// The detail endpoint contract is a bare WorkflowRun (design §4), but an APIResponse-wrapped shape is also accepted.
 function unwrapRun(res: APIResponse<WorkflowRun> | WorkflowRun): WorkflowRun {
   if (res && typeof res === 'object' && 'data' in res && !('wf_id' in res)) {
     return (res as APIResponse<WorkflowRun>).data;
@@ -117,8 +117,8 @@ function unwrapRun(res: APIResponse<WorkflowRun> | WorkflowRun): WorkflowRun {
 }
 
 /**
- * 运行列表。含 running 的列表挂 refetchInterval≈15s（对齐 decisions.ts:26），
- * 兜底某次 completed 事件丢失时靠轮询 + 文件对账补齐；全 terminal 态则停轮询省流量。
+ * Run list. Lists containing running runs use refetchInterval ≈15s (aligned with decisions.ts:26),
+ * so a lost completed event is covered by polling + file reconcile; when everything is terminal, polling stops to save traffic.
  */
 export function useWorkflows(filters?: WorkflowFilters) {
   const params = new URLSearchParams();
@@ -135,19 +135,19 @@ export function useWorkflows(filters?: WorkflowFilters) {
         const res = await apiFetch<APIListResponse<WorkflowRun> | WorkflowRun[]>(url);
         return toList(res);
       } catch (err) {
-        // 兜底空列表防硬崩，但必须留痕——静默吞掉 422（limit 超后端上限）曾让
-        // 项目页摘要条整体消失且无从察觉（2026-07-08 实录）。
+        // Fall back to an empty list to avoid a hard crash, but always leave a trace — silently swallowing a 422 (limit above the backend cap) once made
+        // the project page's summary strip disappear entirely with no way to notice (recorded 2026-07-08).
         console.warn('[workflows] list fetch failed, rendering empty:', err);
         return [];
       }
     },
-    // 无 running 时保留 60s 慢轮询兜底：新 run 出现依赖 WS 失效，断连时曾"永不更新"
+    // With nothing running, keep a slow 60s polling fallback: new runs depend on WS invalidation, and a disconnect once caused "never updates"
     refetchInterval: (query) =>
       (query.state.data ?? []).some((r) => r.status === 'running') ? 15000 : 60000,
   });
 }
 
-/** 运行详情。running 态挂轮询兜底完成检测（文件对账在服务端）。 */
+/** Run detail. The running state polls as a completion-detection fallback (file reconcile happens server-side). */
 export function useWorkflow(wfId: string) {
   return useQuery({
     queryKey: ['workflows', wfId],
@@ -163,9 +163,9 @@ export function useWorkflow(wfId: string) {
 }
 
 /**
- * 逐-agent 遥测（供详情表格 / 相位泳道）。
- * live=true（run 处于 running/interrupted）时挂 15s 轮询，对齐 useWorkflows/useWorkflow
- * 的既有节奏；终态停轮询省流量。不做本地秒级 ticker（design §10.8）。
+ * Per-agent telemetry (for the detail table / phase swim lane).
+ * When live=true (run is running/interrupted), poll every 15s, aligned with the existing cadence of useWorkflows/useWorkflow;
+ * terminal states stop polling to save traffic. No local per-second ticker (design §10.8).
  */
 export function useWorkflowAgents(wfId: string, live = false) {
   return useQuery({
@@ -185,7 +185,7 @@ export function useWorkflowAgents(wfId: string, live = false) {
   });
 }
 
-/** 手动对账：把 OS 曾离线期间完成的运行的富数据拉进来（POST /reconcile）。 */
+/** Manual reconcile: pull in the rich data of runs that completed while the OS was offline (POST /reconcile). */
 export function useReconcileWorkflows() {
   const qc = useQueryClient();
   return useMutation({

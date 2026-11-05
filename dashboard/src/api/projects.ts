@@ -63,14 +63,14 @@ export interface SummaryLeader {
   session_id: string;
   current_task: string;
   last_active_at: string | null;
-  /** 15min 窗内有落盘（多会话并列展示时逐条标注） */
+  /** Persisted within the 15min window (annotated per entry when multiple sessions are shown side by side) */
   live?: boolean;
-  /** 主会话上下文水位（fleet 层 P2 观测，见 docs/fleet-layer-design.md §6）。
-   *  探测不可用（DB 兜底路径）时为 null，代表"未知"而非 0。 */
+  /** Main-session context watermark (fleet-layer P2 observability, see docs/fleet-layer-design.md §6).
+   *  Null when probing is unavailable (DB fallback path), meaning "unknown" rather than 0. */
   ctx_tokens?: number | null;
   ctx_window?: number | null;
   ctx_pct?: number | null;
-  /** 本 session 名下 agent 所属团队的 running 任务数 */
+  /** Number of running tasks in the teams of agents under this session */
   in_flight_tasks?: number;
 }
 
@@ -79,9 +79,9 @@ export interface SummaryWorktree {
   branch: string | null;
   /** short HEAD sha */
   head: string;
-  /** 是否有未提交/未跟踪变更 */
+  /** Whether there are uncommitted/untracked changes */
   dirty: boolean;
-  /** 分支头是否已合入主分支；探测失败/无法判定时为 null */
+  /** Whether the branch head has been merged into the main branch; null when probing fails / cannot be determined */
   merged: boolean | null;
   locked: boolean;
   locked_reason?: string | null;
@@ -92,14 +92,14 @@ export interface ProjectSummary {
   active_teams: number;
   pending_tasks: number;
   running_tasks: number;
-  /** 该项目下出现过的去重 CC 会话数（agents.session_id 足迹） */
+  /** Deduplicated count of CC sessions seen under this project (agents.session_id footprint) */
   session_count?: number;
   last_activity_at?: string | null;
-  /** 按 project_id 直出的最新 Leader（不经 team 链——Leader 行可能寄生在跨项目 workflow 队） */
+  /** Latest Leader returned directly by project_id (not via the team chain — a Leader row may live on a cross-project workflow team) */
   leader?: SummaryLeader | null;
-  /** 全部活跃 CC 会话（多会话并行时每 session 一条 CEO-<英文名>），空闲时为最近一条 */
+  /** All active CC sessions (one CEO-<English name> entry per session when running in parallel); the most recent one when idle */
   leaders?: SummaryLeader[] | null;
-  /** 该项目下从属 worktree（按需扫描，不含主 checkout 本身） */
+  /** Worktrees belonging to this project (scanned on demand, excluding the main checkout itself) */
   worktrees?: SummaryWorktree[] | null;
   top_tasks: { title: string; priority: string }[];
 }
