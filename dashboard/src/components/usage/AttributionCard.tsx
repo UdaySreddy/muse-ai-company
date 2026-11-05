@@ -7,13 +7,13 @@ import { useT } from '@/i18n';
 import type { AttributionPayload } from '@/api/usage';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ③ 已归因明细的一张卡（设计 §5.2 ③）。
+// ③ One card of the attributed detail (design §5.2 ③).
 //
-// 四层分列、**不显示合计**：实测 cache_read 占 95.6%，任何"总量"实际上是"缓存
-// 读取量"的同义词，跨模型/跨派工路径的比较会被系统性带偏。要合计由看的人自己加。
+// Four layers split, **no total shown**: cache_read is 95.6% in practice, so any "total" is really a synonym for "cache
+// reads"; comparisons across models / dispatch paths would be systematically skewed. Anyone who wants a total adds it themselves.
 //
-// 数值永远与分母同屏：这不是页面上的自觉，是后端类型层强制带回来的
-// （dispatches_total / unattributed_reasons 与四层同生共死）。
+// Numbers always share the screen with their denominator: that is not page-level discipline — the backend type layer forces them to come back together
+// (dispatches_total / unattributed_reasons live and die with the four layers).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function formatTokenCount(n: number | null | undefined): string {
@@ -30,7 +30,7 @@ export function coverageTone(pct: number): string {
   return 'text-red-600 dark:text-red-400';
 }
 
-/** 四层的显示顺序：output 打头，因为它是唯一与"干了多少活"强相关的一层。 */
+/** Display order of the four layers: output first, because it is the only layer strongly correlated with "how much work was done". */
 function layers(data: AttributionPayload) {
   return [
     { key: 'output', value: data.output_tokens, primary: true },
@@ -44,10 +44,10 @@ export interface AttributionCardProps {
   data: AttributionPayload;
   title: string;
   subtitle?: string;
-  /** 传入即渲染"下钻"按钮 */
+  /** When provided, renders the "drill down" button */
   onDrill?: () => void;
   drillLabel?: string;
-  /** 传入即渲染"取本次实测"按钮（只有 agent 档有意义） */
+  /** When provided, renders the "measure this one" button (only meaningful at the agent level) */
   onProbe?: () => void;
   className?: string;
   compact?: boolean;
@@ -113,7 +113,7 @@ export function AttributionCard({
         </div>
       </div>
 
-      {/* 四层分列。没有第五个格子，也没有一行"合计" —— 这是刻意的空缺。 */}
+      {/* Four layers, split. There is no fifth cell and no "total" row — the gap is deliberate. */}
       <div className={cn('mt-2 grid gap-1.5', compact ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-4')}>
         {layers(data).map((layer) => (
           <div
@@ -137,7 +137,7 @@ export function AttributionCard({
       </div>
       <p className="mt-1 text-[10px] text-muted-foreground">{t.usage.noTotalField}</p>
 
-      {/* 分母与未归因分类：数值永远不许脱离它们单独出现 */}
+      {/* Denominator and unattributed breakdown: numbers must never appear detached from them */}
       <div className="mt-2 border-t pt-2">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
           <span className={cn('font-medium tabular-nums', coverageTone(pct))}>{pct.toFixed(1)}%</span>
@@ -160,7 +160,7 @@ export function AttributionCard({
         )}
         {data.measured_window && (
           <div className="mt-1 text-[10px] text-muted-foreground">
-            {/* 服务端时间串一律走 @/lib/datetime 解析——库里只许有一个时钟（I11） */}
+            {/* Server time strings always go through @/lib/datetime parsing — the repo allows only one clock (I11) */}
             {t.usage.measuredWindow}: {formatDate(data.measured_window[0])} –{' '}
             {formatDate(data.measured_window[1])}
           </div>

@@ -7,23 +7,23 @@ import { useT } from '@/i18n';
 import type { CoverageReport, CoverageRow, DispatchPath, EdgeCoverage } from '@/api/usage';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ① 覆盖率矩阵 —— 第一屏第一块，不可折叠、不可关闭（设计 §5.2 ①）。
+// ① Coverage matrix — the first block of the first screen, not collapsible, not closable (design §5.2 ①).
 //
-// 这是页面的**主体**，不是页眉：先回答"测到了多少"，再谈"测到的是谁烧的"。
-// 三条硬规则写死在这个组件里：
-//   1. 每行带口径列，ctx_last 行与 usage_sum 行必须一眼可分（不同底色 + 徽标）；
-//   2. **没有合计行**——两个口径实测差 5~25 倍，任何跨行合计都是混口径；
-//   3. "设计上不采集"是一个正式取值，不是空白——空白会被读成 bug。
+// This is the page's **body**, not its header: first answer "how much was measured", then "who burned the measured part".
+// Three hard rules are baked into this component:
+//   1. Every row carries a metric column; ctx_last rows and usage_sum rows must be distinguishable at a glance (different background + badge);
+//   2. **No total row** — the two metrics differ 5-25x in practice, so any cross-row total mixes metrics;
+//   3. "Not collected by design" is a formal value, not a blank — a blank would be read as a bug.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 覆盖率闸值配色：低于 50% 是红线区，50~90% 是警戒，90% 以上是健康。 */
+/** Coverage threshold colors: below 50% is the red zone, 50-90% is caution, above 90% is healthy. */
 function coverageTone(pct: number): string {
   if (pct >= 90) return 'text-emerald-600 dark:text-emerald-400';
   if (pct >= 50) return 'text-amber-600 dark:text-amber-400';
   return 'text-red-600 dark:text-red-400';
 }
 
-/** 按口径给整行上底色。视觉分区是这张表最重要的一件事，不是装饰。 */
+/** Tints the whole row by metric. Visual partitioning is the most important thing about this table, not decoration. */
 function rowTone(row: CoverageRow): string {
   if (!row.metric) return 'bg-muted/40';
   if (row.metric === 'ctx_last') return 'bg-amber-50/70 dark:bg-amber-950/20';
@@ -35,13 +35,13 @@ function pctText(attributed: number, total: number): string {
   return `${((attributed / total) * 100).toFixed(1)}%`;
 }
 
-/** 一行的三个数（分母为 null 时前两个不适用）。表格与窄屏卡片共用，避免两处各算一遍。 */
+/** A row's three numbers (the first two do not apply when the denominator is null). Shared by the table and the narrow-screen cards so the two never compute separately. */
 function rowNumbers(row: CoverageRow) {
   const total = row.dispatches_total ?? 0;
   const attributed = row.dispatches_attributed ?? 0;
   return {
-    // null 分母 = 这条路径上"测到多少"这个问题不适用。渲染成正式取值而不是空白：
-    // 空白会被读成 bug，0 会被读成"一次都没测到"。
+    // A null denominator = the question "how much was measured" does not apply on this path. Render it as a formal value, not a blank:
+    // a blank would be read as a bug, and 0 would be read as "never measured once".
     notCollected: row.dispatches_total === null,
     total,
     attributed,
@@ -51,7 +51,7 @@ function rowNumbers(row: CoverageRow) {
 
 export interface CoverageMatrixProps {
   report: CoverageReport;
-  /** 点击某一行的未归因数字时，把抽屉切到那条路径 */
+  /** When a row's unattributed number is clicked, switch the drawer to that path */
   onFocusPath?: (path: DispatchPath) => void;
 }
 
@@ -65,8 +65,8 @@ export function CoverageMatrix({ report, onFocusPath }: CoverageMatrixProps) {
     tool_call: t.usage.pathToolCall,
   };
 
-  // 最窄的一跳 = 端到端归因的天花板。R5 要求它与覆盖率同屏披露，否则一个漂亮的
-  // 总覆盖率会把真正的瓶颈藏起来（实测瓶颈从来不在 token 采集，而在 agent→task）。
+  // The narrowest hop = the ceiling of end-to-end attribution. R5 requires it to be disclosed on the same screen as coverage; otherwise a pretty
+  // overall coverage would hide the real bottleneck (in practice the bottleneck is never token collection, but agent->task).
   const narrowest = report.hops.reduce<EdgeCoverage | null>((worst, hop) => {
     if (hop.required <= 0) return worst;
     if (!worst) return hop;
@@ -80,8 +80,8 @@ export function CoverageMatrix({ report, onFocusPath }: CoverageMatrixProps) {
         <CardDescription>{t.usage.matrixDesc}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* 窄屏：堆叠卡片。表格在 375px 下要横向滚动才看得到数字，而这一块是页面的
-            主体 —— 把主体藏进一个没有提示的横滚容器里，等于第一屏什么都没说。 */}
+        {/* Narrow screens: stacked cards. At 375px the table needs horizontal scrolling to reveal the numbers, and this block is the page's
+            body — hiding the body inside an unhinted horizontal-scroll container means the first screen says nothing. */}
         <div className="space-y-2 md:hidden">
           {report.rows.map((row) => {
             const { notCollected, total, attributed, unattributed } = rowNumbers(row);
@@ -209,7 +209,7 @@ export function CoverageMatrix({ report, onFocusPath }: CoverageMatrixProps) {
           </Table>
         </div>
 
-        {/* 合计行的位置刻意留白说明——不写这句，看的人只会以为忘了加 */}
+        {/* The total row's slot deliberately carries this note — without it, readers would just assume it was forgotten */}
         <p className="rounded border border-dashed px-3 py-2 text-xs text-muted-foreground">
           {t.usage.noTotalRow}
         </p>

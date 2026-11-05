@@ -10,14 +10,14 @@ import { useT } from '@/i18n';
 import { useSingleProbe } from '@/api/usage';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ④ 单次实测卡（对外样例专用通道）—— 设计 §5.2 ④。
+// ④ Single-measurement card (dedicated channel for external examples) — design §5.2 ④.
 //
-// 这张卡**显式豁免于覆盖率闸**：它是单次实测定真，不是全量台账，两条链解耦。
-// 但豁免的代价必须落实 —— 数据只能来自 `/api/usage/probe`（现场解析一份
-// transcript），禁止从聚合视图取数。否则豁免就成了绕过闸门的后门：一个没有分母的
-// 数字，只要挂上"单次实测"四个字就能上页面。
+// This card is **explicitly exempt from the coverage gate**: it verifies one measurement, not a full ledger; the two chains are decoupled.
+// But the price of the exemption must be enforced — data may only come from `/api/usage/probe` (live-parsing one
+// transcript); taking numbers from the aggregate view is forbidden. Otherwise the exemption becomes a back door around the gate: a number with no denominator
+// could reach the page just by wearing the "single measurement" label.
 //
-// 因此本组件只 import 了 useSingleProbe 一个数据源。要验证这条纪律，看 import 即可。
+// So this component imports exactly one data source, useSingleProbe. To verify the discipline, read the imports.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function fmtDuration(ms: number | null): string {
@@ -67,7 +67,7 @@ export function SingleProbeCard({ agentId, onAgentIdChange }: SingleProbeCardPro
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
           {t.usage.probeTitle}
-          {/* 固定印章：这一行不随数据变化、不可关闭 */}
+          {/* Fixed stamp: this line does not change with the data and cannot be dismissed */}
           <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[11px] font-normal">
             {t.usage.probeStamp}
           </span>
@@ -143,7 +143,7 @@ export function SingleProbeCard({ agentId, onAgentIdChange }: SingleProbeCardPro
                 </div>
               ))}
             </div>
-            {/* 与归因卡同样的空缺：四层分列，没有第五个格子 */}
+            {/* The same deliberate gap as the attribution cards: four layers split, no fifth cell */}
             <p className="text-[10px] text-muted-foreground">{t.usage.noTotalField}</p>
 
             <div className="grid gap-2 text-xs sm:grid-cols-3">

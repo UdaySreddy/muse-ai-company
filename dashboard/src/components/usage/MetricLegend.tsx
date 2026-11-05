@@ -4,11 +4,11 @@ import { useT } from '@/i18n';
 import type { MetricLabel } from '@/api/usage';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ⑤ 口径说明（页脚常驻）—— 设计 §5.2 ⑤。
+// ⑤ Metric definitions (permanent footer) — design §5.2 ⑤.
 //
-// 写在页面里而不是文档里，理由很直白：看数字的人不会去翻文档。三个口径的中文
-// 定义与 src/aiteam/types.py 的 TOKEN_METRIC_SPECS 同源（那份常量存在的理由就是
-// "同一段解释别在页面、文档、注释里各写一版然后各自漂移"），改一处请两处同改。
+// It lives on the page rather than in docs for a plain reason: people reading numbers will not go dig through documentation. The three metrics'
+// definitions share one source with TOKEN_METRIC_SPECS in src/aiteam/types.py (that constant exists precisely so that
+// "the same explanation is not written once each in the page, the docs and the comments, then drifts apart"); change one place, change both.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function MetricLegend() {

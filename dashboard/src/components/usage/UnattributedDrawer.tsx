@@ -7,11 +7,11 @@ import { useT } from '@/i18n';
 import type { CoverageReport, DispatchPath, UnattributedCode, UnattributedSamples } from '@/api/usage';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ② 未归因抽屉 —— 紧贴矩阵，默认展开（设计 §5.2 ②）。
+// ② Unattributed drawer — directly below the matrix, expanded by default (design §5.2 ②).
 //
-// 存在的唯一理由：把"覆盖率 78%"变成一句**可行动**的话。看完这一块，用户应当
-// 知道剩下的 22% 能不能救、怎么救。所以"救不回来"与"还没去救"必须分开标 ——
-// 把前者并进后者，这一块就失去全部价值。
+// Its sole reason to exist: turn "coverage 78%" into an **actionable** statement. After reading this block, the user should
+// know whether the remaining 22% can be recovered, and how. So "not recoverable" and "not yet recovered" must be labelled separately —
+// merging the former into the latter would strip this block of all its value.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Recoverability = 'recoverable' | 'unrecoverable' | 'na';
@@ -42,7 +42,7 @@ export interface UnattributedDrawerProps {
 
 export function UnattributedDrawer({ report, samples, path, onPathChange }: UnattributedDrawerProps) {
   const t = useT();
-  // 默认全部展开：这一块的价值在于被读到，折叠起来等于没有。
+  // Expanded by default: this block's value lies in being read; collapsed, it might as well not exist.
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const label: Record<UnattributedCode, { name: string; hint: string }> = {
@@ -70,14 +70,14 @@ export function UnattributedDrawer({ report, samples, path, onPathChange }: Unat
 
   const row = report.rows.find((r) => r.path === path);
   const counts = { ...(row?.unattributed_reasons ?? {}) } as Record<string, number>;
-  // by_design 描述的是**工具调用级**（活动记录无 token 字段），与派工不是同一个
-  // 单位，所以它绝不进后端那个与分母同单位的 dict。但它必须在这一块**有一行** ——
-  // 否则"设计上不采集"这件事只在矩阵里出现一次，看的人会以为是漏了。
+  // by_design describes the **tool-call level** (activity records have no token fields), which is not the same unit as a dispatch.
+  // So it never enters the backend dict that shares the denominator's unit. But it must **have a row** in this block —
+  // otherwise "not collected by design" appears only once, in the matrix, and readers would assume it was an omission.
   const toolCallRow = report.rows.find((r) => r.path === 'tool_call');
   const codes = Object.keys(counts) as UnattributedCode[];
   const total = codes.reduce((n, code) => n + (counts[code] ?? 0), 0);
 
-  // 只有 agents 表上的两条路径能下钻到样例行（另两条不是 agents 行）
+  // Only the two paths on the agents table can drill down to sample rows (the other two are not agents rows)
   const drillable = path === 'subagent' || path === 'leader_session';
 
   return (
@@ -187,7 +187,7 @@ export function UnattributedDrawer({ report, samples, path, onPathChange }: Unat
           );
         })}
 
-        {/* by_design：一行正式取值，没有样例可点开——它数的是工具调用不是派工 */}
+        {/* by_design: one formal-value row with no samples to open — it counts tool calls, not dispatches */}
         {toolCallRow && (
           <div className="rounded border border-dashed px-3 py-2">
             <div className="flex flex-wrap items-center gap-2">

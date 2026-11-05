@@ -13,18 +13,18 @@ import {
 } from '@/api/usage';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ③ 已归因明细（可下钻）—— 设计 §5.2 ③。
+// ③ Attributed detail (drillable) — design §5.2 ③.
 //
-// 两条纪律落在结构上，不是落在文案上：
+// Two disciplines are enforced by structure, not by copy:
 //
-// 1. **主会话与子 agent 分列、默认不合并。** 实测单个主会话的量级远超全部子 agent
-//    之和；混进一张榜里，子 agent 的归因结果会被彻底淹没。这里做成两块并排的独立
-//    面板，各自有各自的下钻状态，页面上不存在任何一处把两者相加的地方。
-// 2. **每一级把子项各渲染成一张卡，按 output_tokens 降序。** 排序键刻意不是四层
-//    之和：cache_read 占 95.6%，按和排序等于按缓存读取量排序。
+// 1. **Leader sessions and sub-agents are listed separately and not merged by default.** A single leader session measurably dwarfs all sub-agents
+//    combined; mixed into one ranking, the sub-agents' attribution results would be completely drowned out. So this is built as two side-by-side independent
+//    panels, each with its own drill state; nowhere on the page are the two ever added together.
+// 2. **Each level renders every child as its own card, sorted by output_tokens descending.** The sort key is deliberately not the sum of the four layers:
+//    cache_read is 95.6%, so sorting by the sum equals sorting by cache reads.
 //
-// 候选清单本身（/usage/scopes）不带任何用量；用量是逐个 scope 单独查回来的，每份
-// 都自带分母与未归因分类。所以这不是"一张没有分母的排行榜"。
+// The candidate list itself (/usage/scopes) carries no usage; usage is queried back per scope, and every result
+// carries its own denominator and unattributed breakdown. So this is not "a ranking with no denominator".
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CHILD_OF: Record<string, ScopeLevel | null> = {
@@ -72,7 +72,7 @@ function PopulationPanel({
   const current = trail.at(-1) ?? null;
   const childLevel = CHILD_OF[current?.scope ?? 'root'] ?? null;
 
-  // 当前这一级的汇总卡。scope_id 留空 = 不按该维度过滤（全库），后端按此约定。
+  // The summary card for the current level. An empty scope_id = no filtering on that dimension (whole library); the backend follows this convention.
   const summary = useAttribution(current?.scope ?? 'project', current?.scopeId ?? '', path, days);
   const candidates = useScopeCandidates(
     childLevel ?? 'project',
@@ -92,7 +92,7 @@ function PopulationPanel({
       data: childResults[i]?.data,
     }))
     .filter((c) => c.data)
-    // 默认排序键 = output_tokens（唯一与"干了多少活"强相关的一层），不是四层之和
+    // Default sort key = output_tokens (the only layer strongly correlated with "how much work was done"), not the sum of the four layers
     .sort((a, b) => (b.data?.output_tokens ?? 0) - (a.data?.output_tokens ?? 0));
 
   return (
@@ -174,7 +174,7 @@ function PopulationPanel({
   );
 }
 
-/** task 级旁支 —— 独立卡片，标题里必须印出它自己的真实覆盖率。 */
+/** Task-level side branch — a standalone card whose title must print its own real coverage. */
 function TaskAside({ days, coveragePct }: { days: number; coveragePct: string }) {
   const t = useT();
   const candidates = useScopeCandidates('task', '', '', 'subagent', days, CHILD_LIMIT);
@@ -208,7 +208,7 @@ function TaskAside({ days, coveragePct }: { days: number; coveragePct: string })
 
 export interface AttributionDrillProps {
   days: number;
-  /** agent→task 跳的真实可解析率，原样印在旁支卡标题里 */
+  /** The real resolvability rate of the agent->task hop, printed verbatim in the side-branch card title */
   taskCoveragePct: string;
   onProbe: (agentId: string) => void;
   className?: string;
@@ -223,7 +223,7 @@ export function AttributionDrill({ days, taskCoveragePct, onProbe, className }: 
         <CardDescription>{t.usage.detailDesc}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* 分列呈现：两块并排，各自独立下钻，页面上不存在把两者相加的地方 */}
+        {/* Separate presentation: two side-by-side panels, each drilling independently; nowhere on the page are the two added together */}
         <div className="grid gap-3 xl:grid-cols-2">
           <PopulationPanel path="subagent" days={days} onProbe={onProbe} />
           <PopulationPanel path="leader_session" days={days} onProbe={onProbe} />
