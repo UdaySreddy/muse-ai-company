@@ -29,18 +29,20 @@ docs/*
 !docs/screenshots/
 # docs/architecture.md is referenced by CLAUDE.md — keep it in the repo
 !docs/architecture.md
-# referenced by ecosystem_deep_reviewer.py dispatch prompt — hook 段位映射的真相源
+# referenced by ecosystem_deep_reviewer.py dispatch prompt — the source of truth for the hook stage mapping
 !docs/ecosystem-deep-review-template.md
-# referenced by CLAUDE.md — 记忆系统 v2 规格（memory_add/reconcile 的唯一规格来源）
+# referenced by CLAUDE.md — the memory system v2 spec (the sole spec source for memory_add/reconcile)
 !docs/memory-v2-design.md
-# 工具渐进式加载 P1/P2/P3 唯一规格来源（CHANGELOG 声明 checked in）
+# Sole spec source for progressive tool loading P1/P2/P3 (CHANGELOG declares it checked in)
 !docs/tool-loading-design.md
-# 分发改造 P1 的 Windows 设备验证 runbook——须随仓库到另一设备实测
+# Distribution refactor P1 Windows device verification runbook — must travel with the repo to be tested on another device
 !docs/dist-refactor-p1-windows-verification.md
-# 时钟约定的唯一规格来源（aiteam/clock.py 与平移脚本都指回它）
+# Sole spec source for the clock convention (aiteam/clock.py and the shift script both point back to it)
 !docs/utc-unification-design.md
-# token 用量归因 v1 的唯一规格来源（口径定义/覆盖率分母/闸值都指回它）
+# Sole spec source for token usage attribution v1 (metric definitions / coverage denominator / gate thresholds all point back to it)
 !docs/token-attribution-v1-design.md
+# Public usage docs for Standalone mode (no Claude Code) — distributed together with the feature
+!docs/standalone-mode.md
 
 # Node (Dashboard)
 dashboard/node_modules/
@@ -96,8 +98,8 @@ aiteam.db
 *.db-shm
 *.db-wal
 
-# Codex CLI 过程文件（2026-07-27）：.codex/ 是 Codex 的项目配置目录，
-# AGENTS.md 是其读取的 CLAUDE.md 等价副本——均为本机开发过程产物，非 plugin 产品面。
-# 注意与产品本体区分：plugin/**、.claude/agents/** 是交付物，已刻意入库。
+# Codex CLI process files (2026-07-27): .codex/ is the Codex project config directory,
+# AGENTS.md is its CLAUDE.md-equivalent copy read by Codex — both are local development-process artifacts, not part of the plugin product surface.
+# Note the distinction from the product itself: plugin/** and .claude/agents/** are deliverables and are deliberately committed.
 .codex/
 /AGENTS.md

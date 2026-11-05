@@ -420,13 +420,13 @@ The self-built pipeline is deliberately deprecated (it duplicated CC's built-in 
 
 - **Default model `claude-opus-4-6` → `claude-opus-4-7`** (`5a0f9a2`) — 10 backend defaults + 4 test assertions refreshed; member-edit Select refreshed to Opus 4.7 / Sonnet 4.6 / Haiku 4.5; removed the non-functional "default LLM model" settings dropdown (its `handleSave` never persisted).
 - **Deprecated heuristic fields removed from the wire** (`e1b3ddd`) — the API no longer returns `relevance_category` / `relevance_score`; the frontend drops "relevance X/10" and "active-set rank". Schema columns are kept (reads/writes stopped, no migration risk).
-- **Project status wording** — "关闭" → "空闲" (Inactive → Idle) (`6cb4914`).
+- **Project status wording** — "Closed" → "Idle" (Inactive → Idle) (`6cb4914`).
 
 ### Fixed
 
 - **Old-repo rescan + tick budget + status API semantics** (`4e317f2`) — the shallow-queue candidate check now uses `pushed_at > last_shallow_refreshed_at`; the skip decision uses `stage_status` instead of `status` (678 `shallow_done` rows had been wrongly skipped); `tick` dispatches all candidates at once (concurrency enforced at worker-claim, no more 15-item budget); `queue_status` reports accurate `pending / in_progress / done / failed`. Verified `tick dispatched=134 / skipped=0`.
 - **`context_tracker` default window is now 1M** (`af495c7`) — CC transcripts strip the `[1m]` suffix, so on a fresh machine with no 1M history the fallback used 200K and reported 17% real usage as 85.3%, firing constant false CONTEXT WARNINGs. `DEFAULT_CONTEXT_SIZE` 200K → 1M (the `>200K` fallback branch removed); the `CLAUDE_CONTEXT_SIZE` env override is retained.
-- **MCP `X-Project-Dir` latin-1 header encoding** (`af495c7`) — a Chinese project path (e.g. `AI团队框架`) broke urllib's latin-1 header encoding, making `report_save` / `team_list` unusable in Chinese environments; the value is now percent-encoded on send (`urllib.parse.quote`) and decoded on receive.
+- **MCP `X-Project-Dir` latin-1 header encoding** (`af495c7`) — a Chinese project path (e.g. `AI-team-framework` written in Chinese characters) broke urllib's latin-1 header encoding, making `report_save` / `team_list` unusable in Chinese environments; the value is now percent-encoded on send (`urllib.parse.quote`) and decoded on receive.
 - **`os_restart_api` spawn fully decoupled from MCP stdio** (`3e7d320`) — spawning from an MCP tool-call context inherited the busy MCP stdio pipe and hung **before import** (9MB, never progressing). Fixed with `stdin=DEVNULL`, `stderr` → `%TEMP%/aiteam-api-restart.log` (keeps diagnosability), `close_fds`, and `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` on Windows.
 - **Project-liveness clock aligned to naive-local-time** (`cfa6861`) — agent timestamps are written naive-local everywhere (`datetime.now()` in `hook_translator` / `StateReaper`), but liveness compared against UTC; the constant local-UTC offset (measured 4h) meant the 15-min threshold was never met and projects showed "idle" forever. Comparison and serialization now use the same local clock.
 
@@ -468,7 +468,7 @@ Triggered by a real incident: on **2026-05-08 five shallow-summary agents** disp
 - **New cross-project guard on `PreToolUse:Agent`** (`src/aiteam/hooks/workflow_reminder.py`) — when a dispatched team's `project_id` ≠ the current project, the hook hard-blocks with `exit 2`.
 - **Stage 0 dual-channel writeback** — shallow-summary results write back via MCP primary + SendMessage fallback, so a flaky MCP tool surface no longer loses the whole batch.
 - **`research_count` semantics fixed** — `_build_stage_map` counts only `architecture_done`+ rows, so a shallow summary no longer inflates the deep-review count; `apply_summary` no longer writes `status='completed'` (shallow done ≠ whole review done).
-- **Ecosystem UI refactor** — "深扫摘要 / deep-scan summary" renamed to "评审记录 / review record" (the `ecosystem_deep_reviews` table carries all 4 stages); `ReviewCard` renders by `stage_status`; a `parseAsUtc` helper fixes a naive-datetime timezone bug in the elapsed-time display; new `RecentScanRunsBar`.
+- **Ecosystem UI refactor** — "deep-scan summary" renamed to "review record" (the `ecosystem_deep_reviews` table carries all 4 stages); `ReviewCard` renders by `stage_status`; a `parseAsUtc` helper fixes a naive-datetime timezone bug in the elapsed-time display; new `RecentScanRunsBar`.
 
 **Known issue**: this cross-project guard was added to `src/aiteam/hooks/workflow_reminder.py` only — the `plugin/hooks/` distribution copy does **not** yet carry `_check_team_cross_project`, so plugin users do not get the hard-block until that copy is backfilled.
 
@@ -517,7 +517,7 @@ Refactored the v1.4.0 "single-pass 5-section deep-review" into a **4-stage progr
 ### Added — Frontend stage funnel UI (Stage E)
 
 - List page: stage colored badges (queued/shallow_done/architecture_done/debated/referenced/integrated/_failed) + 3 tabs (active/full/deleted)
-- Detail page: new "研究历程" timeline tab showing stage progression + agent outputs + `shallow_summary_history` snapshots
+- Detail page: new "Research history" timeline tab showing stage progression + agent outputs + `shallow_summary_history` snapshots
 - New `/ecosystem/research` candidate-filtering page: input research goal → tags-based candidate list with shallow_summary preview → multi-select to trigger Stage 1 → finalists trigger Stage 2
 - Project settings tab on project detail page: 8 fields (min_stars / top_n / refresh_interval_days / focus_topics / focus_languages / shallow_concurrency / deep_concurrency / auto_shallow_on_archive)
 - Failed repos: red badge + "Retry now" button (calls `POST /api/ecosystem/profiles/{id}/retry`)
@@ -614,7 +614,7 @@ A complete project-isolated platform for discovering, tagging, and deep-reviewin
 
 ### Frontend bug fix (Stage K2)
 
-- **Detail page `深度档案区` placeholder removed** — Previously the detail page hardcoded "TODO: Stage E v2 API" placeholder text even though the v2 API (`/profiles/{name}/full`) existed since Stage E. `useEcosystemRepoFull` hook now consumes v2 directly with UUID → full_name resolution and path-segment encoding for slashes. v2 failure gracefully degrades to v1 list-based fallback.
+- **Detail page deep-profile placeholder removed** — Previously the detail page hardcoded "TODO: Stage E v2 API" placeholder text even though the v2 API (`/profiles/{name}/full`) existed since Stage E. `useEcosystemRepoFull` hook now consumes v2 directly with UUID → full_name resolution and path-segment encoding for slashes. v2 failure gracefully degrades to v1 list-based fallback.
 
 ### Changed
 
@@ -681,7 +681,7 @@ A complete project-isolated platform for discovering, tagging, and deep-reviewin
   - New `POST /api/context/resolve` endpoint with exact/prefix/auto-create matching strategies
   - `session_bootstrap.py` detects unregistered directories and injects registration prompt to Leader (non-blocking)
   - New `dismiss_project_registration(cwd)` MCP tool — users can opt out; persisted to `~/.claude/data/ai-team-os/dismissed_projects.json`
-  - Fixes the bug where new project directories (e.g., `靖安笔试`, `repo-insight`) were never registered until manually triggered
+  - Fixes the bug where new project directories (e.g., `Jing'an-written-exam`, `repo-insight`) were never registered until manually triggered
 
 ### Changed
 - **Task wall auto-sync in `workflow_reminder.py`**

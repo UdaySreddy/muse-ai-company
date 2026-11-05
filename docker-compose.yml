@@ -1,5 +1,5 @@
-# AI Team OS — 开发环境 Docker Compose
-# 用法: docker compose up -d
+# AI Team OS — development environment Docker Compose
+# Usage: docker compose up -d
 
 services:
   db:

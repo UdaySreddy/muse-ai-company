@@ -1,4 +1,4 @@
-[English](README.md) | [中文](README.zh-CN.md)
+[English](README.md)
 
 # AI Team OS
 
@@ -18,7 +18,7 @@
 [![MCP](https://img.shields.io/badge/MCP-Protocol-orange)](https://modelcontextprotocol.io)
 [![Stars](https://img.shields.io/github/stars/CronusL-1141/AI-company?style=flat)](https://github.com/CronusL-1141/AI-company)
 
-**113** MCP tools · **208** REST endpoints · **23** dashboard pages · **2,307** tests · **25** agent templates · **42** ecosystem research tools · **14** machine-checked invariants
+**113** MCP tools · **208** REST endpoints · **23** dashboard pages · **2,307** tests · **26** agent templates · **42** ecosystem research tools · **14** machine-checked invariants
 
 ---
 
@@ -168,7 +168,7 @@ Surfaces: REST `/api/models/{available,default}` · MCP `model_config_get` / `mo
 
 Not a single Agent. A structured organization:
 
-- **25 professional Agent templates** (23 base + 2 debate roles) with recommendation engine — Engineering, Testing, Research, Management — ready out of the box
+- **26 professional Agent templates** (24 base + 2 debate roles) with recommendation engine — Engineering, Testing, Research, Management — ready out of the box
 - **Department grouping** — Engineering / QA / Research with cross-team coordination
 - **Channel communication**: `team:` / `project:` / `global` channels with `@mention` support
 - **Debate mode**: 4-round structured debate (Advocate→Critic→Response→Judge) via `debate_start` / `debate_code_review`
@@ -240,7 +240,7 @@ The system that builds your projects... built itself. With receipts.
 | **Workflow Observability** | Swimlane timeline + per-agent telemetry + offline reconcile over CC Workflow | None | None | Graph state only | None |
 | **State Source** | File truth — transcripts / journals read directly | Agent self-report | Agent self-report | In-process state | Black box |
 | **Rule System** | 4-layer defense (48+ rules) + behavioral enforcement | Limited | Limited | None | Limited |
-| **Agent Templates** | 25 ready-to-use + recommendation engine | Built-in roles | Built-in roles | None | None |
+| **Agent Templates** | 26 ready-to-use + recommendation engine | Built-in roles | Built-in roles | None | None |
 | **Dashboard** | React 19 visualization | Commercial tier | None | None | Yes |
 | **Open Source** | MIT | Apache 2.0 | MIT | MIT | No |
 | **Claude Code Native** | Yes, deep integration | No | No | No | No |
@@ -259,7 +259,7 @@ The system that builds your projects... built itself. With receipts.
 │            ┌────────────┼────────────┐                          │
 │            ▼            ▼            ▼                          │
 │       Agent Templates  Task Wall  Meeting System                 │
-│      (25 roles)       auto-assign  (8 templates)                 │
+│      (26 roles)       auto-assign  (8 templates)                 │
 │            │            │            │                          │
 │            └────────────┼────────────┘                          │
 │                         ▼                                       │
@@ -448,6 +448,28 @@ npm install
 npm run dev
 # Visit http://localhost:5173
 ```
+
+---
+
+## Standalone Mode (No Claude Code)
+
+The API, dashboard, task wall and task execution also run **without Claude
+Code**: execution calls a direct LLM API through a provider factory, and a
+built-in company team — CEO (Leader) + COO + CTO + engineers + QA — is
+created on first run.
+
+```bash
+pip install 'ai-team-os[langgraph]'
+
+aiteam standalone org                       # show the company org chart
+aiteam standalone run --task "Draft a launch plan" --provider fake   # offline smoke run
+export ANTHROPIC_API_KEY=sk-ant-...
+aiteam standalone run --task "Draft a launch plan" --provider anthropic
+```
+
+See [docs/standalone-mode.md](docs/standalone-mode.md) for providers
+(`anthropic` / `openai` / `fake`), the org mapping, and which features remain
+Claude Code-only by design (hooks, CC session fleet, CC workflow ingest).
 
 ---
 
@@ -718,7 +740,7 @@ The single largest tool family — the full research funnel from scan to integra
 
 ## Agent Template Library
 
-25 ready-to-use professional Agent templates with recommendation engine, covering a complete software engineering team. Templates are installed to `plugin/agents/` (project-level) and `~/.claude/agents/` (global, available across all projects).
+26 ready-to-use professional Agent templates with recommendation engine, covering a complete software engineering team. Templates are installed to `plugin/agents/` (project-level) and `~/.claude/agents/` (global, available across all projects).
 
 ### Engineering (13 templates)
 
@@ -755,10 +777,11 @@ The single largest tool family — the full research funnel from scan to integra
 | `support-technical-writer` | Technical Writer | API docs, user guides |
 | `support-meeting-facilitator` | Meeting Facilitator | Structured discussion, decision facilitation |
 
-### Management (2 templates)
+### Management (3 templates)
 
 | Template | Role | Use Case |
 |----------|------|----------|
+| `management-chief-operating-officer` | Chief Operating Officer (COO) | Operations, cross-team coordination, delivery tracking |
 | `management-tech-lead` | Tech Lead | Technical decisions, team coordination |
 | `management-project-manager` | Project Manager | Schedule management, risk tracking |
 
@@ -788,7 +811,7 @@ The single largest tool family — the full research funnel from scan to integra
 - [x] Living Team Memory (Knowledge query + Experience sharing)
 - [x] What-If Analyzer (Multi-option comparison)
 - [x] 8 structured meeting templates with keyword auto-select
-- [x] 25 professional Agent templates (23 base + 2 debate roles) with recommendation engine
+- [x] 26 professional Agent templates (24 base + 2 debate roles) with recommendation engine
 - [x] 4-layer defense rule system (48+ rules) + behavioral enforcement
 - [x] Dashboard Command Center (React 19) — 23 pages including the `/workflows` swimlane, Workflow detail, the Ecosystem suite, `/usage` token attribution, and Settings with model governance
 - [x] 113 MCP tools across 16 modules
@@ -858,7 +881,7 @@ ai-team-os/
 │   ├── hooks/         — CC Hook scripts (15 lifecycle events)
 │   └── types.py       — Shared type definitions
 ├── plugin/
-│   ├── agents/        — 25 Agent templates (.md)
+│   ├── agents/        — 26 Agent templates (.md)
 │   └── .claude-plugin/ — Plugin manifest
 ├── dashboard/         — React 19 frontend (23 pages)
 ├── scripts/           — preflight + machine-checked invariants (incl. README number check)

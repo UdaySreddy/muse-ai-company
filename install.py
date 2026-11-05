@@ -5,8 +5,9 @@ import shutil
 import subprocess
 import sys
 
-# 版本门卫必须先于任何含 PEP 604 注解（X | Y）的 def——Python <3.10 在 def 时
-# 即抛 TypeError，放在 main() 里的检查永远执行不到（macOS 自带 3.9.6 首当其冲）。
+# The version guard must come before any def containing PEP 604 annotations (X | Y) — on Python <3.10, a def raises
+# TypeError at definition time, so a check placed in main() would never execute (macOS's bundled 3.9.6 is first in the
+# firing line).
 if sys.version_info < (3, 11):  # noqa: UP036
     _v = ".".join(str(x) for x in sys.version_info[:3])
     print(f"[FAIL] Python 3.11+ required, got {_v} - try: python3 install.py")
@@ -92,17 +93,22 @@ HOOK_SURFACE: list[tuple[str, str, list[tuple[str, str, int]]]] = [
     ("PostToolUse", "mcp__ai-team-os__meeting_conclude", [
         ("meeting_ecosystem_writeback.py", "", 5),
     ]),
-    # 完成时点记账（Q1 裁定 C+B）：CC 任务在**完成**时才上 OS 墙，且只镜像有
-    # owner 或有依赖链的——没完成的任务对项目账目没有意义，无主无依赖的是会话
-    # 内私人清单。
-    # send_event 并挂在这里是桥的遥测腿:桥此前挂在一个没有任何遥测的事件上,
-    # "触发过几次、按 owner/依赖链滤掉几条"全无记录,连桥是不是活的都判断不了。
+    # Completion-time accounting (Q1 ruling C+B): CC tasks only go on the OS wall when they **complete**, and only
+    # mirror those with
+    # an owner or a dependency chain — an unfinished task means nothing to the project accounts, and one with no owner
+    # and no dependencies is a private
+    # in-session checklist.
+    # send_event also hangs here as the bridge's telemetry leg: the bridge previously hung on an event with no telemetry
+    # at all,
+    # so "how many times it fired, how many were filtered out by owner/dependency chain" was entirely unrecorded, and it
+    # was impossible even to tell whether the bridge was alive.
     ("TaskCompleted", "", [
         ("cc_task_bridge.py", "", 5),
         ("send_event.py", "TaskCompleted", 5),
     ]),
-    # TaskCreated 只观测不上墙——Q1 的"完成时点记账"裁定不动,这里补的是分母:
-    # 没有建任务的计数,就算不出桥滤掉了多大比例。
+    # TaskCreated is observation-only and does not go on the wall — Q1's "completion-time accounting" ruling is
+    # untouched; what this adds is the denominator:
+    # without a count of tasks created, the proportion the bridge filtered out cannot be computed.
     ("TaskCreated", "", [
         ("send_event.py", "TaskCreated", 5),
     ]),
@@ -127,15 +133,17 @@ HOOK_SURFACE: list[tuple[str, str, list[tuple[str, str, int]]]] = [
     ("PreCompact", "", [
         ("pre_compact_save.py", "", 10),
     ]),
-    # 与 PreCompact 配对：压缩真的完成了（PreCompact 触发后压缩仍可能取消），
-    # 检查点据此收口。
+    # Paired with PreCompact: compaction really completed (compaction can still be cancelled after PreCompact fires),
+    # and the checkpoint closes out on that basis.
     ("PostCompact", "", [
         ("send_event.py", "PostCompact", 5),
     ]),
-    # 隔离工作区的消失。只挂 WorktreeRemove（观测型）——WorktreeCreate 是
-    # CC 的"接管型"hook：注册即替代默认 git 创建逻辑，必须返回 worktree 路径，
-    # 无旁观模式；挂观测钩会让全机所有 isolation:worktree 派发失败
-    # （2026-07-28 Wenge 现场事故）。创建侧观测走 worktree_probe 兜底。
+    # The disappearance of isolated workspaces. Only hang WorktreeRemove (observation type) — WorktreeCreate is
+    # a CC "takeover-type" hook: registering it replaces the default git creation logic, it must return the worktree
+    # path,
+    # and there is no bystander mode; hanging an observation hook on it would make every isolation:worktree dispatch on
+    # the machine fail
+    # (the 2026-07-28 Wenge on-site incident). Creation-side observation goes through the worktree_probe fallback.
     ("WorktreeRemove", "", [
         ("send_event.py", "WorktreeRemove", 5),
     ]),
@@ -660,7 +668,7 @@ def main():
     project_root = Path(__file__).resolve().parent
 
     # 1. Check Python version
-    if sys.version_info < (3, 11):  # noqa: UP036 — 运行时门卫：低版本环境需友好报错
+    if sys.version_info < (3, 11):  # noqa: UP036 — runtime guard: low-version environments need a friendly error
         print(f"[FAIL] Python 3.11+ required. Current: {sys.version}")
         sys.exit(1)
     print(f"[OK] Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
@@ -685,8 +693,9 @@ def main():
     except SystemExit:
         print("[WARN] pip install -e . failed — trying direct dependency install...")
         try:
-            # fastmcp 必须带上界：4.0 移除 3.x 兼容 shim，裸名会把新装机器直接
-            # 拉到不兼容的大版本（同 pyproject.toml / plugin/requirements.txt）。
+            # fastmcp must carry an upper bound: 4.0 removes the 3.x compatibility shim, and a bare name would pull a
+            # newly installed machine straight
+            # to an incompatible major version (same as pyproject.toml / plugin/requirements.txt).
             run([sys.executable, "-m", "pip", "install",
                  "fastapi", "uvicorn", "sqlalchemy", "aiosqlite",
                  "pydantic", "pydantic-settings", "pyyaml", "anyio",
