@@ -1,6 +1,6 @@
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
-# 上界与 pyproject.toml 同源：fastmcp 4.0 移除 3.x 兼容 shim，且无 venv 隔离兜底
+# Upper bound kept in sync with pyproject.toml: fastmcp 4.0 removes the 3.x compatibility shim, and there is no venv isolation fallback
 fastmcp>=3.4.5,<4
 langgraph>=0.3.0
 langchain-anthropic>=0.3.0
