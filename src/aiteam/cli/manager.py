@@ -58,5 +58,6 @@ def get_manager() -> Any:
 
     except ImportError as e:
         raise RuntimeError(
-            f"依赖模块尚未实现: {e}。请确保 storage、memory、orchestrator 模块已正确安装。"
+            f"Dependency module not yet implemented: {e}. Please ensure the storage, memory, and orchestrator modules "
+            f"are correctly installed."
         ) from e

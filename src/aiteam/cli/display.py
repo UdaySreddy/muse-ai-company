@@ -53,30 +53,30 @@ def print_warning(msg: str) -> None:
 def print_team(team: Team) -> None:
     """Display team details using Rich Panel."""
     content = (
-        f"[bold]名称:[/bold] {team.name}\n"
-        f"[bold]编排模式:[/bold] {team.mode.value}\n"
+        f"[bold]Name:[/bold] {team.name}\n"
+        f"[bold]Orchestration mode:[/bold] {team.mode.value}\n"
         f"[bold]ID:[/bold] {team.id}\n"
-        f"[bold]创建时间:[/bold] {team.created_at:%Y-%m-%d %H:%M:%S}\n"
-        f"[bold]更新时间:[/bold] {team.updated_at:%Y-%m-%d %H:%M:%S}"
+        f"[bold]Created:[/bold] {team.created_at:%Y-%m-%d %H:%M:%S}\n"
+        f"[bold]Updated:[/bold] {team.updated_at:%Y-%m-%d %H:%M:%S}"
     )
     if team.config:
-        content += f"\n[bold]配置:[/bold] {team.config}"
+        content += f"\n[bold]Config:[/bold] {team.config}"
 
-    panel = Panel(content, title=f"[bold blue]团队: {team.name}[/bold blue]", border_style="blue")
+    panel = Panel(content, title=f"[bold blue]Team: {team.name}[/bold blue]", border_style="blue")
     console.print(panel)
 
 
 def print_teams_table(teams: list[Team]) -> None:
     """List teams using Rich Table."""
     if not teams:
-        print_warning("暂无团队")
+        print_warning("No teams yet")
         return
 
-    table = Table(title="团队列表")
-    table.add_column("名称", style="bold cyan")
-    table.add_column("编排模式", style="green")
+    table = Table(title="Team list")
+    table.add_column("Name", style="bold cyan")
+    table.add_column("Orchestration mode", style="green")
     table.add_column("ID", style="dim")
-    table.add_column("创建时间")
+    table.add_column("Created")
 
     for team in teams:
         table.add_row(
@@ -97,14 +97,14 @@ def print_teams_table(teams: list[Team]) -> None:
 def print_agents_table(agents: list[Agent]) -> None:
     """List agents using Rich Table."""
     if not agents:
-        print_warning("暂无Agent")
+        print_warning("No agents yet")
         return
 
-    table = Table(title="Agent列表")
-    table.add_column("名称", style="bold cyan")
-    table.add_column("角色", style="green")
-    table.add_column("模型", style="yellow")
-    table.add_column("状态", style="magenta")
+    table = Table(title="Agent list")
+    table.add_column("Name", style="bold cyan")
+    table.add_column("Role", style="green")
+    table.add_column("Model", style="yellow")
+    table.add_column("Status", style="magenta")
     table.add_column("ID", style="dim")
 
     for agent in agents:
@@ -133,15 +133,15 @@ def print_agents_table(agents: list[Agent]) -> None:
 def print_tasks_table(tasks: list[Task]) -> None:
     """List tasks using Rich Table."""
     if not tasks:
-        print_warning("暂无任务")
+        print_warning("No tasks yet")
         return
 
-    table = Table(title="任务列表")
+    table = Table(title="Task list")
     table.add_column("ID", style="dim")
-    table.add_column("标题", style="bold cyan")
-    table.add_column("状态", style="magenta")
-    table.add_column("分配给")
-    table.add_column("创建时间")
+    table.add_column("Title", style="bold cyan")
+    table.add_column("Status", style="magenta")
+    table.add_column("Assigned to")
+    table.add_column("Created")
 
     for task in tasks:
         status_color = {
@@ -172,17 +172,17 @@ def print_status(status: TeamStatusSummary) -> None:
     # Team info
     team = status.team
     content = (
-        f"[bold]团队名称:[/bold] {team.name}\n"
-        f"[bold]编排模式:[/bold] {team.mode.value}\n"
-        f"[bold]Agent数量:[/bold] {len(status.agents)}\n"
-        f"[bold]活跃任务:[/bold] {len(status.active_tasks)}\n"
-        f"[bold]已完成任务:[/bold] {status.completed_tasks}\n"
-        f"[bold]总任务数:[/bold] {status.total_tasks}"
+        f"[bold]Team name:[/bold] {team.name}\n"
+        f"[bold]Orchestration mode:[/bold] {team.mode.value}\n"
+        f"[bold]Agent count:[/bold] {len(status.agents)}\n"
+        f"[bold]Active tasks:[/bold] {len(status.active_tasks)}\n"
+        f"[bold]Completed tasks:[/bold] {status.completed_tasks}\n"
+        f"[bold]Total tasks:[/bold] {status.total_tasks}"
     )
 
     panel = Panel(
         content,
-        title=f"[bold blue]状态: {team.name}[/bold blue]",
+        title=f"[bold blue]Status: {team.name}[/bold blue]",
         border_style="blue",
     )
     console.print(panel)
