@@ -319,7 +319,7 @@ class TestPromptRegistryEffectiveness:
         assert isinstance(result["effectiveness"], list)
 
     def test_prompt_versions_endpoint_is_retired(self, integration_client):
-        """GET /versions 已于 2026-07-27 批 8b 退役（喂它的 /track 从无调用方）。"""
+        """GET /versions was retired on 2026-07-27 in batch 8b (the /track that fed it never had any callers)."""
         assert integration_client.get("/api/prompt-registry/versions").status_code == 404
 
 
@@ -372,7 +372,7 @@ class TestErrorRecoveryMapping:
         """Business keywords in response body should be detected."""
         from aiteam.mcp._error_recovery import get_business_recovery
 
-        assert get_business_recovery("任务不存在") == "resource_not_found"
+        assert get_business_recovery("Task does not exist") == "resource_not_found"
         assert get_business_recovery("Team already exists") == "conflict"
         assert get_business_recovery("invalid parameter") == "validation_error"
         assert get_business_recovery("nothing special here") == ""

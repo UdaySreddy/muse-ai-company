@@ -60,39 +60,40 @@ async def test_deep_review_e2e_flow(repo: StorageRepository) -> None:
     # 2. Simulate a sub-agent saving a 5-section report. We embed the two
     #    machine-readable anchors required by the hook.
     report_id = "report-uuid-fastmcp-001"
-    report_content = f"""# PrefectHQ/fastmcp 深度审查报告
+    report_content = f"""# PrefectHQ/fastmcp Deep Review Report
 
 repo_id={repo_id}
 deep_review_id={review.id}
 
-## 1. 真实定位与成熟度
-Pythonic MCP server framework. README claim 与实际相符。25K stars。
+## 1. Real positioning and maturity
+Pythonic MCP server framework. The README claims match reality. 25K stars.
 
-## 2. 架构概览
-- src/fastmcp/server.py — 核心入口
-- src/fastmcp/tools.py — 工具装饰器
-- 目录树（深度 2）：
+## 2. Architecture overview
+- src/fastmcp/server.py — core entry point
+- src/fastmcp/tools.py — tool decorator
+- Directory tree (depth 2):
   ```
   fastmcp/
   ├── src/fastmcp/
   └── tests/
   ```
 
-## 3. 我们能借鉴的点
-- 装饰器风格的 tool 注册（src/fastmcp/tools.py:42-89）
-- 集成可能性：reference
+## 3. What we can learn from it
+- Decorator-style tool registration (src/fastmcp/tools.py:42-89)
+- Integration possibility: reference
 
-## 4. 风险/不可取
-- 依赖较重：依赖 anyio
-- 许可证：Apache-2.0（兼容）
+## 4. Risks / not advisable
+- Heavy dependencies: depends on anyio
+- License: Apache-2.0 (compatible)
 
-## 5. 集成建议
-- 推荐动作：reference
-- 理由：API 风格成熟可借鉴，但本项目已自建 MCP 服务器，无需直接集成。
+## 5. Integration recommendations
+- Recommended action: reference
+- Reason: The API style is mature and worth emulating, but this project has """ \
+    f"""already built its own MCP server, so no direct integration is needed.
 
-## 元数据
+## Metadata
 - demo_result: skipped
-- demo_log_excerpt: 由代码评审完成，未运行 demo。
+- demo_log_excerpt: Completed by code review; no demo was run.
 """
 
     # 3. Build the PostToolUse payload exactly as Claude Code would emit it.

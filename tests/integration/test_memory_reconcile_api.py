@@ -1,8 +1,8 @@
-"""记忆系统 v2 P2 — 按需整理 REST 端到端测试.
+"""Memory system v2 P2 — on-demand reconciliation REST end-to-end tests.
 
-覆盖 GET /api/memory/reconcile/candidates（候选组 + 方向层清单 + 操作说明）、
-POST /api/memory/reconcile/apply（merge/score/promote/invalidate + 幂等 +
-promote 红线）。用 TestClient + 内存 SQLite，X-Project-Id 头注入项目上下文。
+Covers GET /api/memory/reconcile/candidates (candidate groups + direction-layer inventory + operating instructions),
+POST /api/memory/reconcile/apply (merge/score/promote/invalidate + idempotency +
+promote red lines). Uses TestClient + in-memory SQLite, with project context injected via the X-Project-Id header.
 """
 
 from __future__ import annotations
@@ -11,10 +11,10 @@ import asyncio
 
 
 def _seed(repo) -> tuple[str, dict[str, str], list[str]]:
-    """建项目 + 两条高相似 memo（同 scope_path）。
+    """Create a project + two highly similar memos (same scope_path).
 
-    返回 (project_id, headers, memo_ids)——X-Project-Id 用真实项目 id，
-    这样 last_reconcile_at 能落到该项目的 config。
+    Returns (project_id, headers, memo_ids) — X-Project-Id uses the real project id,
+    so that last_reconcile_at can land in that project's config.
     """
 
     async def _run() -> tuple[str, list[str]]:
@@ -22,13 +22,13 @@ def _seed(repo) -> tuple[str, dict[str, str], list[str]]:
         pid = project.id
         m1 = await repo.add_task_memo(
             "t1",
-            content="部署 API 到生产环境使用 docker compose 命令",
+            content="Deploy the API to the production environment using the docker compose command",
             project_id=pid,
             scope_path="/deploy",
         )
         m2 = await repo.add_task_memo(
             "t1",
-            content="生产环境部署 API 用 docker compose 命令启动",
+            content="Deploy the API in production using the docker compose command to start it",
             project_id=pid,
             scope_path="/deploy",
         )
@@ -39,7 +39,8 @@ def _seed(repo) -> tuple[str, dict[str, str], list[str]]:
 
 
 def test_candidates_returns_groups_and_guide(repo_and_client) -> None:
-    """候选粗筛返回候选组（含全文）+ 操作说明 + 方向层清单."""
+    """The candidate coarse filter returns candidate groups (with full text) + operating instructions + the
+    direction-layer inventory."""
     repo, client = repo_and_client
     _pid, headers, _ids = _seed(repo)
     resp = client.get("/api/memory/reconcile/candidates", headers=headers)
@@ -53,13 +54,13 @@ def test_candidates_returns_groups_and_guide(repo_and_client) -> None:
 
 
 def test_candidates_requires_project(integration_client) -> None:
-    """无项目上下文 → 400."""
+    """No project context → 400."""
     resp = integration_client.get("/api/memory/reconcile/candidates")
     assert resp.status_code == 400
 
 
 def test_apply_merge_invalidates_sources(repo_and_client) -> None:
-    """merge：建新 memo，被并各条置失效并指向新条."""
+    """merge: create a new memo; each merged source is invalidated and points to the new one."""
     repo, client = repo_and_client
     _pid, headers, ids = _seed(repo)
     resp = client.post(
@@ -69,7 +70,7 @@ def test_apply_merge_invalidates_sources(repo_and_client) -> None:
             "operations": [
                 {
                     "op": "merge",
-                    "content": "生产部署 API：docker compose 命令启动",
+                    "content": "Production deployment of the API: start with the docker compose command",
                     "memo_ids": ids,
                     "scope_path": "/deploy",
                 }
@@ -81,7 +82,7 @@ def test_apply_merge_invalidates_sources(repo_and_client) -> None:
     assert res["status"] == "applied"
     new_id = res["new_memo_id"]
 
-    # 候选源全部失效，新条有效
+    # All candidate sources are invalidated; the new entry is valid
     remaining = client.get(
         "/api/memory/reconcile/candidates", headers=headers
     ).json()["data"]
@@ -96,7 +97,7 @@ def test_apply_merge_invalidates_sources(repo_and_client) -> None:
 
 
 def test_apply_merge_idempotent_on_invalidated(repo_and_client) -> None:
-    """对已失效条目重复 merge → noop 不报错."""
+    """Repeating a merge on already-invalidated entries → noop, no error."""
     repo, client = repo_and_client
     _pid, headers, ids = _seed(repo)
     body = {
@@ -106,19 +107,19 @@ def test_apply_merge_idempotent_on_invalidated(repo_and_client) -> None:
     }
     first = client.post("/api/memory/reconcile/apply", headers=headers, json=body)
     assert first.json()["data"]["results"][0]["status"] == "applied"
-    # 二次：全部已失效 → noop
+    # Second time: everything already invalidated → noop
     second = client.post("/api/memory/reconcile/apply", headers=headers, json=body)
     assert second.json()["data"]["results"][0]["status"] == "noop"
 
 
 def test_apply_score(repo_and_client) -> None:
-    """score：补质量分 1-10，越界报错."""
+    """score: fill in a quality score of 1-10; out-of-range values error."""
     repo, client = repo_and_client
     _pid, headers, ids = _seed(repo)
     ok = client.post(
         "/api/memory/reconcile/apply",
         headers=headers,
-        json={"operations": [{"op": "score", "memo_id": ids[0], "quality_score": 9, "reason": "关键决策"}]},
+        json={"operations": [{"op": "score", "memo_id": ids[0], "quality_score": 9, "reason": "Key decision"}]},
     ).json()["data"]["results"][0]
     assert ok["status"] == "applied"
     bad = client.post(
@@ -132,7 +133,8 @@ def test_apply_score(repo_and_client) -> None:
 def test_apply_promote_builds_direction_and_enforces_redline(
     repo_and_client,
 ) -> None:
-    """promote：建方向层条目；单条超 400 字触发红线返回 error."""
+    """promote: create a direction-layer entry; a single entry over 400 characters triggers the red line and returns
+    an error."""
     repo, client = repo_and_client
     _pid, headers, ids = _seed(repo)
     ok = client.post(
@@ -142,7 +144,7 @@ def test_apply_promote_builds_direction_and_enforces_redline(
             "operations": [
                 {
                     "op": "promote",
-                    "content": "所有输出使用中文",
+                    "content": "All output in Chinese",
                     "kind": "constraint",
                     "scope": "global",
                     "source_refs": [ids[0]],
@@ -152,22 +154,22 @@ def test_apply_promote_builds_direction_and_enforces_redline(
     ).json()["data"]["results"][0]
     assert ok["status"] == "applied"
     assert ok["memory_id"]
-    # 该方向层条目应出现在候选清单的 direction_inventory
+    # This direction-layer entry should appear in the candidates' direction_inventory
     inv = client.get(
         "/api/memory/reconcile/candidates", headers=headers
     ).json()["data"]["direction_inventory"]
-    assert any(d["content"] == "所有输出使用中文" for d in inv)
+    assert any(d["content"] == "All output in Chinese" for d in inv)
 
-    # 红线：单条 > 400 字 → error
+    # Red line: a single entry over 400 characters → error
     over = client.post(
         "/api/memory/reconcile/apply",
         headers=headers,
-        json={"operations": [{"op": "promote", "content": "字" * 401, "kind": "design", "scope": "global"}]},
+        json={"operations": [{"op": "promote", "content": "x" * 401, "kind": "design", "scope": "global"}]},
     ).json()["data"]["results"][0]
     assert over["status"] == "error"
-    assert "400" in over["error"] or "指针" in over["error"]
+    assert "400" in over["error"] or "pointer" in over["error"]
 
-    # 安全扫描：promote 是方向层第二道写入口，与 memory_add 同规
+    # Safety scan: promote is a second write entry point into the direction layer, under the same rules as memory_add
     unsafe = client.post(
         "/api/memory/reconcile/apply",
         headers=headers,
@@ -187,12 +189,13 @@ def test_apply_promote_builds_direction_and_enforces_redline(
 
 
 def test_apply_promote_enforces_bucket_quota(repo_and_client) -> None:
-    """promote 走与 memory_add 同一根字符轴；超配额返回用量但不回挂全桶清单."""
+    """promote goes through the same character axis as memory_add; over quota it returns usage but does not re-attach
+    the full bucket inventory."""
     repo, client = repo_and_client
     _pid, headers, ids = _seed(repo)
 
-    filler = "占位" * 50  # 100 字
-    for _ in range(12):  # 12 × 100 = global 桶配额 1200 字
+    filler = "ab" * 50  # 100 characters
+    for _ in range(12):  # 12 × 100 = the global bucket quota of 1200 characters
         applied = client.post(
             "/api/memory/reconcile/apply",
             headers=headers,
@@ -216,7 +219,7 @@ def test_apply_promote_enforces_bucket_quota(repo_and_client) -> None:
             "operations": [
                 {
                     "op": "promote",
-                    "content": "再提升一条就超配额",
+                    "content": "Promoting one more would exceed the quota",
                     "kind": "design",
                     "scope": "global",
                 }
@@ -225,15 +228,15 @@ def test_apply_promote_enforces_bucket_quota(repo_and_client) -> None:
     ).json()["data"]["results"][0]
     assert over["status"] == "error"
     assert over["quota"]["over_by_chars"] > 0
-    # 整理流程的 direction_inventory 已给过全文，这里不再复述
+    # The reconciliation flow's direction_inventory already gave the full text; it is not repeated here
     assert "bucket_entries" not in over
 
 
 def test_task_memo_hint_over_threshold(repo_and_client) -> None:
-    """task_memo_add 响应：项目新增有效 memo > 150 → 附整理 hint."""
+    """task_memo_add response: when a project's valid memos exceed 150 → attach a reconciliation hint."""
     repo, client = repo_and_client
 
-    # 直接建项目 + 任务并写 151 条有效 memo（>150 阈值）
+    # Create a project + task directly and write 151 valid memos (over the 150 threshold)
     async def _seed_task() -> str:
         project = await repo.create_project(name="bulk")
         t = await repo.create_task(None, "bulk", project_id=project.id)
@@ -244,7 +247,7 @@ def test_task_memo_hint_over_threshold(repo_and_client) -> None:
     task_id = asyncio.get_event_loop().run_until_complete(_seed_task())
     resp = client.post(
         f"/api/tasks/{task_id}/memo",
-        json={"content": "第 152 条", "type": "progress"},
+        json={"content": "Entry number 152", "type": "progress"},
     )
     assert resp.status_code == 200
     assert "hint" in resp.json()

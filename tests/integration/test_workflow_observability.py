@@ -1,8 +1,8 @@
-"""AI Team OS — I3a Workflow 可观测层 端到端测试（TestClient / 内存 SQLite，离线可跑）。
+"""AI Team OS — I3a Workflow observability layer end-to-end tests (TestClient / in-memory SQLite, runnable offline).
 
-覆盖设计文档 8.2 验收：EventType 往返、parse_workflow_receipt 抽键、
-ingest_run_from_file 落 run+agents+team 回写+completed 事件、PostToolUse 回执骨架、
-三读端点、POST /reconcile、幂等、项目隔离。
+Covers the design document 8.2 acceptance criteria: EventType round-tripping, parse_workflow_receipt key extraction,
+ingest_run_from_file persists run+agents+team write-back+a completed event, the PostToolUse receipt skeleton,
+the three read endpoints, POST /reconcile, idempotency, and project isolation.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ PID_B = "proj-wf-b-0002"
 
 RECEIPT = (
     "Workflow launched in background. Task ID: westwrtgj\n"
-    "Summary: 多路并行调研国家知识产权局专利电子申请 XML 文件的确切格式\n"
+    "Summary: Multi-track parallel research into the exact format of CNIPA patent electronic application XML files\n"
     "Transcript dir: /Users/cronus/.claude/projects/-Users-cronus-Desktop-Test/"
     "SESSION/subagents/workflows/wf_8e92fe01-67c\n"
     "Script file: /Users/cronus/.claude/projects/-Users-cronus-Desktop-Test/"
@@ -46,7 +46,7 @@ RECEIPT = (
 WF_SCRIPT = (
     "export const meta = {\n"
     "  name: 'cnipa-xml-format-research',\n"
-    "  phases: [ { title: '调研' }, { title: '汇总' } ],\n"
+    "  phases: [ { title: 'Research' }, { title: 'Synthesis' } ],\n"
     "};\n"
     "agent({ label: 'a1' });\n"
     "agent({ label: 'a2' });\n"
@@ -54,36 +54,38 @@ WF_SCRIPT = (
 
 
 def _fixture_snapshot() -> dict:
-    """真实 18 键快照的裁剪版（wf_8e92fe01-67c），数值字段沿用字符串型（同真快照）。"""
+    """A trimmed version of a real 18-key snapshot (wf_8e92fe01-67c), with numeric fields kept as strings (as in the
+    real snapshot)."""
     return {
         "runId": WF_ID,
         "timestamp": "2026-06-12T11:26:02.248Z",
         "taskId": "westwrtgj",
         "script": "export const meta = {...}",
         "scriptPath": "/Users/x/workflows/scripts/cnipa-xml-format-research-wf_8e92fe01-67c.js",
-        "result": {"synthesis": "结论...", "rawFindings": ["a", "b"]},
+        "result": {"synthesis": "Conclusion...", "rawFindings": ["a", "b"]},
         "agentCount": "2",
         "logs": ["done"],
         "durationMs": "1498565",
-        "summary": "多路并行调研国家知识产权局专利电子申请 XML 文件的确切格式",
+        "summary": "Multi-track parallel research into the exact format "
+            "of CNIPA patent electronic application XML files",
         "workflowName": "cnipa-xml-format-research",
         "status": "completed",
         "startTime": "1781262063681",
         "phases": [
-            {"title": "调研", "detail": "4 路并行研究员"},
-            {"title": "汇总", "detail": "交叉比对"},
+            {"title": "Research", "detail": "4 parallel researchers"},
+            {"title": "Synthesis", "detail": "Cross-checking"},
         ],
         "defaultModel": "claude-fable-5",
         "totalTokens": "551440",
         "totalToolCalls": "297",
         "workflowProgress": [
-            {"type": "workflow_phase", "index": 1, "title": "调研"},
+            {"type": "workflow_phase", "index": 1, "title": "Research"},
             {
                 "type": "workflow_agent",
                 "index": 1,
-                "label": "调研:cpc-samples",
+                "label": "Research:cpc-samples",
                 "phaseIndex": 1,
-                "phaseTitle": "调研",
+                "phaseTitle": "Research",
                 "agentId": "aa3b60f522593a7f8",
                 "model": "claude-fable-5",
                 "state": "done",
@@ -91,7 +93,7 @@ def _fixture_snapshot() -> dict:
                 "queuedAt": 1781262063705,
                 "lastToolName": "StructuredOutput",
                 "lastToolSummary": "high",
-                "promptPreview": "你是研究员...",
+                "promptPreview": "You are a researcher...",
                 "tokens": 79848,
                 "toolCalls": 58,
                 "durationMs": 790705,
@@ -100,9 +102,9 @@ def _fixture_snapshot() -> dict:
             {
                 "type": "workflow_agent",
                 "index": 2,
-                "label": "汇总:synth",
+                "label": "Synthesis:synth",
                 "phaseIndex": 2,
-                "phaseTitle": "汇总",
+                "phaseTitle": "Synthesis",
                 "agentId": "bb9c71e633604b8g9",
                 "model": "claude-opus-4-8[1m]",
                 "state": "done",
@@ -110,11 +112,11 @@ def _fixture_snapshot() -> dict:
                 "queuedAt": 1781262853000,
                 "lastToolName": "StructuredOutput",
                 "lastToolSummary": "done",
-                "promptPreview": "交叉汇总...",
+                "promptPreview": "Cross-synthesis...",
                 "tokens": 120000,
                 "toolCalls": 40,
                 "durationMs": 200000,
-                "resultPreview": "最终结论",
+                "resultPreview": "Final conclusion",
             },
         ],
     }
@@ -147,18 +149,18 @@ async def client(repo: StorageRepository, event_bus: EventBus) -> AsyncClient:
 
 
 # ============================================================
-# 1. EventType 往返不抛（对照现状 workflow.planned -> ValueError）
+# 1. EventType round-trip does not raise (contrast with the status quo, where workflow.planned -> ValueError)
 # ============================================================
 
 
 def test_eventtype_workflow_members_roundtrip():
     for val in ("workflow.planned", "workflow.started", "workflow.completed"):
-        et = EventType(val)  # 修复前这里会抛 ValueError
+        et = EventType(val)  # Before the fix this line raised ValueError
         assert et.value == val
 
 
 # ============================================================
-# 2. parse_workflow_receipt 抽键
+# 2. parse_workflow_receipt key extraction
 # ============================================================
 
 
@@ -167,7 +169,7 @@ def test_parse_workflow_receipt():
     assert r["wf_id"] == WF_ID
     assert r["cc_task_id"] == "westwrtgj"
     assert r["name"] == "cnipa-xml-format-research"
-    assert r["summary"].startswith("多路并行调研")
+    assert r["summary"].startswith("Multi-track parallel research")
     assert r["script_path"].endswith("cnipa-xml-format-research-wf_8e92fe01-67c.js")
     assert r["transcript_dir"].endswith("subagents/workflows/wf_8e92fe01-67c")
 
@@ -215,7 +217,7 @@ def test_extract_workflow_run_id_from_worktree_cwd():
 
 
 # ============================================================
-# 3. ingest_run_from_file → run + N agents + team 回写 + completed 事件
+# 3. ingest_run_from_file → run + N agents + team write-back + completed event
 # ============================================================
 
 
@@ -223,7 +225,8 @@ def test_extract_workflow_run_id_from_worktree_cwd():
 async def test_ingest_run_from_file(
     repo: StorageRepository, event_bus: EventBus, tmp_path: Path
 ):
-    # 预置既有 workflow-<wf_id> 团队 + 一个 cc_tool_use_id 匹配的成员（测 os_agent_id 关联）。
+    # Pre-seed an existing workflow-<wf_id> team + a member matching on cc_tool_use_id (to test the os_agent_id
+    # association).
     team = await repo.create_team(
         name=f"workflow-{WF_ID}",
         mode="coordinate",
@@ -253,17 +256,17 @@ async def test_ingest_run_from_file(
     assert run.team_id == team.id
     assert run.project_id == PID_A
     assert run.completed_at is not None
-    # phases 归一为 [{index,title}]
-    assert run.phases == [{"index": 1, "title": "调研"}, {"index": 2, "title": "汇总"}]
+    # phases are normalized to [{index,title}]
+    assert run.phases == [{"index": 1, "title": "Research"}, {"index": 2, "title": "Synthesis"}]
 
     agents = await repo.list_workflow_agents(WF_ID)
     assert len(agents) == 2
-    # os_agent_id 关联既有成员（agents.cc_tool_use_id == cc_agent_id）
+    # os_agent_id association with an existing member (agents.cc_tool_use_id == cc_agent_id)
     linked = [a for a in agents if a.cc_agent_id == "aa3b60f522593a7f8"]
     assert linked and linked[0].os_agent_id == member.id
     assert linked[0].tokens == 79848 and linked[0].tool_calls == 58
 
-    # team.completed_at 回写（既有 nullable 字段写入）
+    # team.completed_at write-back (writing into an existing nullable field)
     team_after = await repo.get_team(team.id)
     assert team_after.completed_at is not None
 
@@ -273,7 +276,7 @@ async def test_ingest_run_from_file(
 
 
 # ============================================================
-# 7. 幂等：连跑两次 → 无重复行、totals 不翻倍、不重复 emit completed
+# 7. Idempotency: running twice in a row → no duplicate rows, totals do not double, no duplicate completed emit
 # ============================================================
 
 
@@ -290,20 +293,21 @@ async def test_ingest_idempotent(
     runs = await repo.list_workflow_runs()
     assert len([r for r in runs if r.wf_id == WF_ID]) == 1
     run = await repo.get_workflow_run(WF_ID)
-    assert run.total_tokens == 551440  # 不翻倍
+    assert run.total_tokens == 551440  # Does not double
     agents = await repo.list_workflow_agents(WF_ID)
-    assert len(agents) == 2  # 不翻倍
+    assert len(agents) == 2  # Does not double
 
     completed = [
         e for e in await repo.list_events(type_prefix="workflow.")
         if e.type == EventType.WORKFLOW_COMPLETED
     ]
-    assert len(completed) == 1  # 事件不重复（transition-guard）
+    assert len(completed) == 1  # The event is not duplicated (transition-guard)
 
 
 # ============================================================
-# 4. POST /api/hooks/event 合成 PostToolUse(Workflow) 回执 → 骨架 + workflow.started
-#    （顺带走 PreToolUse 暂存计划，验证 planned_agent_count 补齐 + workflow.planned 落库）
+# 4. POST /api/hooks/event synthesizes a PostToolUse(Workflow) receipt → skeleton + workflow.started
+#    (Also goes through the PreToolUse staging of the plan, verifying planned_agent_count completion + workflow.planned
+#    persistence)
 # ============================================================
 
 
@@ -312,7 +316,7 @@ async def test_hook_receipt_creates_running_skeleton(
     client: AsyncClient, repo: StorageRepository
 ):
     session_id = "sess-hook-1"
-    # PreToolUse(Workflow)：暂存计划 + emit workflow.planned（枚举修好后才真正落库）。
+    # PreToolUse(Workflow): stage the plan + emit workflow.planned (it only truly persists once the enum is fixed).
     pre = await client.post(
         "/api/hooks/event",
         json={
@@ -328,9 +332,9 @@ async def test_hook_receipt_creates_running_skeleton(
         e for e in await repo.list_events(type_prefix="workflow.")
         if e.type == EventType.WORKFLOW_PLANNED
     ]
-    assert planned, "workflow.planned 应已落库（枚举修复生效）"
+    assert planned, "workflow.planned should have been persisted (the enum fix is in effect)"
 
-    # PostToolUse(Workflow)：回执明文 → run 骨架(running) + workflow.started。
+    # PostToolUse(Workflow): receipt plaintext → run skeleton (running) + workflow.started.
     post = await client.post(
         "/api/hooks/event",
         json={
@@ -349,9 +353,9 @@ async def test_hook_receipt_creates_running_skeleton(
     assert run.source == "hook"
     assert run.cc_task_id == "westwrtgj"
     assert run.name == "cnipa-xml-format-research"
-    # 计划补齐：literal agent() 计数 = 2
+    # Plan completion: literal agent() count = 2
     assert run.planned_agent_count == 2
-    assert run.phases == [{"index": 1, "title": "调研"}, {"index": 2, "title": "汇总"}]
+    assert run.phases == [{"index": 1, "title": "Research"}, {"index": 2, "title": "Synthesis"}]
 
     started = [
         e for e in await repo.list_events(type_prefix="workflow.")
@@ -364,12 +368,13 @@ async def test_hook_receipt_creates_running_skeleton(
 async def test_hook_receipt_adopts_session_fallback_team(
     client: AsyncClient, repo: StorageRepository
 ):
-    """回执认养 session 兜底队（反「一 run 两队」碎片化回归测试）。
+    """The receipt adopts the session fallback team (a regression test against 'one run, two teams' fragmentation).
 
-    wf_id 迟到时早到的 agent 全挂在 workflow-session-<sid[:8]> 兜底队；回执是
-    第一个拿到 wf_id 的时点，必须就地补上 run.team_id 与 team.config.
-    workflow_run_id 双向链接（2026-07-06 监控实录：不补则 live 全程双向皆空，
-    终态对账还会另建空的 workflow-<wf_id> 队造成碎片化）。
+    When wf_id arrives late, early agents all hang off the workflow-session-<sid[:8]> fallback team; the receipt is
+    the first point at which wf_id is available, so run.team_id and team.config.
+    workflow_run_id must be linked in both directions right there (monitoring record, 2026-07-06: without this, both
+    directions stay empty for the whole live run,
+    and the final-state reconciliation would create yet another empty workflow-<wf_id> team, causing fragmentation).
     """
     session_id = "sess-adopt-1"
     team = await repo.create_team(
@@ -392,7 +397,7 @@ async def test_hook_receipt_adopts_session_fallback_team(
 
     run = await repo.get_workflow_run(WF_ID)
     assert run is not None
-    assert run.team_id == team.id, "run 应认养 session 兜底队而非留空"
+    assert run.team_id == team.id, "run should adopt the session fallback team rather than leaving it empty"
 
     linked = await repo.get_team_by_name(team.name)
     assert (linked.config or {}).get("workflow_run_id") == WF_ID
@@ -402,13 +407,16 @@ async def test_hook_receipt_adopts_session_fallback_team(
 async def test_session_end_spares_workflow_teams(
     client: AsyncClient, repo: StorageRepository
 ):
-    """SessionEnd 只关本 session 拥有的队（fleet-layer §5，合并 7ae3b7cd）。
+    """SessionEnd only closes teams owned by this session (fleet-layer §5, merged in 7ae3b7cd).
 
-    历史两桩误杀都在此覆盖：① 旁路会话 SessionEnd 曾把别会话仍 running 的 workflow
-    队全部误杀成 completed+0 成员（2026-07-08 c4fab878 杀 abff40af）；② 更宽的普通队
-    误杀——旁路会话 SessionEnd 关全库所有 active 普通队，误杀别会话正在用的队。
+    Two historical false kills are covered here: (1) a bypass session's SessionEnd once killed another session's
+    still-running workflow
+    teams, marking them all completed with 0 members (2026-07-08: c4fab878 killed abff40af); (2) a broader false kill of
+    ordinary teams
+    — a bypass session's SessionEnd closed every active ordinary team in the whole database, falsely killing teams
+    another session was using.
     """
-    # workflow 队（别会话拥有）——必须豁免
+    # A workflow team (owned by another session) — must be exempt
     wf_team = await repo.create_team(
         name="workflow-wf_spare-1", mode="coordinate",
         config={"kind": "workflow", "workflow_run_id": "wf_spare-1"},
@@ -418,14 +426,15 @@ async def test_session_end_spares_workflow_teams(
         session_id="sess-other-9",
     )
     await repo.update_agent(member.id, status="busy")
-    # 别会话拥有的普通队——旁路 SessionEnd 不得关（7ae3b7cd 核心）
+    # An ordinary team owned by another session — a bypass SessionEnd must not close it (the core of 7ae3b7cd)
     owned_by_other = await repo.create_team(
         name="t-owned-other", mode="coordinate",
         config={"owner_session_id": "sess-other-9"},
     )
-    # 无归属标记的遗留普通队——保守不关（等 reaper 按自身活性收）
+    # A legacy ordinary team with no ownership marker — conservatively do not close it (let the reaper collect it by its
+    # own activity)
     legacy = await repo.create_team(name="t-legacy-se", mode="coordinate")
-    # 结束会话自己拥有的普通队——必须关
+    # An ordinary team owned by the ending session itself — must be closed
     owned_by_ending = await repo.create_team(
         name="t-owned-ending", mode="coordinate",
         config={"owner_session_id": "sess-bystander-1"},
@@ -438,23 +447,27 @@ async def test_session_end_spares_workflow_teams(
     assert resp.status_code == 200
 
     wf_after = await repo.get_team(wf_team.id)
-    assert str(wf_after.status).endswith("active"), "workflow 队不得被 SessionEnd 关闭"
+    assert str(wf_after.status).endswith("active"), "A workflow team must not be closed by SessionEnd"
     m_after = (await repo.find_agents_by_session("sess-other-9"))[0]
-    assert str(m_after.status).endswith("busy"), "workflow 成员不得被 SessionEnd 清扫"
+    assert str(m_after.status).endswith("busy"), "Workflow members must not be swept by SessionEnd"
     other_after = await repo.get_team(owned_by_other.id)
-    assert str(other_after.status).endswith("active"), "别会话拥有的普通队不得被误杀"
+    assert str(other_after.status).endswith("active"), (
+        "An ordinary team owned by another session must not be falsely killed"
+    )
     legacy_after = await repo.get_team(legacy.id)
-    assert str(legacy_after.status).endswith("active"), "无归属遗留队保守不关，交 reaper"
+    assert str(legacy_after.status).endswith("active"), (
+        "A legacy team with no ownership is conservatively left open, for the reaper"
+    )
     ending_after = await repo.get_team(owned_by_ending.id)
-    assert str(ending_after.status).endswith("completed"), "本会话拥有的队必须被关闭"
+    assert str(ending_after.status).endswith("completed"), "A team owned by this session must be closed"
 
 
 @pytest.mark.asyncio
 async def test_ingest_team_status_follows_run(
     repo: StorageRepository, event_bus: EventBus, tmp_path
 ):
-    """队状态跟随 run：running run 的队被误杀成 completed 后，下个 ingest 周期
-    自动复活 active；终态 run 的 active 队收敛 completed。"""
+    """Team status follows the run: after a running run's team is falsely killed as completed, the next ingest cycle
+    automatically revives it to active; an active team of a terminal run converges to completed."""
     import json as _json
 
     from aiteam.api import workflow_ingest as wi
@@ -463,7 +476,7 @@ async def test_ingest_team_status_follows_run(
         name="workflow-wf_follow-1", mode="coordinate",
         config={"kind": "workflow", "workflow_run_id": "wf_follow-1"},
     )
-    await repo.update_team(team.id, status="completed")  # 模拟被误杀
+    await repo.update_team(team.id, status="completed")  # Simulate a false kill
 
     wf_json = tmp_path / "wf_follow-1.json"
     wf_json.write_text(_json.dumps({
@@ -473,7 +486,7 @@ async def test_ingest_team_status_follows_run(
     }))
     await wi.ingest_run_from_file(repo, event_bus, wf_json)
     revived = await repo.get_team_by_name("workflow-wf_follow-1")
-    assert str(revived.status).endswith("active"), "running run 的队应被复活"
+    assert str(revived.status).endswith("active"), "A running run's team should be revived"
 
     wf_json.write_text(_json.dumps({
         "runId": "wf_follow-1", "workflowName": "follow-test",
@@ -482,18 +495,20 @@ async def test_ingest_team_status_follows_run(
     }))
     await wi.ingest_run_from_file(repo, event_bus, wf_json)
     closed = await repo.get_team_by_name("workflow-wf_follow-1")
-    assert str(closed.status).endswith("completed"), "终态 run 的队应收敛 completed"
+    assert str(closed.status).endswith("completed"), "A terminal run's team should converge to completed"
 
 
 @pytest.mark.asyncio
 async def test_hook_receipt_creates_per_run_team(
     client: AsyncClient, repo: StorageRepository
 ):
-    """回执直接建 per-run 队（2026-07-07 D1 实录回归）。
+    """The receipt directly creates a per-run team (regression from the 2026-07-07 D1 record).
 
-    per-run 队原本只在 SubagentStop 的 promote 时刻懒创建——被 kill 在
-    turn 中途 / 长 turn 未结束的 run 永远无队，项目页全程隐形。回执是
-    每条 run 最早可靠拿到 wf_id 的时点，无认养对象时必须就地建队。
+    A per-run team was originally only created lazily at the SubagentStop promote moment — a run killed in the
+    middle of a turn / in a long unfinished turn would never have a team, invisible on the project page the whole time.
+    The receipt is
+    the earliest point at which each run reliably obtains a wf_id, so when there is nothing to adopt it must create the
+    team right there.
     """
     post = await client.post(
         "/api/hooks/event",
@@ -508,7 +523,7 @@ async def test_hook_receipt_creates_per_run_team(
     assert post.status_code == 200
 
     team = await repo.get_team_by_name(f"workflow-{WF_ID}")
-    assert team is not None, "回执应就地创建 per-run 队"
+    assert team is not None, "The receipt should create the per-run team right there"
     assert (team.config or {}).get("workflow_run_id") == WF_ID
     run = await repo.get_workflow_run(WF_ID)
     assert run.team_id == team.id
@@ -518,8 +533,10 @@ async def test_hook_receipt_creates_per_run_team(
 async def test_hook_receipt_migrates_busy_agents_from_occupied_fallback(
     client: AsyncClient, repo: StorageRepository
 ):
-    """兜底队被别的 run 占用时：建新 per-run 队并只迁走仍活跃(busy)的成员，
-    历史 offline 成员留在兜底队（避免把昨天 run 的尸体拖进新队）。"""
+    """When the fallback team is occupied by another run: create a new per-run team and migrate only the still-active
+    (busy) members;
+    the historical offline members stay in the fallback team (to avoid dragging yesterday's run's corpses into the
+    new team)."""
     session_id = "sess-mig-1"
     fallback = await repo.create_team(
         name=f"workflow-session-{session_id[:8]}",
@@ -553,16 +570,18 @@ async def test_hook_receipt_migrates_busy_agents_from_occupied_fallback(
     assert team is not None and team.id != fallback.id
     live2 = (await repo.find_agents_by_session(session_id))
     by_name = {a.name: a for a in live2}
-    assert by_name["wf-live1"].team_id == team.id, "busy 成员应迁入 per-run 队"
-    assert by_name["wf-dead1"].team_id == fallback.id, "offline 成员应留在兜底队"
+    assert by_name["wf-live1"].team_id == team.id, "A busy member should migrate into the per-run team"
+    assert by_name["wf-dead1"].team_id == fallback.id, "An offline member should stay in the fallback team"
 
 
 @pytest.mark.asyncio
 async def test_reaper_closes_adopted_fallback_when_run_terminal(
     repo: StorageRepository, event_bus: EventBus
 ):
-    """空壳回收补漏：已认养(run_id 有)的 workflow-session 兜底队，其认养 run 终态后
-    仍 0 成员挂着 → reaper 补收（dd686eec 类）。run 仍 running 则豁免；有成员则豁免。"""
+    """Empty-shell reclamation gap fix: an adopted (run_id present) workflow-session fallback team whose adopting run is
+    terminal
+    but still hangs around with 0 members → the reaper collects it (the dd686eec class). A still-running run is
+    exempt; a team with members is exempt."""
     from datetime import timedelta
 
     from sqlalchemy import text
@@ -571,34 +590,34 @@ async def test_reaper_closes_adopted_fallback_when_run_terminal(
     from aiteam.storage.connection import get_session
     from aiteam.types import WorkflowRun
 
-    # 认养 run：一个终态、一个仍 running
+    # The adopting runs: one terminal, one still running
     await repo.upsert_workflow_run(WorkflowRun(wf_id="wf_term-aa", status="completed"))
     await repo.upsert_workflow_run(WorkflowRun(wf_id="wf_run-bb", status="running"))
     await repo.upsert_workflow_run(WorkflowRun(wf_id="wf_term-dd", status="killed"))
 
-    # ① 已认养 + run 终态 + 0 成员 → 应收
+    # (1) Adopted + run terminal + 0 members → should be collected
     t_term = await repo.create_team(
         name="workflow-session-aaaaaaaa", mode="coordinate",
         config={"kind": "workflow", "workflow_run_id": "wf_term-aa"},
     )
-    # ② 已认养 + run 仍 running + 0 成员 → 豁免
+    # (2) Adopted + run still running + 0 members → exempt
     t_running = await repo.create_team(
         name="workflow-session-bbbbbbbb", mode="coordinate",
         config={"kind": "workflow", "workflow_run_id": "wf_run-bb"},
     )
-    # ③ 未认养(run_id 空) + 0 成员 → 应收（既有行为不回归）
+    # (3) Not adopted (run_id empty) + 0 members → should be collected (existing behavior must not regress)
     t_unadopted = await repo.create_team(
         name="workflow-session-cccccccc", mode="coordinate",
         config={"kind": "workflow"},
     )
-    # ④ 已认养 + run 终态 + 有成员 → 豁免（0 成员守卫）
+    # (4) Adopted + run terminal + has members → exempt (the 0-member guard)
     t_member = await repo.create_team(
         name="workflow-session-dddddddd", mode="coordinate",
         config={"kind": "workflow", "workflow_run_id": "wf_term-dd"},
     )
     await repo.create_agent(team_id=t_member.id, name="wf-x", role="workflow-subagent")
 
-    # 全部超龄（created_at 早于 30min stale 阈值）
+    # All aged (created_at earlier than the 30min stale threshold)
     old = (utc_now() - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S.%f")
     async with get_session(repo._db_url) as session:
         await session.execute(
@@ -609,10 +628,11 @@ async def test_reaper_closes_adopted_fallback_when_run_terminal(
     reaper = StateReaper(repo, event_bus)
     await reaper._check_stale_teams(utc_now(), repo)
 
-    assert (await repo.get_team(t_term.id)).status == "completed"  # ① 收
-    assert (await repo.get_team(t_running.id)).status == "active"  # ② 豁免
-    assert (await repo.get_team(t_unadopted.id)).status == "completed"  # ③ 收
-    # ④ 豁免——成员与 run 都是刚刚建的，静默宽限未过（不是因为"有成员"本身）
+    assert (await repo.get_team(t_term.id)).status == "completed"  # (1) collected
+    assert (await repo.get_team(t_running.id)).status == "active"  # (2) exempt
+    assert (await repo.get_team(t_unadopted.id)).status == "completed"  # (3) collected
+    # (4) exempt — the members and the run were just created; the silence grace period has not passed (not because of
+    # 'has members' itself)
     assert (await repo.get_team(t_member.id)).status == "active"
 
 
@@ -645,20 +665,25 @@ async def _age_workflow_fixtures(repo: StorageRepository, hours: float) -> None:
 async def test_reaper_closes_workflow_team_when_all_runs_settled(
     repo: StorageRepository, event_bus: EventBus
 ):
-    """全部 run 终态 + 队内无人在忙 + 静默超宽限 → 收队。
+    """All runs terminal + nobody busy in the team + silence beyond the grace period → collect the team.
 
-    此前 workflow 队只有「0 成员空壳」一条回收路径，**有成员的队整类漏收**：run 全
-    终态之后队恒 active（2026-07-28 实锤本机 3 支，最老 07-06 起挂了 22 天）。三态
-    一起锁死：
-      ① 全 run 终态 + 成员静默 → 收，且带 completed_at；
-      ② 仍有 running run → 维持豁免（长跑期成员懒到位，绝不许按静默判死）；
-      ③ 零 run 记录的队 → 短宽限内不收（证据链整条缺失，等更长的宽限）。
+    Previously workflow teams had only one reclamation path, the '0-member empty shell'; **teams with members were
+    missed as a whole class**: after all runs
+    reached a terminal state the team stayed active forever (confirmed on this machine on 2026-07-28: 3 teams, the
+    oldest hanging since 07-06, for 22 days). The three states
+    are locked down together:
+      (1) All runs terminal + members silent → collect, with completed_at;
+      (2) A run still running → keep the exemption (members arrive lazily during long runs; never judge death by
+      silence);
+      (3) A team with zero run records → do not collect within the short grace period (the whole evidence chain is
+      missing; wait for the longer grace period).
     """
 
     from aiteam.api.state_reaper import StateReaper
     from aiteam.types import WorkflowRun
 
-    # ① 认养 run 已终态（config 链，run.team_id 为空——本机 3 支陈旧队的真实形态）
+    # (1) The adopting run is terminal (via the config chain; run.team_id is empty — the real shape of the 3 stale teams
+    # on this machine)
     await repo.upsert_workflow_run(
         WorkflowRun(wf_id="wf_settled-01", status="completed")
     )
@@ -672,7 +697,7 @@ async def test_reaper_closes_workflow_team_when_all_runs_settled(
     )
     await repo.update_agent(a1.id, status="offline")
 
-    # ② per-run 队，run 仍 running（run.team_id 直连）
+    # (2) A per-run team whose run is still running (run.team_id directly linked)
     t_live = await repo.create_team(
         name="workflow-wf_live-02",
         mode="coordinate",
@@ -686,7 +711,7 @@ async def test_reaper_closes_workflow_team_when_all_runs_settled(
     )
     await repo.update_agent(a2.id, status="offline")
 
-    # ③ 零 run 记录 + 有成员
+    # (3) Zero run records + has members
     t_norun = await repo.create_team(
         name="workflow-session-33333333",
         mode="coordinate",
@@ -703,26 +728,30 @@ async def test_reaper_closes_workflow_team_when_all_runs_settled(
     await reaper._check_stale_teams(utc_now(), repo)
 
     closed = await repo.get_team(t_settled.id)
-    assert closed.status == "completed", "全 run 终态 + 成员静默的 workflow 队必须收"
-    assert closed.completed_at is not None, "收队必须落 completed_at"
-    assert (await repo.get_team(t_live.id)).status == "active", "仍有 running run → 豁免"
-    assert (await repo.get_team(t_norun.id)).status == "active", "零 run 队短宽限内不收"
+    assert closed.status == "completed", "A workflow team with all runs terminal and silent members must be collected"
+    assert closed.completed_at is not None, "Collecting a team must set completed_at"
+    assert (await repo.get_team(t_live.id)).status == "active", "A run is still running → exempt"
+    assert (await repo.get_team(t_norun.id)).status == "active", (
+        "A zero-run team is not collected within the short grace period"
+    )
 
 
 @pytest.mark.asyncio
 async def test_workflow_team_closure_guards(
     repo: StorageRepository, event_bus: EventBus
 ):
-    """收队三守卫：busy 成员一票否决；leader 行不被顺手收工；零 run 队过长宽限才收。
+    """The three collection guards: a busy member has a veto; a leader row is not swept up along the way; a zero-run
+    team is collected only after the long grace period.
 
-    leader 行的豁免与 workflow_ingest 的成员收工同源（03fe7cae 实录）：历史 Leader
-    行可能寄生在 workflow 队里，它的活性属于会话，不归本 run 收。
+    The leader-row exemption shares its origin with member sweeping in workflow_ingest (record 03fe7cae): a historical
+    Leader
+    row may parasitize a workflow team; its activity belongs to the session and is not collected by this run.
     """
 
     from aiteam.api.state_reaper import StateReaper
     from aiteam.types import WorkflowRun
 
-    # ④ 全 run 终态但有 busy 成员 → 一票否决
+    # (4) All runs terminal but a busy member exists → veto
     await repo.upsert_workflow_run(WorkflowRun(wf_id="wf_busy-04", status="killed"))
     t_busy = await repo.create_team(
         name="workflow-session-44444444",
@@ -734,7 +763,7 @@ async def test_workflow_team_closure_guards(
     )
     await repo.update_agent(a_busy.id, status="busy")
 
-    # ⑤ 收队时 waiting 成员转 offline，寄生的 leader 行原样不动
+    # (5) When collecting, waiting members turn offline; the parasitic leader row is left exactly as is
     await repo.upsert_workflow_run(WorkflowRun(wf_id="wf_sweep-05", status="failed"))
     t_sweep = await repo.create_team(
         name="workflow-session-55555555",
@@ -748,7 +777,7 @@ async def test_workflow_team_closure_guards(
     a_leader = await repo.create_agent(team_id=t_sweep.id, name="Leader", role="leader")
     await repo.update_agent(a_leader.id, status="waiting")
 
-    # ⑥ 零 run 队，静默已过长宽限 → 收
+    # (6) A zero-run team whose silence has passed the long grace period → collect
     t_norun_old = await repo.create_team(
         name="workflow-session-66666666",
         mode="coordinate",
@@ -764,18 +793,18 @@ async def test_workflow_team_closure_guards(
     reaper = StateReaper(repo, event_bus)
     await reaper._check_stale_teams(utc_now(), repo)
 
-    assert (await repo.get_team(t_busy.id)).status == "active", "busy 成员一票否决"
+    assert (await repo.get_team(t_busy.id)).status == "active", "A busy member has a veto"
     assert (await repo.get_team(t_sweep.id)).status == "completed"
     swept = {a.name: a.status for a in await repo.list_agents(t_sweep.id)}
-    assert swept["wf-w1"] == "offline", "收队时 waiting 成员应收工"
-    assert swept["Leader"] == "waiting", "寄生的 leader 行不归本队收"
+    assert swept["wf-w1"] == "offline", "When collecting, waiting members should be swept to offline"
+    assert swept["Leader"] == "waiting", "The parasitic leader row is not collected by this team"
     assert (
         await repo.get_team(t_norun_old.id)
-    ).status == "completed", "零 run 队过长宽限后应收"
+    ).status == "completed", "A zero-run team should be collected after the long grace period"
 
 
 # ============================================================
-# 5. GET 三端点
+# 5. GET three endpoints
 # ============================================================
 
 
@@ -794,7 +823,7 @@ async def test_read_endpoints(
     assert body["total"] >= 1
     assert any(r["wf_id"] == WF_ID for r in body["data"])
 
-    # ?status= 过滤
+    # ?status= filter
     lst_running = await client.get("/api/workflows?status=running")
     assert lst_running.json()["total"] == 0
     lst_done = await client.get("/api/workflows?status=completed")
@@ -816,7 +845,7 @@ async def test_read_endpoints(
 
 
 # ============================================================
-# 6. POST /api/workflows/reconcile（temp 目录，monkeypatch projects 根）
+# 6. POST /api/workflows/reconcile (temp directory, monkeypatching the projects root)
 # ============================================================
 
 
@@ -848,7 +877,7 @@ async def test_reconcile_endpoint(
 
 
 # ============================================================
-# 8. 项目隔离：带 project_id 的 run 只在对应 scope 可见
+# 8. Project isolation: a run with a project_id is only visible in the corresponding scope
 # ============================================================
 
 
@@ -859,24 +888,24 @@ async def test_project_isolation(repo: StorageRepository):
     await repo.upsert_workflow_run(WorkflowRun(wf_id="wf_aaa-1", project_id=PID_A, status="completed"))
     await repo.upsert_workflow_run(WorkflowRun(wf_id="wf_bbb-2", project_id=PID_B, status="completed"))
 
-    # 全局仓看到两条
+    # The global repo sees both
     assert len(await repo.list_workflow_runs()) == 2
 
-    # scoped 仓（project_scope=A）只看到 A
+    # The scoped repo (project_scope=A) only sees A
     scoped_a = StorageRepository(db_url=repo._db_url, project_scope=PID_A)
     runs_a = await scoped_a.list_workflow_runs()
     assert len(runs_a) == 1 and runs_a[0].wf_id == "wf_aaa-1"
-    # 跨 scope get 不可见（不重演 teams 全消失，但隔离生效）
+    # A cross-scope get is invisible (it does not replay all teams disappearing, but the isolation takes effect)
     assert await scoped_a.get_workflow_run("wf_bbb-2") is None
     assert await scoped_a.get_workflow_run("wf_aaa-1") is not None
 
-    # 端点 ?project_id= 过滤
+    # Endpoint ?project_id= filter
     runs_b_query = await repo.list_workflow_runs(project_id=PID_B)
     assert len(runs_b_query) == 1 and runs_b_query[0].wf_id == "wf_bbb-2"
 
 
 # ============================================================
-# Phase2 §10.9 后端验收（live tail / lastCtx / fingerprint / interrupted / .output）
+# Phase2 §10.9 backend acceptance (live tail / lastCtx / fingerprint / interrupted / .output)
 # ============================================================
 
 import os as _os  # noqa: E402
@@ -919,7 +948,7 @@ async def _setup_live_run(
     session: str = "SESS-LIVE",
     root_path: str = "/tmp/wf-live-project",
 ):
-    """live 环境脚手架：项目 + running run + <slug>/<session>/subagents/workflows/<wf_id>/。"""
+    """live-environment scaffolding: project + running run + <slug>/<session>/subagents/workflows/<wf_id>/."""
     proj = await repo.create_project(name=f"wf-live-{wf_id[-4:]}", root_path=root_path)
     slug = workflow_ingest._project_slug(root_path)
     base = tmp_path / "projects"
@@ -934,19 +963,20 @@ async def _setup_live_run(
     return proj, base, wf_dir, run
 
 
-# ---------- 1. EventType：新 2 成员往返 + MVP 3 成员原样 ----------
+# ---------- 1. EventType: the new 2 members round-trip + the MVP 3 members unchanged ----------
 
 
 def test_eventtype_phase2_members_roundtrip():
     for val in ("workflow.agent_updated", "workflow.run_ingested"):
         et = EventType(val)
         assert et.value == val
-    # MVP 3 成员原样（append-only 不破坏）
+    # The MVP 3 members unchanged (append-only, non-breaking)
     for val in ("workflow.planned", "workflow.started", "workflow.completed"):
         assert EventType(val).value == val
 
 
-# ---------- 2. 老库升级：文件库 init_db → 5 新列就位，既有行默认 0/''/NULL ----------
+# ---------- 2. Legacy database upgrade: file database init_db → the 5 new columns in place, existing rows default to
+# 0/''/NULL ----------
 
 
 @pytest.mark.asyncio
@@ -955,7 +985,7 @@ async def test_file_db_migration_adds_phase2_columns(tmp_path: Path):
 
     db_file = tmp_path / "old.db"
     con = sqlite3.connect(db_file)
-    # MVP 版 schema（无 Phase2 5 列）
+    # The MVP schema (without the Phase2 5 columns)
     con.execute(
         "CREATE TABLE workflow_runs ("
         "id TEXT PRIMARY KEY, wf_id TEXT, project_id TEXT, team_id TEXT, session_id TEXT,"
@@ -984,9 +1014,9 @@ async def test_file_db_migration_adds_phase2_columns(tmp_path: Path):
     con.close()
 
     r2 = StorageRepository(db_url=f"sqlite+aiosqlite:///{db_file}")
-    await r2.init_db()  # create_all（跳过既有表）+ COLUMNS_TO_ENSURE ALTER 迁移
+    await r2.init_db()  # create_all (skips existing tables) + the COLUMNS_TO_ENSURE ALTER migration
 
-    run = await r2.get_workflow_run("wf_old-1")  # ORM 读通 = 列真实就位
+    run = await r2.get_workflow_run("wf_old-1")  # The ORM reads through = the columns are truly in place
     assert run is not None
     assert run.journal_offset == 0
     assert run.source_fingerprint == ""
@@ -1002,7 +1032,7 @@ async def test_file_db_migration_adds_phase2_columns(tmp_path: Path):
     assert "last_activity_at" in agent_cols
 
 
-# ---------- 3. journal tail：增量消费 + 半行防护 ----------
+# ---------- 3. journal tail: incremental consumption + partial-line protection ----------
 
 
 @pytest.mark.asyncio
@@ -1020,16 +1050,17 @@ async def test_journal_tail_and_half_line_guard(
     res = await workflow_ingest.tail_live_run(repo, event_bus, run)
     assert res["ok"] and not res["terminal"]
     run = await repo.get_workflow_run(WF_LIVE)
-    assert run.journal_offset == journal.stat().st_size  # 全量消费
+    assert run.journal_offset == journal.stat().st_size  # Fully consumed
     agents = {a.cc_agent_id: a for a in await repo.list_workflow_agents(WF_LIVE)}
     assert agents["aga1"].state == "running"
     assert agents["aga2"].state == "done"
 
-    # append 1 result + 无换行尾段半行 → offset 只前进到最后 \n、半行不解析
+    # Append 1 result + a trailing partial line with no newline → the offset only advances to the last \n; the partial
+    # line is not parsed
     half = json.dumps({"type": "started", "key": "v2:k3", "agentId": "aga3"})
     with journal.open("a", encoding="utf-8") as f:
         f.write(_journal_line("result", "aga1"))
-        f.write(half[: len(half) // 2])  # 并发写半行
+        f.write(half[: len(half) // 2])  # Concurrent write of a partial line
     res = await workflow_ingest.tail_live_run(repo, event_bus, run)
     run = await repo.get_workflow_run(WF_LIVE)
     size_to_last_nl = journal.read_bytes().rfind(b"\n") + 1
@@ -1037,9 +1068,9 @@ async def test_journal_tail_and_half_line_guard(
     assert run.journal_offset < journal.stat().st_size
     agents = {a.cc_agent_id: a for a in await repo.list_workflow_agents(WF_LIVE)}
     assert agents["aga1"].state == "done"
-    assert "aga3" not in agents  # 半行不解析
+    assert "aga3" not in agents  # The partial line is not parsed
 
-    # 补齐 \n 后下 tick 消费
+    # After completing the \n, the next tick consumes it
     with journal.open("a", encoding="utf-8") as f:
         f.write(half[len(half) // 2:] + "\n")
     res = await workflow_ingest.tail_live_run(repo, event_bus, run)
@@ -1048,13 +1079,13 @@ async def test_journal_tail_and_half_line_guard(
     agents = {a.cc_agent_id: a for a in await repo.list_workflow_agents(WF_LIVE)}
     assert agents["aga3"].state == "running"
 
-    # 聚合事件已发（每 run 每 tick 至多一条 agent_updated）
+    # The aggregate event was emitted (at most one agent_updated per run per tick)
     ev = [e for e in await repo.list_events(type_prefix="workflow.")
           if e.type == EventType.WORKFLOW_AGENT_UPDATED]
-    assert ev, "live tail 应聚合 emit workflow.agent_updated"
+    assert ev, "live tail should aggregate and emit workflow.agent_updated"
 
 
-# ---------- 4. 文件重写：size < offset → 复位 0 重新 tail ----------
+# ---------- 4. File rewrite: size < offset → reset to 0 and tail again ----------
 
 
 @pytest.mark.asyncio
@@ -1070,17 +1101,18 @@ async def test_journal_rewrite_resets_offset(
     run = await repo.get_workflow_run("wf_live0002-rst")
     assert run.journal_offset == journal.stat().st_size
 
-    # truncate 重写为更短内容 → 复位 0 → 重新消费
+    # A truncate rewrite to shorter content → reset to 0 → consume again
     journal.write_text(_journal_line("result", "agb1"), encoding="utf-8")
     assert journal.stat().st_size < run.journal_offset
     await workflow_ingest.tail_live_run(repo, event_bus, run)
     run = await repo.get_workflow_run("wf_live0002-rst")
-    assert run.journal_offset == journal.stat().st_size  # 复位后重新推进到新文件长
+    assert run.journal_offset == journal.stat().st_size  # After the reset it advances again to the new file length
     agents = {a.cc_agent_id: a for a in await repo.list_workflow_agents("wf_live0002-rst")}
     assert agents["agb1"].state == "done"
 
 
-# ---------- 5. lastCtx 口径：最后一条 assistant 四字段和 ≠ 跨轮累加；无 jsonl 记 0 ----------
+# ---------- 5. lastCtx metric: the sum of the four fields of the last assistant message ≠ accumulated across rounds; no
+# jsonl records 0 ----------
 
 
 @pytest.mark.asyncio
@@ -1091,29 +1123,31 @@ async def test_lastctx_token_metric(
     (wf_dir / "journal.jsonl").write_text(
         _journal_line("started", "agc1") + _journal_line("started", "agc2"), encoding="utf-8"
     )
-    # agc1 有 jsonl：3 条 assistant usage 递增、含大 cache_read
+    # agc1 has a jsonl: 3 assistant usage entries increasing, including a large cache_read
     rounds = [(10, 5, 100, 20), (2, 3, 200, 30), (2, 15010, 145842, 13479)]
     (wf_dir / "agent-agc1.jsonl").write_text(
         _user_line() + "".join(_assistant_line(*r) for r in rounds), encoding="utf-8"
     )
     last_ctx = sum(rounds[-1])          # 174333
-    cross_sum = sum(sum(r) for r in rounds)  # 跨轮累加（cache_read 重复计入，否决口径）
+    cross_sum = sum(sum(r) for r in rounds)  # Accumulated across rounds (cache_read counted repeatedly; the rejected
+    # metric)
 
     await workflow_ingest.tail_live_run(repo, event_bus, run)
     agents = {a.cc_agent_id: a for a in await repo.list_workflow_agents("wf_live0003-ctx")}
     assert agents["agc1"].tokens == last_ctx
     assert agents["agc1"].tokens != cross_sum
-    assert agents["agc1"].started_at is not None  # 首行 timestamp → started_at
+    assert agents["agc1"].started_at is not None  # First line's timestamp → started_at
     assert agents["agc1"].last_activity_at is not None
-    assert agents["agc2"].tokens == 0  # journal 已 started 但无 jsonl → cached 记 0
+    assert agents["agc2"].tokens == 0  # The journal says started but there is no jsonl → cached records 0
 
     run = await repo.get_workflow_run("wf_live0003-ctx")
-    assert run.live_tokens == last_ctx  # Σ agents（agc2 记 0）
+    assert run.live_tokens == last_ctx  # Σ agents (agc2 records 0)
     assert run.last_activity_at is not None
-    assert run.status == "running"  # 文件新鲜，绝不误判 interrupted
+    assert run.status == "running"  # The file is fresh; never misjudge it as interrupted
 
 
-# ---------- 6. 水位合并：显式 0 复位；ingest 不携带 offset 不抹 0 ----------
+# ---------- 6. Watermark merging: an explicit 0 resets; an ingest that does not carry an offset does not erase it to 0
+# ----------
 
 
 @pytest.mark.asyncio
@@ -1125,21 +1159,21 @@ async def test_watermark_merge_semantics(
         wf_id="wf_wl-1", status="running", journal_offset=123, live_tokens=42,
         source_fingerprint="111:222", last_activity_at=t1,
     ))
-    # None = 不改
+    # None = do not change
     await repo.upsert_workflow_run(_WFRun(wf_id="wf_wl-1", status=""))
     run = await repo.get_workflow_run("wf_wl-1")
     assert run.journal_offset == 123 and run.live_tokens == 42
     assert run.source_fingerprint == "111:222" and run.last_activity_at == t1
 
-    # 显式 0/'' = 复位（证明未套「新非零胜出」）
+    # An explicit 0/'' = reset (proving the 'new non-zero wins' rule was not applied)
     await repo.upsert_workflow_run(_WFRun(
         wf_id="wf_wl-1", status="", journal_offset=0, source_fingerprint="",
     ))
     run = await repo.get_workflow_run("wf_wl-1")
     assert run.journal_offset == 0 and run.source_fingerprint == ""
-    assert run.live_tokens == 42  # 未携带的列不动
+    assert run.live_tokens == 42  # Columns not carried are left untouched
 
-    # last_activity_at 单调取 max（旧值不回退）
+    # last_activity_at takes the max monotonically (an old value never rolls back)
     await repo.upsert_workflow_run(_WFRun(
         wf_id="wf_wl-1", status="", last_activity_at=t1 - timedelta(hours=1),
     ))
@@ -1150,7 +1184,7 @@ async def test_watermark_merge_semantics(
     run = await repo.get_workflow_run("wf_wl-1")
     assert run.last_activity_at == t2
 
-    # ingest_run_from_file 不携带 offset（None）→ 不被抹 0
+    # ingest_run_from_file does not carry an offset (None) → it is not erased to 0
     await repo.upsert_workflow_run(_WFRun(wf_id=WF_ID, status="running", journal_offset=77))
     wf_file = tmp_path / f"{WF_ID}.json"
     wf_file.write_text(json.dumps(_fixture_snapshot()), encoding="utf-8")
@@ -1158,10 +1192,11 @@ async def test_watermark_merge_semantics(
     run = await repo.get_workflow_run(WF_ID)
     assert run.journal_offset == 77
     st = wf_file.stat()
-    assert run.source_fingerprint == f"{st.st_mtime_ns}:{st.st_size}"  # fp 随 ingest 写入
+    assert run.source_fingerprint == f"{st.st_mtime_ns}:{st.st_size}"  # The fp is written along with the ingest
 
 
-# ---------- 7. fingerprint：同 fp 跳过；同秒不同 size 重 ingest；老行走 mtime 规则 ----------
+# ---------- 7. fingerprint: same fp skips; same second but different size re-ingests; legacy rows use the mtime rule
+# ----------
 
 
 @pytest.mark.asyncio
@@ -1187,7 +1222,7 @@ async def test_fingerprint_skip_and_same_second_reingest(
     run = await repo.get_workflow_run(wf3)
     assert run.source_fingerprint == f"{st0.st_mtime_ns}:{st0.st_size}"
 
-    # 计数 wrapper：reconcile 内部经模块全局名调 ingest_run_from_file
+    # Counting wrapper: reconcile calls ingest_run_from_file internally via the module-global name
     calls: list[str] = []
     orig_ingest = workflow_ingest.ingest_run_from_file
 
@@ -1197,29 +1232,31 @@ async def test_fingerprint_skip_and_same_second_reingest(
 
     monkeypatch.setattr(workflow_ingest, "ingest_run_from_file", counting)
 
-    # 同 fp 二跑 → 不重读
+    # A second run with the same fp → do not re-read
     r2 = await workflow_ingest.reconcile(repo, event_bus, project_dir=root_path)
     assert r2["scanned"] == 1 and len(calls) == 0
 
-    # 同 mtime 秒（ns 级相同）不同 size → fingerprint 抓住，mtime 规则会漏
-    snap["summary"] = snap["summary"] + " —— resumed 追加内容让 size 变化"
+    # Same mtime second (identical at ns level) but a different size → the fingerprint catches it; the mtime rule would
+    # miss it
+    snap["summary"] = snap["summary"] + " — appended content from the resumed run changes the size"
     jf.write_text(json.dumps(snap), encoding="utf-8")
-    _os.utime(jf, ns=(st0.st_atime_ns, st0.st_mtime_ns))  # mtime 回拨到与旧完全相同
+    _os.utime(jf, ns=(st0.st_atime_ns, st0.st_mtime_ns))  # Roll the mtime back to exactly the old value
     assert jf.stat().st_mtime_ns == st0.st_mtime_ns and jf.stat().st_size != st0.st_size
     await workflow_ingest.reconcile(repo, event_bus, project_dir=root_path)
-    assert len(calls) == 1  # 重 ingest（老 mtime 规则下 mtime<=updated_at 会误跳过）
+    assert len(calls) == 1  # Re-ingested (under the old mtime rule, mtime<=updated_at would wrongly skip it)
 
-    # 老行 fp='' → 走原 mtime 规则（MVP 回归）：mtime 旧 → skip；mtime 变新 → ingest
+    # A legacy row with fp='' → use the original mtime rule (MVP regression): old mtime → skip; newer mtime → ingest
     await repo.upsert_workflow_run(_WFRun(wf_id=wf3, status="", source_fingerprint=""))
     await workflow_ingest.reconcile(repo, event_bus, project_dir=root_path)
-    assert len(calls) == 1  # mtime(旧) <= updated_at(刚 upsert) → 跳过
+    assert len(calls) == 1  # mtime (old) <= updated_at (just upserted) → skip
     future_ns = st0.st_mtime_ns + 3_600_000_000_000  # +1h
     _os.utime(jf, ns=(future_ns, future_ns))
     await workflow_ingest.reconcile(repo, event_bus, project_dir=root_path)
-    assert len(calls) == 2  # mtime 变新 → 重 ingest
+    assert len(calls) == 2  # The mtime became newer → re-ingest
 
 
-# ---------- 8. interrupted：四条件打标 + 取 max 不误判 + 终态 2→3 自愈 ----------
+# ---------- 8. interrupted: four-condition marking + taking the max avoids false positives + terminal 2→3 self-healing
+# ----------
 
 
 @pytest.mark.asyncio
@@ -1235,25 +1272,26 @@ async def test_interrupted_mark_and_self_heal(
     ajson = wf_dir / "agent-agd1.jsonl"
     ajson.write_text(_user_line() + _assistant_line(10, 0, 0, 5), encoding="utf-8")
 
-    # 子案例A：仅 journal 陈旧而 agent jsonl 新鲜 → 不打标（条件3 取 max）
+    # Sub-case A: only the journal is stale while an agent jsonl is fresh → do not mark (condition 3 takes the max)
     stale_ns = int((utc_now() - timedelta(seconds=2000)).timestamp() * 1e9)
     _os.utime(journal, ns=(stale_ns, stale_ns))
     res = await workflow_ingest.tail_live_run(repo, event_bus, run)
     assert res["marked_interrupted"] is False
     assert (await repo.get_workflow_run(wf4)).status == "running"
 
-    # 子案例B：全部文件静止 >900s → 四条件满足 → 打标 + emit run_ingested
+    # Sub-case B: all files idle for >900s → all four conditions met → mark + emit run_ingested
     _os.utime(ajson, ns=(stale_ns, stale_ns))
     run = await repo.get_workflow_run(wf4)
     res = await workflow_ingest.tail_live_run(repo, event_bus, run)
     assert res["marked_interrupted"] is True
     run = await repo.get_workflow_run(wf4)
-    assert run.status == "interrupted"  # rank 1→2，只打标不删行
+    assert run.status == "interrupted"  # rank 1→2; only marked, the row is not deleted
     ev = [e for e in await repo.list_events(type_prefix="workflow.")
           if e.type == EventType.WORKFLOW_RUN_INGESTED]
     assert ev and any(e.data.get("stall_seconds", 0) > 900 for e in ev)
 
-    # 子案例C：终态 json 落盘 → reaper 对账 rank 2→3 自愈，live 观察集不再含它
+    # Sub-case C: the terminal json lands → the reaper reconciles rank 2→3 and self-heals; the live observation set no
+    # longer contains it
     from aiteam.api.state_reaper import StateReaper
 
     snap = _fixture_snapshot()
@@ -1263,19 +1301,20 @@ async def test_interrupted_mark_and_self_heal(
     final = json_dir / f"{wf4}.json"
     final.write_text(json.dumps(snap), encoding="utf-8")
     fresh_ns = int((utc_now() + timedelta(seconds=5)).timestamp() * 1e9)
-    _os.utime(final, ns=(fresh_ns, fresh_ns))  # 确保 mtime > run.updated_at（确定性）
+    _os.utime(final, ns=(fresh_ns, fresh_ns))  # Ensure mtime > run.updated_at (deterministic)
 
     reaper = StateReaper(repo, event_bus)
-    await reaper._check_workflow_ingest(repo)  # 24h 窗内 interrupted 仍被对账
+    await reaper._check_workflow_ingest(repo)  # An interrupted run within the 24h window is still reconciled
     run = await repo.get_workflow_run(wf4)
-    assert run.status == "completed"  # 2→3 合法翻转自愈
+    assert run.status == "completed"  # The legal 2→3 flip self-heals
 
-    # 子案例D：wf json 已存在 → tail 走终态优先，绝不再打标
+    # Sub-case D: the wf json already exists → the tail prefers the terminal state and never marks it again
     res = await workflow_ingest.tail_live_run(repo, event_bus, run)
     assert res.get("terminal") is True
 
 
-# ---------- 9. 稳态零 stat：无 running 且 interrupted 出 24h 窗 → 零文件访问 ----------
+# ---------- 9. Steady-state zero stat: no running runs and interrupted ones out of the 24h window → zero file accesses
+# ----------
 
 
 @pytest.mark.asyncio
@@ -1287,7 +1326,8 @@ async def test_steady_state_zero_stat(repo: StorageRepository, event_bus: EventB
     from aiteam.api.state_reaper import StateReaper
     from aiteam.storage.connection import get_session
 
-    # 一条 interrupted 但 updated_at 已出 24h 复查窗（+一条终态，均不该触发 IO）
+    # One interrupted run whose updated_at is already out of the 24h recheck window (+ one terminal run; neither should
+    # trigger IO)
     await repo.upsert_workflow_run(_WFRun(wf_id="wf_zz-old", status="interrupted"))
     await repo.upsert_workflow_run(_WFRun(wf_id="wf_zz-done", status="completed"))
     old = (utc_now() - timedelta(hours=25)).strftime("%Y-%m-%d %H:%M:%S.%f")
@@ -1310,10 +1350,11 @@ async def test_steady_state_zero_stat(repo: StorageRepository, event_bus: EventB
         await reaper._check_workflow_ingest(repo)
     finally:
         monkeypatch.setattr(pathlib.Path, "stat", orig_stat)
-    assert counter["n"] == 0  # 观察集为空 → 整段短路，零文件 stat
+    assert counter["n"] == 0  # The observation set is empty → the whole section short-circuits, with zero file stats
 
 
-# ---------- 10. .output 兜底：真 JSON 富化；软链/0 字节分流跳过；终态列不动 ----------
+# ---------- 10. .output fallback: real JSON enrichment; symlink/0-byte diversion skips; terminal columns untouched
+# ----------
 
 
 @pytest.mark.asyncio
@@ -1333,9 +1374,9 @@ async def test_output_fallback_enrichment(
         wf_id=wf5, project_id=proj.id, status="interrupted", cc_task_id="tskout01",
     ))
 
-    # 真 JSON：7 键子集、缺 runId（绝不能喂 ingest_run_from_file）
+    # Real JSON: a 7-key subset, missing runId (it must never be fed to ingest_run_from_file)
     output = {
-        "summary": "兜底快照摘要",
+        "summary": "Fallback snapshot summary",
         "agentCount": 2,
         "logs": ["l1"],
         "result": None,
@@ -1343,9 +1384,9 @@ async def test_output_fallback_enrichment(
         "totalToolCalls": 7,
         "workflowProgress": [
             {"type": "workflow_agent", "agentId": "age1", "label": "map:x",
-             "phaseIndex": 1, "phaseTitle": "调研", "state": "done", "tokens": 8000},
+             "phaseIndex": 1, "phaseTitle": "Research", "state": "done", "tokens": 8000},
             {"type": "workflow_agent", "agentId": "age2", "label": "reduce:y",
-             "phaseIndex": 2, "phaseTitle": "汇总", "state": "running", "tokens": 4345},
+             "phaseIndex": 2, "phaseTitle": "Synthesis", "state": "running", "tokens": 4345},
         ],
     }
     (tasks_dir / "tskout01.output").write_text(json.dumps(output), encoding="utf-8")
@@ -1356,11 +1397,12 @@ async def test_output_fallback_enrichment(
     assert agents["age1"].label == "map:x" and agents["age1"].tokens == 8000
     assert agents["age2"].phase_index == 2
     run = await repo.get_workflow_run(wf5)
-    assert run.status == "interrupted"  # status 不动
-    assert run.total_tokens == 0  # 终态列不动（只归 wf-json）
-    assert run.live_tokens == 12345 and run.summary == "兜底快照摘要"
+    assert run.status == "interrupted"  # status untouched
+    assert run.total_tokens == 0  # Terminal columns untouched (they belong only to the wf-json)
+    assert run.live_tokens == 12345 and run.summary == "Fallback snapshot summary"
 
-    # 软链 = 普通 Task transcript → 跳过（悬空软链 open 会抛，必须 lstat 分流）
+    # A symlink = an ordinary Task transcript → skip (opening a dangling symlink would raise, so it must be diverted via
+    # lstat)
     wf6 = "wf_out0002-lnk"
     await repo.upsert_workflow_run(_WFRun(
         wf_id=wf6, project_id=proj.id, status="interrupted", cc_task_id="tsklnk02",
@@ -1371,7 +1413,7 @@ async def test_output_fallback_enrichment(
     res = await workflow_ingest.enrich_from_task_output(repo, await repo.get_workflow_run(wf6))
     assert res["ok"] is False and res["reason"] == "no_output"
 
-    # 0 字节 = 任务在跑 → 跳过
+    # 0 bytes = a task is running → skip
     wf7 = "wf_out0003-zero"
     await repo.upsert_workflow_run(_WFRun(
         wf_id=wf7, project_id=proj.id, status="interrupted", cc_task_id="tskzero3",
@@ -1382,7 +1424,7 @@ async def test_output_fallback_enrichment(
 
 
 # ============================================================
-# 跨项目修复 A+B+C 回归（2026-07-06 巡检发现的盲区三连症）
+# Cross-project fixes A+B+C regression (the blind-spot triple found by the 2026-07-06 inspection)
 # ============================================================
 
 
@@ -1390,7 +1432,8 @@ async def test_output_fallback_enrichment(
 async def test_receipt_persists_transcript_dir(
     client: AsyncClient, repo: StorageRepository
 ):
-    """修复A：回执的 Transcript dir 必须持久化到 run 行（live/终态直接寻址的根基）。"""
+    """Fix A: the receipt's Transcript dir must be persisted to the run row (the foundation for direct addressing in
+    live/terminal states)."""
     post = await client.post(
         "/api/hooks/event",
         json={
@@ -1404,7 +1447,7 @@ async def test_receipt_persists_transcript_dir(
     assert post.status_code == 200
     run = await repo.get_workflow_run(WF_ID)
     assert run is not None
-    assert run.transcript_dir, "transcript_dir 应从回执持久化"
+    assert run.transcript_dir, "transcript_dir should be persisted from the receipt"
     assert WF_ID in run.transcript_dir
 
 
@@ -1412,13 +1455,15 @@ async def test_receipt_persists_transcript_dir(
 async def test_receipt_strict_project_attribution(
     client: AsyncClient, repo: StorageRepository, tmp_path
 ):
-    """修复C：project_id 只按发起 cwd → 已注册项目最长前缀解析；解析不到留空绝不猜。
+    """Fix C: project_id is resolved only from the launching cwd → the longest prefix among registered projects; when it
+    cannot be resolved it stays empty and is never guessed.
 
-    旧 _find_leader 跨会话回退曾把未注册项目的 run 归到别的项目（隔离违规实录）。
+    The old _find_leader cross-session fallback once attributed runs of unregistered projects to other projects (a
+    recorded isolation violation).
     """
     proj = await repo.create_project(name="attr-proj", root_path=str(tmp_path / "projA"))
 
-    # cwd 落在已注册项目内 → 归属该项目
+    # The cwd falls inside a registered project → attributed to that project
     r1 = await client.post(
         "/api/hooks/event",
         json={
@@ -1434,7 +1479,7 @@ async def test_receipt_strict_project_attribution(
     run1 = await repo.get_workflow_run(WF_ID)
     assert run1 is not None and run1.project_id == proj.id
 
-    # cwd 在任何已注册项目之外 → 留空，绝不猜
+    # The cwd is outside every registered project → leave it empty, never guess
     other_receipt = RECEIPT.replace(WF_ID, "wf_attr2-9999")
     r2 = await client.post(
         "/api/hooks/event",
@@ -1456,7 +1501,8 @@ async def test_receipt_strict_project_attribution(
 async def test_candidate_slugs_session_fallback(
     repo: StorageRepository, tmp_path, monkeypatch
 ):
-    """修复B：无 transcript_dir 的存量行按 session_id 全局反查 slug（未注册项目可达）。"""
+    """Fix B: legacy rows without a transcript_dir are looked up globally by session_id to find the slug (reachable
+    for unregistered projects)."""
     from aiteam.api import workflow_ingest as wi
     from aiteam.types import WorkflowRun
 
@@ -1468,7 +1514,7 @@ async def test_candidate_slugs_session_fallback(
     slugs = await wi._candidate_slugs(repo, run)
     assert "slug-unregistered" in slugs
 
-    # A 存在 transcript_dir 的新行不进回退路径
+    # A: a new row that has a transcript_dir does not enter the fallback path
     run2 = WorkflowRun(
         wf_id="wf_fb-2", session_id="sess-fb-1", transcript_dir=str(tmp_path / "t")
     )
@@ -1480,8 +1526,10 @@ async def test_candidate_slugs_session_fallback(
 async def test_stop_refreshes_leader_model(
     repo: StorageRepository, event_bus: EventBus, tmp_path: Path
 ):
-    """Stop 每轮尾读 transcript 刷新 Leader 真实模型（2026-07-07 用户四次实测的
-    4-7 幽灵战役收官回归——曾因 hook_translator 缺 import json 被 try 静默吞掉）。"""
+    """At the end of each Stop turn, the transcript is read to refresh the Leader's real model (the concluding
+    regression for the
+    4-7 ghost campaign from the user's four live tests on 2026-07-07 — it was once silently swallowed by a try
+    because hook_translator was missing import json)."""
     from aiteam.api.hook_translator import HookTranslator
 
     team = await repo.create_team(name="t-lm", mode="coordinate")
@@ -1501,8 +1549,10 @@ async def test_stop_refreshes_leader_model(
 
 
 def test_detect_live_session_file_truth(tmp_path, monkeypatch):
-    """Leader 身份 = 项目目录下最新 CC 主会话（文件真相源直读，零注册依赖）。
-    用户裁定 2026-07-07：模型/活跃状态后端自动检测，不经 hook 注册链。"""
+    """Leader identity = the newest CC main session under the project directory (read directly from the file source of
+    truth, with zero registration dependency).
+    User ruling 2026-07-07: the model/activity state is auto-detected by the backend, not via the hook registration
+    chain."""
     from aiteam.api import session_probe as sp
 
     base = tmp_path / "projects"
@@ -1517,23 +1567,24 @@ def test_detect_live_session_file_truth(tmp_path, monkeypatch):
     )
     import os
 
-    os.utime(old, (1, 1))  # 旧会话按 mtime 落后
-    # 子 agent 目录不应干扰主会话 glob
+    os.utime(old, (1, 1))  # The old session lags by mtime
+    # A sub-agent directory should not interfere with the main-session glob
     (slug_dir / "sess-new").mkdir()
     monkeypatch.setattr(sp, "_claude_projects_dir", lambda: base)
 
     probe = sp.detect_live_session("/Users/x/My Proj")
     assert probe is not None
     assert probe["session_id"] == "sess-new"
-    assert probe["model"] == "claude-b"  # synthetic 合成行被跳过
-    assert probe["live"] is True  # 刚写入，mtime 在 15 分钟窗口内
+    assert probe["model"] == "claude-b"  # synthetic synthetic rows are skipped
+    assert probe["live"] is True  # Just written; the mtime is within the 15-minute window
 
     assert sp.detect_live_session("/no/such/project") is None
 
 
 def test_detect_live_sessions_multi_ceo(tmp_path, monkeypatch):
-    """多会话并行 = 每个活跃 session 一条 CEO-<英文名>（用户裁定 2026-07-10）：
-    活跃窗内全部返回、名字确定性且不重复、全静默时退回最新一条。"""
+    """Parallel multi-session = one CEO-<English name> per active session (user ruling 2026-07-10):
+    all sessions within the active window are returned, the names are deterministic and non-duplicated, and when all
+    are silent it falls back to the newest one."""
     from aiteam.api import session_probe as sp
 
     base = tmp_path / "projects"
@@ -1547,24 +1598,24 @@ def test_detect_live_sessions_multi_ceo(tmp_path, monkeypatch):
     stale.write_text('{"type":"assistant","message":{"model":"claude-old"}}\n')
     import os
 
-    os.utime(stale, (1, 1))  # 活跃窗外，不应出现在并列清单
+    os.utime(stale, (1, 1))  # Outside the active window; should not appear in the parallel list
     monkeypatch.setattr(sp, "_claude_projects_dir", lambda: base)
 
     sessions = sp.detect_live_sessions("/Users/x/Multi Proj")
-    assert len(sessions) == 2  # 只出活跃窗内两条，stale 被排除
+    assert len(sessions) == 2  # Only the two within the active window are returned; the stale one is excluded
     ids = {s["session_id"] for s in sessions}
     assert ids == {"sess-aaaa", "sess-bbbb"}
     assert all(s["live"] is True for s in sessions)
     names = [s["name"] for s in sessions]
-    assert len(set(names)) == 2  # 不重复
+    assert len(set(names)) == 2  # No duplicates
     assert all(n in sp.CEO_NAMES for n in names)
-    # 确定性：重复探测同一批会话，分配结果不变（刷新不换名）
+    # Determinism: probing the same batch of sessions repeatedly yields the same assignment (a refresh does not rename)
     again = sp.detect_live_sessions("/Users/x/Multi Proj")
     assert {s["session_id"]: s["name"] for s in again} == {
         s["session_id"]: s["name"] for s in sessions
     }
 
-    # 全静默：只退回最新一条，live=False（mtime 全部拨到远古过去）
+    # All silent: fall back to only the newest one, with live=False (all mtimes pushed to the distant past)
     os.utime(a, (100_000, 100_000))
     os.utime(b, (50_000, 50_000))
     idle = sp.detect_live_sessions("/Users/x/Multi Proj")
@@ -1577,8 +1628,9 @@ def test_detect_live_sessions_multi_ceo(tmp_path, monkeypatch):
 async def test_stop_ignores_synthetic_model(
     repo: StorageRepository, event_bus: EventBus, tmp_path: Path
 ):
-    """compact 会写入 model="<synthetic>" 的合成 assistant 行——若恰为尾部
-    最后一条，不得污染 Leader 模型（2026-07-07 巡检实测：DB 出现 <synthetic>）。"""
+    """compact writes synthetic assistant rows with model="<synthetic>" — if such a row happens to be the last one
+    at the tail, it must not pollute the Leader's model (inspection record, 2026-07-07: the DB contained
+    <synthetic>)."""
     from aiteam.api.hook_translator import HookTranslator
 
     team = await repo.create_team(name="t-syn", mode="coordinate")
@@ -1601,8 +1653,10 @@ async def test_stop_ignores_synthetic_model(
 async def test_tool_event_revives_leader(
     repo: StorageRepository, event_bus: EventBus
 ):
-    """工具事件在流 = 对话进行中：offline Leader 应被复活为 busy（曾实测
-    "正在对话却显示关闭"——5 分钟心跳在长回合中误杀且无人复活）。"""
+    """A stream of tool events = a conversation in progress: an offline Leader should be revived to busy (once observed
+    live:
+    'showing as closed while actually conversing' — the 5-minute heartbeat falsely killed it during a long turn and
+    nobody revived it)."""
     from aiteam.api.hook_translator import HookTranslator
 
     team = await repo.create_team(name="t-rv", mode="coordinate")
@@ -1617,7 +1671,7 @@ async def test_tool_event_revives_leader(
 
 
 # ============================================================
-# 服务端写面三条 med 修复的回归测试（任务 6f313f77）
+# Regression tests for the three server-side write-surface med fixes (task 6f313f77)
 # ============================================================
 
 
@@ -1625,30 +1679,37 @@ async def test_tool_event_revives_leader(
 async def test_upsert_workflow_run_reports_terminal_transition_atomically(
     repo: StorageRepository,
 ):
-    """WP10 根治：把「本次是否首次转 completed / 首次入终态」的判定收进 upsert 事务内
-    原子返回，替代事务外先 get→was_completed 的 check-then-act（三条无串行 ingest 驱动
-    交错时会重复 emit workflow.completed）。这里锁定跃迁判定的契约。"""
+    """WP10 root fix: move the decision of 'whether this is the first transition to completed / first entry into a
+    terminal state' inside the upsert transaction,
+    returning it atomically, replacing the out-of-transaction get→was_completed check-then-act (when three unserialized
+    ingest drivers
+    interleave, workflow.completed could be emitted repeatedly). This locks down the contract of the transition
+    decision."""
     from aiteam.types import WorkflowRun
 
-    # 首见 running：非完成、非终态。
+    # First seen as running: not completed, not terminal.
     r1 = await repo.upsert_workflow_run(WorkflowRun(wf_id="wf_trans-1", status="running"))
     assert (r1.became_completed, r1.became_terminal) == (False, False)
-    # running → completed：首次转移，两者皆 True。
+    # running → completed: the first transition; both are True.
     r2 = await repo.upsert_workflow_run(WorkflowRun(wf_id="wf_trans-1", status="completed"))
     assert (r2.became_completed, r2.became_terminal) == (True, True)
-    # 再 upsert 一次 completed：已完成，不再是转移——这正是防重复 emit 的关键位。
+    # Upserting completed once more: already completed, no longer a transition — this is exactly the key spot that
+    # prevents duplicate emits.
     r3 = await repo.upsert_workflow_run(WorkflowRun(wf_id="wf_trans-1", status="completed"))
     assert (r3.became_completed, r3.became_terminal) == (False, False)
-    # 直接首见即 completed（reaper 首扫已终态的老 run）：算首次转移。
+    # First seen directly as completed (the reaper's first scan finds an old run already terminal): counts as a first
+    # transition.
     r4 = await repo.upsert_workflow_run(WorkflowRun(wf_id="wf_trans-2", status="completed"))
     assert (r4.became_completed, r4.became_terminal) == (True, True)
-    # running → killed：入终态但非 completed（驱动 run_ingested，不驱动 completed）。
+    # running → killed: enters a terminal state but is not completed (drives run_ingested, not completed).
     await repo.upsert_workflow_run(WorkflowRun(wf_id="wf_trans-3", status="running"))
     rk = await repo.upsert_workflow_run(WorkflowRun(wf_id="wf_trans-3", status="killed"))
     assert (rk.became_completed, rk.became_terminal) == (False, True)
-    # killed → completed（等秩终态互转，resumeFromRunId 场景）：became_completed 仍 True
-    # （与旧 was_completed 语义一致：prev!=completed 即 emit），但已是终态故 became_terminal
-    # False——不重复 emit run_ingested。
+    # killed → completed (an equal-rank terminal-to-terminal transition, the resumeFromRunId scenario): became_completed
+    # is still True
+    # (consistent with the old was_completed semantics: emit whenever prev!=completed), but it is already terminal, so
+    # became_terminal is
+    # False — run_ingested is not emitted again.
     rkc = await repo.upsert_workflow_run(WorkflowRun(wf_id="wf_trans-3", status="completed"))
     assert (rkc.became_completed, rkc.became_terminal) == (True, False)
 
@@ -1657,15 +1718,17 @@ async def test_upsert_workflow_run_reports_terminal_transition_atomically(
 async def test_ingest_concurrent_emits_completed_once(
     repo: StorageRepository, event_bus: EventBus, tmp_path: Path
 ):
-    """WP10 并发场景：同一「新完成」的 wf 文件被多个无串行驱动（reaper 对账 / SessionStart
-    对账 / hook 回执 ingest）同时处理，workflow.completed 只能落一条。"""
+    """WP10 concurrency scenario: the same 'newly completed' wf file is processed simultaneously by multiple
+    unserialized drivers (reaper reconciliation / SessionStart
+    reconciliation / hook receipt ingest); workflow.completed must land exactly once."""
     import asyncio
 
     from aiteam.types import WorkflowRun
 
     wf_file = tmp_path / f"{WF_ID}.json"
     wf_file.write_text(json.dumps(_fixture_snapshot()), encoding="utf-8")
-    # 预置 running 骨架，逼近「running→completed 首次跃迁」的真实并发起点。
+    # Pre-seed a running skeleton, approximating the real concurrency starting point of a 'running→completed first
+    # transition'.
     await repo.upsert_workflow_run(WorkflowRun(wf_id=WF_ID, status="running"))
 
     results = await asyncio.gather(
@@ -1674,19 +1737,22 @@ async def test_ingest_concurrent_emits_completed_once(
             for _ in range(3)
         ]
     )
-    # 直接度量「emit 决策」次数——WP10 治的就是这个：三条驱动交错，只有一条能拿到
-    # running→completed 跃迁并发射 workflow.completed，其余 became_completed=False。
-    #（不查 list_events：内存库单连接拓扑下并发 gather 会丢部分 event 持久化，是测试
-    #  环境伪影；生产独立连接 + WAL 无此问题。返回值里的 emitted 才是 emit 决策的真相。）
+    # Measure the number of 'emit decisions' directly — this is what WP10 fixes: three interleaved drivers, only one can
+    # obtain the
+    # running→completed transition and emit workflow.completed; the rest get became_completed=False.
+    # (We do not check list_events: under the in-memory database's single-connection topology, concurrent gathers lose
+    # some event persistence — a test
+    # environment artifact; production uses independent connections + WAL and has no such issue. The emitted flag in the
+    # return value is the truth about the emit decision.)
     assert sum(1 for r in results if r.get("emitted")) == 1
     assert sum(1 for r in results if r.get("new_completion")) == 1
 
 
 @pytest.mark.asyncio
 async def test_agents_cc_tool_use_id_partial_unique(repo: StorageRepository):
-    """B1：agents.cc_tool_use_id 加 partial unique index（WHERE NOT NULL）。两条
-    create-if-absent 路径并发时第二条 create 触 IntegrityError（由调用方吞）。NULL 豁免，
-    leader / 普通 api agent 可继续共享 NULL。"""
+    """B1: a partial unique index on agents.cc_tool_use_id (WHERE NOT NULL). When two
+    create-if-absent paths race, the second create hits an IntegrityError (swallowed by the caller). NULL is exempt, so
+    leader / ordinary api agents can continue to share NULL."""
     from sqlalchemy.exc import IntegrityError
 
     team = await repo.create_team(name="t-ccdup", mode="coordinate")
@@ -1698,11 +1764,13 @@ async def test_agents_cc_tool_use_id_partial_unique(repo: StorageRepository):
             team_id=team.id, name="wf-2", role="workflow-subagent",
             cc_tool_use_id="cc-DUP",
         )
-    # NULL cc 的多行可共存（leader 不带 cc_tool_use_id，绝不被约束波及）。
+    # Multiple rows with a NULL cc can coexist (the leader carries no cc_tool_use_id and must never be affected by the
+    # constraint).
     await repo.create_agent(team_id=team.id, name="ld-1", role="leader")
     await repo.create_agent(team_id=team.id, name="ld-2", role="leader")
-    # 空串 cc = 「无 cc id」（agent_id 被超长 payload 裁掉），同样豁免——两个各自独立，
-    # 绝不能被唯一约束误并成一行。
+    # An empty-string cc = 'no cc id' (the agent_id was truncated away by an over-long payload) is likewise exempt — two
+    # such rows are each independent
+    # and must never be wrongly merged into one row by the unique constraint.
     await repo.create_agent(
         team_id=team.id, name="e-1", role="workflow-subagent", cc_tool_use_id=""
     )
@@ -1719,9 +1787,11 @@ async def test_agents_cc_tool_use_id_partial_unique(repo: StorageRepository):
 async def test_register_workflow_subagent_swallows_dup_create(
     repo: StorageRepository, event_bus: EventBus, monkeypatch
 ):
-    """B1：并发 create 竞态——本协程顶部 dedup find 落空（走 create），但 create 时行已
-    被先到方占位 → IntegrityError → 吞掉 → re-fetch 命中既有行 → update 收敛，不产生双行、
-    不向 hook 端点抛 500。"""
+    """B1: a concurrent create race — the dedup find at the top of this coroutine misses (takes the create path), but by
+    create time the row has
+    been claimed by an earlier arrival → IntegrityError → swallowed → the re-fetch hits the existing row → update
+    converges; no duplicate rows,
+    and no 500 is thrown to the hook endpoint."""
     from aiteam.api.hook_translator import WORKFLOW_AGENT_TYPE, HookTranslator
 
     ht = HookTranslator(repo=repo, event_bus=event_bus)
@@ -1742,8 +1812,8 @@ async def test_register_workflow_subagent_swallows_dup_create(
     async def fake_find(cid: str):
         calls["n"] += 1
         if calls["n"] == 1:
-            return None  # 顶部 dedup 落空 → 逼入 create 路径
-        return await real_find(cid)  # except 内 re-fetch → 命中 winner
+            return None  # The top-level dedup missed → forced into the create path
+        return await real_find(cid)  # The re-fetch inside except → hits the winner
 
     monkeypatch.setattr(repo, "find_agent_by_cc_id", fake_find)
 
@@ -1764,9 +1834,11 @@ async def test_register_workflow_subagent_swallows_dup_create(
 async def test_session_end_exempts_running_workflow_subagent(
     repo: StorageRepository, event_bus: EventBus
 ):
-    """WP6：SessionEnd 不再无条件 offline 全会话 agent——仍在跑的 workflow 子 agent
-    （role=workflow-subagent，run 可远长于发起会话）豁免，与 kind=workflow 队豁免对称；
-    普通 agent 照常 offline。"""
+    """WP6: SessionEnd no longer offlines all of a session's agents unconditionally — workflow sub-agents that are still
+    running
+    (role=workflow-subagent; a run can far outlive the launching session) are exempt, symmetric with the kind=workflow
+    team exemption;
+    ordinary agents go offline as usual."""
     from aiteam.api.hook_translator import WORKFLOW_AGENT_TYPE, HookTranslator
 
     sess = "sess-end-wf"
@@ -1792,8 +1864,8 @@ async def test_session_end_exempts_running_workflow_subagent(
 
     wf_after = await repo.get_agent(wf_member.id)
     assert str(wf_after.status).endswith("busy"), (
-        "在跑的 workflow 子 agent 不应被 SessionEnd offline"
+        "A running workflow sub-agent should not be offlined by SessionEnd"
     )
-    assert wf_after.session_id == sess, "workflow 子 agent 的 session_id 应保留"
+    assert wf_after.session_id == sess, "A workflow sub-agent's session_id should be preserved"
     normal_after = await repo.get_agent(normal.id)
-    assert str(normal_after.status).endswith("offline"), "普通 agent 应照常 offline"
+    assert str(normal_after.status).endswith("offline"), "An ordinary agent should go offline as usual"

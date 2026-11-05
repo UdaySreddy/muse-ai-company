@@ -1,6 +1,6 @@
-"""集成测试 — pytest fixtures.
+"""Integration tests — pytest fixtures.
 
-每个测试使用独立的临时SQLite数据库，通过FastAPI TestClient执行端到端测试。
+Each test uses an independent temporary SQLite database and runs end-to-end tests through the FastAPI TestClient.
 """
 
 from __future__ import annotations
@@ -23,22 +23,22 @@ from aiteam.storage.repository import StorageRepository
 
 @pytest.fixture()
 def integration_client(tmp_path, monkeypatch):
-    """创建集成测试客户端，每个测试独立的内存SQLite数据库."""
-    # 配置文件隔离：team_config 的 CONFIG_FILE 是指向仓内真实文件的模块常量，
-    # 测试打真实 API 曾把 'integ'/fixer 测试数据写进 checked-in 的
-    # plugin/config/team-defaults.json（2026-07-13 实录）——重定向到 tmp
+    """Create an integration test client, with an independent in-memory SQLite database per test."""
+    # Config-file isolation: team_config's CONFIG_FILE is a module constant pointing at a real file in the repo;
+    # tests hitting the real API once wrote 'integ'/fixer test data into the checked-in
+    # plugin/config/team-defaults.json (recorded 2026-07-13) — redirect it to tmp
     from aiteam.api.routes import team_config
 
     monkeypatch.setattr(team_config, "CONFIG_DIR", tmp_path)
     monkeypatch.setattr(team_config, "CONFIG_FILE", tmp_path / "team-defaults.json")
 
-    # 初始化独立的存储层
+    # Initialize an independent storage layer
     repo = StorageRepository(db_url="sqlite+aiosqlite://")
     asyncio.get_event_loop().run_until_complete(repo.init_db())
     memory = MemoryStore(repository=repo)
     manager = TeamManager(repository=repo, memory=memory)
 
-    # 注入到deps模块（含EventBus、TaskWallEngine）
+    # Inject into the deps module (including EventBus and TaskWallEngine)
     event_bus = EventBus(repo=repo)
     task_wall_engine = TaskWallEngine(repo=repo)
     deps._repository = repo
@@ -49,7 +49,7 @@ def integration_client(tmp_path, monkeypatch):
 
     app = create_app()
 
-    # 覆盖lifespan：测试中不需要自动init/cleanup
+    # Override the lifespan: no automatic init/cleanup is needed in tests
     @asynccontextmanager
     async def test_lifespan(app):
         yield
@@ -59,7 +59,7 @@ def integration_client(tmp_path, monkeypatch):
     client = TestClient(app)
     yield client
 
-    # 清理
+    # Cleanup
     asyncio.get_event_loop().run_until_complete(close_db())
     deps._repository = None
     deps._memory_store = None
@@ -70,5 +70,5 @@ def integration_client(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def repo_and_client(integration_client):
-    """同时提供repository和client，用于需要直接操作数据库的测试."""
+    """Provide both the repository and the client, for tests that need to manipulate the database directly."""
     return deps._repository, integration_client

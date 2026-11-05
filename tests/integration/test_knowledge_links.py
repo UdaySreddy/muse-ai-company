@@ -1,17 +1,18 @@
-"""知识层 P1a — 跨域引用图谱集成测试（docs/knowledge-layer-design.md）。
+"""Knowledge layer P1a — cross-domain reference graph integration tests (docs/knowledge-layer-design.md).
 
-覆盖：抽取器纯函数 → memo/report 写入自动建边 → 正反向查询 → 递归扇出回溯。
+Covered: extractor pure functions → automatic edge creation on memo/report writes → forward and reverse queries →
+recursive fan-out backtracking.
 """
 
 from __future__ import annotations
 
 from aiteam.api.link_extract import extract_refs
 
-# ── 抽取器单测（纯函数，中英混排）──
+# ── Extractor unit tests (pure functions, mixed Chinese and English) ──
 
 
 def test_extract_wf_and_commit_with_fix_cue():
-    text = "修复了 wf_cbad7348-934 的建队断链，commit 3a31d8b 已提交并验证"
+    text = "Fixed the team-creation broken link in wf_cbad7348-934, commit 3a31d8b has been committed and verified"
     refs = {(r.to_kind, r.to_id): r for r in extract_refs(text)}
     assert ("run", "wf_cbad7348-934") in refs
     assert refs[("run", "wf_cbad7348-934")].link_type == "fixes"
@@ -20,15 +21,15 @@ def test_extract_wf_and_commit_with_fix_cue():
 
 
 def test_extract_bare_hex_without_cue_is_ignored():
-    # 无 commit 语境词的裸 hex（如日志片段）不得误抽
-    refs = extract_refs("会话 abff40af 的数据里出现了 deadbeef99 字样")
+    # A bare hex string with no commit context word (e.g. a log fragment) must not be falsely extracted
+    refs = extract_refs("The token deadbeef99 appeared in the data of session abff40af")
     assert all(r.to_kind != "commit" for r in refs)
 
 
 def test_extract_uuid_and_memory_link():
     text = (
-        "关联任务 8d1feb9e-9485-416f-9dae-c884598a1fb6，"
-        "背景见 [[ai-team-os-attribution-principle]]"
+        "Related task 8d1feb9e-9485-416f-9dae-c884598a1fb6,"
+        "Background: see [[ai-team-os-attribution-principle]]"
     )
     kinds = {(r.to_kind, r.to_id) for r in extract_refs(text)}
     assert ("task", "8d1feb9e-9485-416f-9dae-c884598a1fb6") in kinds
@@ -36,7 +37,7 @@ def test_extract_uuid_and_memory_link():
 
 
 def test_extract_dedup_and_context_snapshot():
-    text = "wf_12345678 出现两次：wf_12345678 也在这里"
+    text = "wf_12345678 appears twice: wf_12345678 is also here"
     refs = extract_refs(text)
     assert len([r for r in refs if r.to_kind == "run"]) == 1
     assert "wf_12345678" in refs[0].context
@@ -47,7 +48,7 @@ def test_extract_empty_and_plain_chinese():
     assert extract_refs("纯中文内容没有任何引用标识") == []
 
 
-# ── 集成：写入自动建边 → 查询 → 扇出 ──
+# ── Integration: writes automatically create edges → queries → fan-out ──
 
 
 def test_memo_write_creates_links_and_fanout(repo_and_client):
@@ -64,23 +65,23 @@ def test_memo_write_creates_links_and_fanout(repo_and_client):
     )
     task = loop.run_until_complete(
         repo.create_task(
-            team_id=team.id, title="知识层测试任务", project_id=project_id
+            team_id=team.id, title="Knowledge layer test task", project_id=project_id
         )
     )
     task_id = task.id
 
-    # 写 memo：引用一个 run 和一个 commit（带修复语境）
+    # Write a memo: reference a run and a commit (with a fix context)
     r = client.post(
         f"/api/tasks/{task_id}/memo",
         json={
-            "content": "修复 wf_deadbeef 的断链，commit abc1234 提交",
+            "content": "Fixed the broken link in wf_deadbeef, commit abc1234 committed",
             "author": "leader",
             "type": "progress",
         },
     )
     assert r.status_code == 200
 
-    # 正向查：该 run 被谁引用（in 方向）
+    # Forward lookup: who references this run (in direction)
     links = client.get(
         "/api/links", params={"kind": "run", "id": "wf_deadbeef", "direction": "in"}
     ).json()["data"]
@@ -89,7 +90,7 @@ def test_memo_write_creates_links_and_fanout(repo_and_client):
     assert links[0]["link_type"] == "fixes"
     assert links[0]["project_id"] == project_id
 
-    # 扇出：从 commit 出发 2 跳应可达 run（经同一条 memo）
+    # Fan-out: starting from the commit, the run should be reachable in 2 hops (via the same memo)
     fanout = client.get(
         "/api/links/fanout", params={"kind": "commit", "id": "abc1234", "depth": 2}
     ).json()["data"]
@@ -100,7 +101,8 @@ def test_memo_write_creates_links_and_fanout(repo_and_client):
 
 def test_duplicate_memo_links_are_idempotent(repo_and_client):
     repo, client = repo_and_client
-    # 幂等性验证针对同一 from_id 的 UNIQUE 冲突，用 repo 直插模拟回扫重跑
+    # Idempotency verification targets UNIQUE conflicts for the same from_id; simulate a rescan rerun by inserting
+    # directly via the repo
     import asyncio
 
     from aiteam.types import KnowledgeLink
@@ -115,7 +117,7 @@ def test_duplicate_memo_links_are_idempotent(repo_and_client):
     loop = asyncio.get_event_loop()
     n1 = loop.run_until_complete(repo.insert_knowledge_links([lk]))
     n2 = loop.run_until_complete(repo.insert_knowledge_links([lk]))
-    assert n1 == 1 and n2 == 0  # 重跑零新增
+    assert n1 == 1 and n2 == 0  # A rerun adds nothing new
 
 
 def test_report_write_creates_links(repo_and_client):
@@ -125,7 +127,7 @@ def test_report_write_creates_links(repo_and_client):
         json={
             "author": "leader",
             "topic": "kl-report",
-            "content": "分析 wf_aabbccdd 的运行数据，参考 [[some-memory-note]]",
+            "content": "Analyzed the run data of wf_aabbccdd, see [[some-memory-note]]",
         },
     )
     assert r.status_code == 201
@@ -141,7 +143,7 @@ def test_report_write_creates_links(repo_and_client):
     assert len(mem) == 1
 
 
-# ── P1b：统一检索三臂 RRF ──
+# ── P1b: Unified search, three-arm RRF ──
 
 
 def test_unified_search_bm25_chinese(repo_and_client):
@@ -183,33 +185,33 @@ def test_unified_search_graph_arm_by_id(repo_and_client):
 
     loop = asyncio.get_event_loop()
     project = loop.run_until_complete(
-        repo.create_project(name="图谱臂测试", root_path="/tmp/us-graph")
+        repo.create_project(name="Graph arm test", root_path="/tmp/us-graph")
     )
     team = loop.run_until_complete(
         repo.create_team(name="ga-team", mode="coordinate", project_id=project.id)
     )
     task = loop.run_until_complete(
-        repo.create_task(team_id=team.id, title="观测修复", project_id=project.id)
+        repo.create_task(team_id=team.id, title="Observability fix", project_id=project.id)
     )
     client.post(
         f"/api/tasks/{task.id}/memo",
         json={
-            "content": "修复 wf_99887766 的断链问题，commit fedcba9 提交",
+            "content": "Fixed the broken-link issue in wf_99887766, commit fedcba9 committed",
             "author": "leader",
             "type": "progress",
         },
     )
 
-    # 用 run ID 查询 → 图谱臂应召回引用它的 memo
+    # Query by run ID → the graph arm should recall the memo that references it
     r = client.get("/api/search", params={"q": "wf_99887766"}).json()["data"]
-    assert any(x["kind"] == "task_memo" for x in r), "图谱臂应召回引用该 run 的 memo"
+    assert any(x["kind"] == "task_memo" for x in r), "The graph arm should recall the memo that references this run"
 
-    # 用关联 commit 查询 → 2 跳扇出仍可达同一条 memo
+    # Query by the associated commit → the same memo is still reachable within 2 hops of fan-out
     r2 = client.get("/api/search", params={"q": "fedcba9"}).json()["data"]
     assert any(x["kind"] == "task_memo" for x in r2)
 
 
 def test_unified_search_empty_and_no_hit(repo_and_client):
     repo, client = repo_and_client
-    r = client.get("/api/search", params={"q": "zzz不存在的查询词xyz"}).json()["data"]
+    r = client.get("/api/search", params={"q": "zzz nonexistent query term xyz"}).json()["data"]
     assert isinstance(r, list)

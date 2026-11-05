@@ -155,9 +155,12 @@ async def test_stage0_e2e_new_repo_to_summary_completed(
     #    underneath (storage helpers + stage advance).
     summary = (
         "## Claude Code\n"
-        "核心功能: Anthropic 官方 Claude AI 编程助手, 通过 MCP 协议扩展工具能力。\n"
-        "定位: agent-framework 生态中的官方实现, 与 IDE / 终端深度集成。\n"
-        "适用场景: AI Team OS 想升级 sub-agent 调度时可直接对标 / 借鉴 prompt 模板。"
+        "Core features: Anthropic's official Claude AI coding assistant, "
+            "extended with tool capabilities via the MCP protocol.\n"
+        "Positioning: the official implementation in the agent-framework "
+            "ecosystem, deeply integrated with IDEs / terminals.\n"
+        "Use case: AI Team OS can benchmark directly against it / "
+            "borrow its prompt templates when upgrading sub-agent dispatch."
     )
     profile = await repo.update_profile_shallow_summary(
         intent.repo_id,
