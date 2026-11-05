@@ -1,11 +1,11 @@
-"""单次实测卡的取数单测 —— 归因 v1 §5.2 ④。
+"""Data-fetching unit tests for the single-measurement card — attribution v1 §5.2 ④.
 
-这张卡**显式豁免于覆盖率闸**，所以它是全页面唯一一处"没有分母的数字"。豁免能成立
-只因为它交了代价：数据只能来自现场解析一份 transcript。下面每一条测的都是那个代价
-还在不在 —— 代价一旦失效，豁免就变成了绕过闸门的后门。
+This card is **explicitly exempt from the coverage gate**, so it is the only place on the whole page with "a number without a denominator". The exemption holds
+only because it paid the price: the data can only come from parsing a transcript live. Every test below tests whether that price
+is still being paid — once the price lapses, the exemption becomes a back door around the gate.
 
-最重要的一条是 :class:`TestNoBareTotal`：解析器内部会算一个 ``total_tokens``（它自己
-要用），而呈现面上不许出现任何合计。这两件事之间只隔着一次"顺手透传"。
+The most important is :class:`TestNoBareTotal`: the parser internally computes a ``total_tokens`` (it needs it
+itself), while the presentation surface must show no total. Between the two there is only one "convenient passthrough".
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ USAGE = {
 
 
 class TestNoBareTotal:
-    """呈现面上不许出现合计 —— 解析器内部那个 total_tokens 必须被丢掉。"""
+    """No total may appear on the presentation surface — the parser's internal total_tokens must be discarded."""
 
     def test_payload_has_four_layers_and_no_total(self, tmp_path):
         p = tmp_path / "t.jsonl"
@@ -59,19 +59,19 @@ class TestNoBareTotal:
         assert payload is not None
         for layer in TOKEN_LAYERS:
             assert layer in payload
-        # 实测 cache_read 占 95.6%，任何"总量"都是"缓存读取量"的同义词（§1.2）
+        # Measured cache_read is 95.6%; any "total" is a synonym for "cache read volume" (§1.2)
         assert "total_tokens" not in payload
-        assert not any("total" in key for key in payload), f"出现了合计字段: {sorted(payload)}"
+        assert not any("total" in key for key in payload), f"A total field appeared: {sorted(payload)}"
 
     def test_metric_is_always_stamped(self, tmp_path):
         p = tmp_path / "t.jsonl"
         _write_transcript(p, [_assistant("r1", USAGE)])
         payload = usage_probe.probe_dispatch(str(p))
-        assert payload["metric"] == "usage_sum", "一个 token 数脱离口径就没有意义"
+        assert payload["metric"] == "usage_sum", "A token number without a metric is meaningless"
 
 
 class TestNoDataIsNotZero:
-    """文件不在 ≠ 用了 0 —— 前者必须让卡片整个不出现，而不是显示一排 0。"""
+    """File absent ≠ used 0 — the former must make the whole card absent, not display a row of zeros."""
 
     def test_missing_file_returns_none(self, tmp_path):
         assert usage_probe.probe_dispatch(str(tmp_path / "nope.jsonl")) is None
@@ -83,10 +83,10 @@ class TestNoDataIsNotZero:
 
 
 class TestSameArithmeticAsTheLedger:
-    """数值算法只有一份 —— 卡片与台账必须逐字用同一个累加口径。"""
+    """There is only one copy of the numeric algorithm — the card and the ledger must use the exact same accumulation metric."""
 
     def test_same_request_id_takes_last_snapshot_not_sum(self, tmp_path):
-        # 一次 API 调用产出多条 assistant 行，output 随流式递增；逐行裸加会虚高数倍
+        # One API call produces multiple assistant rows with output increasing as it streams; bare per-row addition inflates several-fold
         p = tmp_path / "t.jsonl"
         _write_transcript(
             p,
@@ -98,8 +98,8 @@ class TestSameArithmeticAsTheLedger:
         )
         payload = usage_probe.probe_dispatch(str(p))
 
-        assert payload["output_tokens"] == 320  # 300 + 20，不是 3 + 300 + 20
-        assert payload["input_tokens"] == 20  # 两个 requestId 各 10
+        assert payload["output_tokens"] == 320  # 300 + 20, not 3 + 300 + 20
+        assert payload["input_tokens"] == 20  # 10 per requestId, two of them
         assert payload["api_calls"] == 2
 
 
@@ -109,23 +109,23 @@ class TestSampleExcerpts:
         _write_transcript(
             p,
             [
-                _user("第一条派工 prompt"),
-                _assistant("r1", USAGE, "中途结论"),
-                _user("工具结果回灌"),
-                _assistant("r2", USAGE, "最终产出"),
+                _user("First dispatch prompt"),
+                _assistant("r1", USAGE, "Interim conclusion"),
+                _user("Tool result fed back"),
+                _assistant("r2", USAGE, "Final output"),
             ],
         )
         payload = usage_probe.probe_dispatch(str(p))
 
-        assert payload["prompt_excerpt"] == "第一条派工 prompt"
-        assert payload["result_excerpt"] == "最终产出"
+        assert payload["prompt_excerpt"] == "First dispatch prompt"
+        assert payload["result_excerpt"] == "Final output"
 
     def test_excerpts_are_clipped(self, tmp_path):
         p = tmp_path / "t.jsonl"
         _write_transcript(p, [_user("x" * 5000), _assistant("r1", USAGE, "y" * 5000)])
         payload = usage_probe.probe_dispatch(str(p))
 
-        assert len(payload["prompt_excerpt"]) == usage_probe.EXCERPT_LIMIT + 1  # +1 = 省略号
+        assert len(payload["prompt_excerpt"]) == usage_probe.EXCERPT_LIMIT + 1  # +1 = the ellipsis
         assert payload["result_excerpt"].endswith("…")
 
     def test_duration_comes_from_transcript_timestamps(self, tmp_path):
@@ -155,7 +155,7 @@ class TestModelIsObserved:
         p = tmp_path / "t.jsonl"
         _write_transcript(p, [_assistant("r1", USAGE)])
         payload = usage_probe.probe_dispatch(str(p))
-        # transcript 里永远是完整型号；模板里的 `model: opus` 是层级别名，两者不可互换
+        # Transcripts always carry the full model name; the `model: opus` in templates is a tier alias — the two are not interchangeable
         assert payload["model"] == "claude-opus-5"
         assert payload["model_source"] == "transcript"
 

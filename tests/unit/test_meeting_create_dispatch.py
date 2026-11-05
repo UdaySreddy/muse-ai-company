@@ -11,13 +11,13 @@ class TestBuildParticipationPrompt:
     def _make_prompt(self, **overrides) -> str:
         defaults = dict(
             name="arch-lead",
-            role="负责评估整体架构方案",
+            role="Responsible for evaluating the overall architecture proposal",
             meeting_id="mtg-abc123",
-            title="API 设计评审",
-            round_rule="每人3段，不超过300字",
+            title="API Design Review",
+            round_rule="3 paragraphs per person, no more than 300 characters",
             materials=["docs/arch.md"],
             context_files=["docs/api-spec.md"],
-            expected_output="三段式：评估/风险/建议",
+            expected_output="Three-part format: evaluation / risks / recommendations",
         )
         defaults.update(overrides)
         return _build_participation_prompt(**defaults)
@@ -28,7 +28,7 @@ class TestBuildParticipationPrompt:
 
     def test_contains_role(self):
         prompt = self._make_prompt()
-        assert "负责评估整体架构方案" in prompt
+        assert "Responsible for evaluating the overall architecture proposal" in prompt
 
     def test_contains_meeting_id(self):
         prompt = self._make_prompt()
@@ -36,11 +36,11 @@ class TestBuildParticipationPrompt:
 
     def test_contains_title(self):
         prompt = self._make_prompt()
-        assert "API 设计评审" in prompt
+        assert "API Design Review" in prompt
 
     def test_contains_round_rule(self):
         prompt = self._make_prompt()
-        assert "每人3段，不超过300字" in prompt
+        assert "3 paragraphs per person, no more than 300 characters" in prompt
 
     def test_contains_global_material(self):
         prompt = self._make_prompt()
@@ -70,11 +70,11 @@ class TestBuildParticipationPrompt:
 
     def test_contains_shutdown_instruction(self):
         prompt = self._make_prompt()
-        assert "立即退出" in prompt
+        assert "Exit immediately" in prompt
 
     def test_contains_expected_output(self):
         prompt = self._make_prompt()
-        assert "三段式：评估/风险/建议" in prompt
+        assert "Three-part format: evaluation / risks / recommendations" in prompt
 
     def test_no_materials_skips_read_section(self):
         prompt = self._make_prompt(materials=[], context_files=[])
@@ -91,11 +91,11 @@ class TestBuildParticipationPrompt:
 
     def test_default_output_hint_when_empty(self):
         prompt = self._make_prompt(expected_output="")
-        assert "清晰段落格式" in prompt
+        assert "clear paragraph format" in prompt
 
     def test_default_round_rule_when_empty(self):
         prompt = self._make_prompt(round_rule="")
-        assert "立场" in prompt or "建议" in prompt
+        assert "Position" in prompt or "recommendations" in prompt
 
 
 class TestBuildDispatchPlan:
@@ -105,9 +105,9 @@ class TestBuildDispatchPlan:
         base = {
             "name": "arch-lead",
             "agent_template": "software-architect",
-            "role": "负责架构评审",
+            "role": "Responsible for architecture review",
             "context_files": ["docs/arch.md"],
-            "expected_output": "三段式：评估/风险/建议",
+            "expected_output": "Three-part format: evaluation / risks / recommendations",
         }
         base.update(overrides)
         return base
@@ -151,8 +151,8 @@ class TestBuildDispatchPlan:
         assert "name" in params
         assert "description" in params
         assert "prompt" in params
-        # team_name 已于 2026-07-27 移除（CC v2.1.219 标注 Deprecated 且忽略）；
-        # 改为显式 model（派工宪章：Opus 执行）。
+        # team_name was removed on 2026-07-27 (CC v2.1.219 marks it Deprecated and ignores it);
+        # replaced by an explicit model (dispatch charter: Opus executes).
         assert "team_name" not in params
         assert params["model"] == "opus"
 
@@ -168,10 +168,10 @@ class TestBuildDispatchPlan:
         assert plan[0]["launch_call"]["params"]["name"] == "backend-arch"
 
     def test_launch_call_no_longer_passes_team_name(self):
-        """team_name 不再进 Agent 参数（CC v2.1.219 已 Deprecated;ignored）。
+        """team_name no longer goes into the Agent parameters (CC v2.1.219 Deprecated; ignored).
 
-        会话自带唯一隐式团队，传了也被忽略；OS 侧归属由 SubagentStart 自动收编。
-        team_name 入参本身保留（会议记录/展示仍用），只是不再下发给 Agent。
+        The session carries its own unique implicit team; passing it is ignored anyway; OS-side ownership is auto-enrolled by SubagentStart.
+        The team_name parameter itself is kept (meeting records/display still use it); it is just no longer sent down to Agents.
         """
         plan, _, _, _ = _build_dispatch_plan(
             meeting_id="mtg-1",
@@ -215,12 +215,12 @@ class TestBuildDispatchPlan:
             meeting_id="mtg-1",
             title="Test",
             participants_raw=[self._structured_participant()],
-            rounds=[{"topic": "立场", "rule": "每人5段阐述立场"}],
+            rounds=[{"topic": "Position", "rule": "5 paragraphs per person stating their position"}],
             materials=[],
             team_name="my-team",
         )
         prompt = plan[0]["launch_call"]["params"]["prompt"]
-        assert "每人5段阐述立场" in prompt
+        assert "5 paragraphs per person stating their position" in prompt
 
     def test_global_materials_injected_into_prompt(self):
         plan, _, _, _ = _build_dispatch_plan(

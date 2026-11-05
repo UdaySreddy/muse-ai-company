@@ -63,7 +63,7 @@ class TestCheckInputDangerous:
 
 class TestCheckInputSafe:
     def test_normal_task_description(self):
-        result = check_input("实现用户登录API，支持JWT认证")
+        result = check_input("Implement the user login API with JWT authentication support")
         assert result["safe"]
         assert result["violations"] == []
 
@@ -77,7 +77,7 @@ class TestCheckInputSafe:
         # Note: the pattern matches bare "DROP TABLE" — this is expected per spec
         # (only actual input params checked, not conversational text)
         # So this IS expected to match — confirm violation labeling is correct
-        result = check_input("我们需要讨论如何处理 DROP TABLE 操作的权限")
+        result = check_input("We need to discuss how to handle permissions for DROP TABLE operations")
         # Per spec: L1 does match this. That's acceptable for API input params.
         # This test just confirms the function runs without error.
         assert isinstance(result["safe"], bool)
@@ -118,7 +118,7 @@ class TestCheckInputPII:
         assert any("email" in w for w in result["warnings"])
 
     def test_no_pii_no_warnings(self):
-        result = check_input("正常任务描述")
+        result = check_input("A normal task description")
         assert result["warnings"] == []
 
 
@@ -129,8 +129,8 @@ class TestCheckInputPII:
 class TestCheckDict:
     def test_nested_violation(self):
         payload = {
-            "title": "正常标题",
-            "description": "rm -rf / 危险命令",
+            "title": "Normal title",
+            "description": "rm -rf / dangerous command",
         }
         result = check_dict(payload)
         assert not result["safe"]
@@ -148,8 +148,8 @@ class TestCheckDict:
 
     def test_clean_payload(self):
         payload = {
-            "title": "实现登录功能",
-            "description": "支持JWT认证，OAuth2流程",
+            "title": "Implement the login feature",
+            "description": "Supports JWT authentication, OAuth2 flow",
             "tags": ["backend", "auth"],
         }
         result = check_dict(payload)
@@ -174,12 +174,12 @@ class TestPaddingBypass:
         assert not result["safe"]
 
     def test_dangerous_after_100k_padding(self):
-        result = check_input("正常内容 " * 20_000 + "__import__('os').system('id')")
+        result = check_input("Normal content " * 20_000 + "__import__('os').system('id')")
         assert not result["safe"]
 
     def test_large_clean_text_safe(self):
         # Legitimate large content (reports, minutes) must not be blocked
-        result = check_input("会议纪要：讨论了架构方案。" * 10_000)
+        result = check_input("Meeting minutes: discussed the architecture plan. " * 10_000)
         assert result["safe"]
 
     def test_unclosed_script_tag_blocked(self):
@@ -222,7 +222,7 @@ class TestSanitizeOutput:
         assert "[REDACTED]" in result
 
     def test_clean_text_unchanged(self):
-        text = "任务已完成，API响应时间 P95 < 50ms"
+        text = "Task complete, API response time P95 < 50ms"
         result = sanitize_output(text)
         assert result == text
 

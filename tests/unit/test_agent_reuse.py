@@ -159,7 +159,7 @@ class TestRecommendAction:
             dmatch=0.9, availability=ar.AVAIL_CROSS_SESSION, ctx_pct=10.0, ctx_tokens=5000
         )
         assert action == ar.ACTION_NEW
-        assert "resume" in hint or "会话" in hint
+        assert "resume" in hint or "session" in hint
 
     def test_low_watermark_reuses(self):
         action, _ = ar.recommend_action(
@@ -198,7 +198,7 @@ class TestRecommendAction:
             dmatch=0.9, availability=ar.AVAIL_LIVE, ctx_pct=None, ctx_tokens=None
         )
         assert action == ar.ACTION_REUSE
-        assert "未测" in rationale
+        assert "untested" in rationale
 
 
 # ============================================================

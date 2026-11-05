@@ -96,13 +96,13 @@ class TestGetBusinessRecovery:
         assert get_business_recovery("Task not found in database") == "resource_not_found"
 
     def test_not_found_chinese(self):
-        assert get_business_recovery("该资源不存在") == "resource_not_found"
+        assert get_business_recovery("The resource does not exist") == "resource_not_found"
 
     def test_conflict_already_exists(self):
         assert get_business_recovery("Team already exists") == "conflict"
 
     def test_state_conflict_ended(self):
-        assert get_business_recovery("会议已结束，无法操作") == "state_conflict"
+        assert get_business_recovery("The meeting has ended and cannot be operated on") == "state_conflict"
 
     def test_permission(self):
         assert get_business_recovery("permission denied for this action") == "permission_denied"

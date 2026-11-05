@@ -1,4 +1,4 @@
-"""测试数据库路径固化 — 验证默认路径指向 ~/.claude/data/ai-team-os/aiteam.db."""
+"""Tests database path pinning — verifies the default path points to ~/.claude/data/ai-team-os/aiteam.db."""
 
 from __future__ import annotations
 
@@ -11,11 +11,11 @@ from aiteam.storage.connection import _default_db_url, _migrate_old_db_if_needed
 
 
 class TestDefaultDbUrl:
-    """验证 _default_db_url() 返回正确的固定路径."""
+    """Verify _default_db_url() returns the correct fixed path."""
 
     def test_url_contains_expected_path(self, tmp_path: Path) -> None:
-        """返回的URL应包含 .claude/data/ai-team-os/aiteam.db."""
-        # 与本类其余用例一致 patch home，避免在真实 ~/.claude 下 mkdir/触发迁移
+        """The returned URL should contain .claude/data/ai-team-os/aiteam.db."""
+        # Patch home consistently with the rest of this class to avoid mkdir/migration triggers under the real ~/.claude
         with patch.object(Path, "home", return_value=tmp_path):
             url = _default_db_url()
         assert "sqlite+aiosqlite:///" in url
@@ -25,9 +25,9 @@ class TestDefaultDbUrl:
         assert "aiteam.db" in url
 
     def test_directory_auto_created(self, tmp_path: Path) -> None:
-        """使用mock的home目录验证目录自动创建."""
+        """Use a mocked home directory to verify automatic directory creation."""
         fake_home = tmp_path / "fakehome"
-        # 不预先创建目录，验证函数会自动创建
+        # Do not create the directory beforehand; verify the function creates it automatically
         with patch.object(Path, "home", return_value=fake_home):
             url = _default_db_url()
 
@@ -36,7 +36,7 @@ class TestDefaultDbUrl:
         assert url == f"sqlite+aiosqlite:///{expected_dir / 'aiteam.db'}"
 
     def test_idempotent_on_existing_directory(self, tmp_path: Path) -> None:
-        """目录已存在时不应报错."""
+        """No error when the directory already exists."""
         fake_home = tmp_path / "fakehome"
         data_dir = fake_home / ".claude" / "data" / "ai-team-os"
         data_dir.mkdir(parents=True)
@@ -49,12 +49,12 @@ class TestDefaultDbUrl:
 
 
 class TestDbPathEnvOverride:
-    """验证 AITEAM_DB_PATH 环境变量覆盖：设置时用该路径且跳过旧库迁移."""
+    """Verify the AITEAM_DB_PATH environment variable override: when set, use that path and skip the old-database migration."""
 
     def test_env_override_used_and_skips_migration(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """设置 AITEAM_DB_PATH 时,URL 指向该路径且不触发旧库迁移."""
+        """When AITEAM_DB_PATH is set, the URL points to that path and does not trigger old-database migration."""
         target = tmp_path / "custom" / "demo.db"
         monkeypatch.setenv("AITEAM_DB_PATH", str(target))
 
@@ -64,15 +64,15 @@ class TestDbPathEnvOverride:
             url = _default_db_url()
 
         assert url == f"sqlite+aiosqlite:///{target}"
-        # 覆盖路径下不应触碰旧库迁移逻辑
+        # The override path should not touch the old-database migration logic
         mock_migrate.assert_not_called()
-        # 父目录应被自动创建
+        # The parent directory should be created automatically
         assert target.parent.is_dir()
 
     def test_env_override_expands_user(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """AITEAM_DB_PATH 中的 ~ 应被展开为家目录."""
+        """A ~ in AITEAM_DB_PATH should be expanded to the home directory."""
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("AITEAM_DB_PATH", "~/demo-data/aiteam.db")
 
@@ -85,7 +85,7 @@ class TestDbPathEnvOverride:
     def test_unset_falls_back_to_default_path(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """未设置 AITEAM_DB_PATH 时,行为与原来完全一致(固定默认路径)."""
+        """When AITEAM_DB_PATH is not set, behavior is exactly as before (fixed default path)."""
         monkeypatch.delenv("AITEAM_DB_PATH", raising=False)
 
         with patch.object(Path, "home", return_value=tmp_path):
@@ -98,7 +98,7 @@ class TestDbPathEnvOverride:
     def test_empty_env_override_falls_back_to_default(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """AITEAM_DB_PATH 为空串时视为未设置,回落默认路径."""
+        """An empty AITEAM_DB_PATH is treated as unset and falls back to the default path."""
         monkeypatch.setenv("AITEAM_DB_PATH", "")
 
         with patch.object(Path, "home", return_value=tmp_path):
@@ -109,10 +109,10 @@ class TestDbPathEnvOverride:
 
 
 class TestMigrateOldDb:
-    """验证旧DB自动迁移逻辑."""
+    """Verify the old-database automatic migration logic."""
 
     def test_migrate_old_db(self, tmp_path: Path) -> None:
-        """旧DB存在且新DB为空时，应自动迁移."""
+        """When the old DB exists and the new DB is empty, migrate automatically."""
         old_db = tmp_path / "old" / "aiteam.db"
         old_db.parent.mkdir(parents=True)
         old_db.write_bytes(b"x" * 20000)  # >10KB
@@ -125,12 +125,12 @@ class TestMigrateOldDb:
 
         assert new_db.exists()
         assert new_db.stat().st_size == 20000
-        # 旧文件应被重命名
+        # The old file should be renamed
         assert not old_db.exists()
         assert old_db.with_suffix(".db.migrated").exists()
 
     def test_skip_migrate_when_new_db_has_data(self, tmp_path: Path) -> None:
-        """新DB已有数据时不应迁移."""
+        """Do not migrate when the new DB already has data."""
         old_db = tmp_path / "old" / "aiteam.db"
         old_db.parent.mkdir(parents=True)
         old_db.write_bytes(b"old" * 10000)
@@ -142,14 +142,14 @@ class TestMigrateOldDb:
         with patch("aiteam.storage.connection.Path.cwd", return_value=old_db.parent):
             _migrate_old_db_if_needed(new_db)
 
-        # 新DB内容不变
+        # The new DB content is unchanged
         assert new_db.read_bytes() == b"new" * 10000
-        # 旧DB未被重命名
+        # The old DB was not renamed
         assert old_db.exists()
 
     def test_migrate_silent_on_error(self, tmp_path: Path) -> None:
-        """错误时应静默处理，不抛异常."""
+        """Errors should be handled silently without raising."""
         new_db = tmp_path / "nonexistent" / "deep" / "aiteam.db"
-        # new_db的父目录不存在，stat会失败，但不应抛异常
+        # The parent directory of new_db does not exist, so stat will fail, but it should not raise
         with patch("aiteam.storage.connection.Path.cwd", return_value=tmp_path):
-            _migrate_old_db_if_needed(new_db)  # 不应抛异常
+            _migrate_old_db_if_needed(new_db)  # Should not raise

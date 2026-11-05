@@ -10,13 +10,13 @@ from aiteam.mcp._autostart import _ensure_api_running, _is_port_open
 
 
 def test_is_port_open_returns_false():
-    """未监听的端口应返回 False。"""
-    # 使用一个极不可能被占用的高端口
+    """An unlistened port should return False."""
+    # Use a high port extremely unlikely to be occupied
     assert _is_port_open("127.0.0.1", 59999) is False
 
 
 def test_is_port_open_returns_true():
-    """已监听的端口应返回 True。"""
+    """A listened port should return True."""
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", 0))
@@ -32,13 +32,13 @@ def test_is_port_open_returns_true():
 @patch("aiteam.mcp._autostart._is_api_healthy_on_port", return_value=True)
 @patch(
     "aiteam.mcp._autostart._get_running_api_version_on_port",
-    # 必须跟随真实包版本——曾硬编码 "1.3.4"，包升级后被判"版本过时"
-    # 走进 kill 占用者路径（fuser/lsof 的 Popen），断言虚假失败
+    # Must follow the real package version — it once hard-coded "1.3.4" and after a package upgrade was judged "version outdated"
+    # and walked into the kill-the-occupier path (Popen of fuser/lsof), failing assertions falsely
     return_value=_aiteam_pkg.__version__,
 )
 @patch("aiteam.mcp._autostart.subprocess.Popen")
-# 隔离真实运行时文件：_debug_log 写 ~/.claude/data/ai-team-os/mcp-debug.log，
-# _get_api_port 读真实 api_port.txt——单测不得污染/依赖它们
+# Isolate real runtime files: _debug_log writes ~/.claude/data/ai-team-os/mcp-debug.log,
+# _get_api_port reads the real api_port.txt — unit tests must not pollute/depend on them
 @patch("aiteam.mcp._autostart._get_api_port", return_value=8000)
 @patch("aiteam.mcp._autostart._debug_log")
 def test_ensure_api_skips_when_running(

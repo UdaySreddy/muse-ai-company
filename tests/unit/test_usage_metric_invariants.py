@@ -1,19 +1,19 @@
-"""token 用量归因 v1 阶段 0 —— 口径正名与两条机检（I12 量纲白名单 / I13 覆盖率同屏）。
+"""Token usage attribution v1 phase 0 — metric rectification and two machine checks (I12 dimension whitelist / I13 same-screen coverage).
 
-立项时引用的核心数字"1.862 亿 token 已经躺在库里，只差展示层"，口径是错的。
-``workflow_agents.tokens`` 取的是最后一条 assistant 消息的四字段和 = 一个**瞬时上下文
-水位快照**；``token_attribution.parse_transcript_usage`` 走的是跨 requestId 累加 = 真正
-的用量。同一批 agent 实测两者差 5~25 倍（117,800 vs 632,504 … 127,089 vs 3,236,088）。
-把它们相加、并列、或放进同一个"总 token"，就是本仓刚在时间戳上栽过的同类事故。
+The core number quoted at project initiation, "186.2 million tokens already lying in the database, only the display layer missing", had the wrong metric.
+``workflow_agents.tokens`` takes the four-field sum of the last assistant message = an **instantaneous context
+watermark snapshot**; ``token_attribution.parse_transcript_usage`` accumulates across requestIds = the real
+usage. Measured on the same batch of agents, the two differ by 5–25× (117,800 vs 632,504 … 127,089 vs 3,236,088).
+Adding them together, juxtaposing them, or putting them in the same "total token" is the same class of accident this repo just had on timestamps.
 
-所以本批把「口径」提为与「覆盖率」并列的一等维度，并把两条红线做成机器判据：
+So this batch promotes "metric" to a first-class dimension alongside "coverage", and makes the two red lines machine criteria:
 
-* **I12 量纲白名单**：用量呈现面只许出现 token 四层 / 次数 / 时长毫秒 / 百分比。
-  用白名单而不是禁用词表——黑名单要穷举所有越界写法才生效，漏一个就破防。
-* **I13 覆盖率同屏**：任何 token 数值都必须带口径；聚合面必须与分母、未归因同层返回。
-  页面标注是软约束，所以钉在类型层：口径要写在字段旁边，不是只写在注册表里。
+* **I12 dimension whitelist**: usage presentation surfaces may only show the token four layers / counts / duration milliseconds / percentages.
+  A whitelist rather than a banned-word list — a blacklist only works by enumerating every out-of-bounds phrasing; miss one and the defense breaks.
+* **I13 same-screen coverage**: every token number must carry its metric; aggregate surfaces must return the denominator and unattributed at the same level.
+  Page annotations are soft constraints, so it is pinned at the type layer: the metric is written next to the field, not only in the registry.
 
-规格：docs/token-attribution-v1-design.md §0.2 / §1.1 / §2.5 / §2.6 / §4.4。
+Specification: docs/token-attribution-v1-design.md §0.2 / §1.1 / §2.5 / §2.6 / §4.4.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def _load(name: str):
         spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
-        # 先登记再执行：dataclass 装饰器要能按 __module__ 反查回自己的命名空间
+        # Register before executing: the dataclass decorator must be able to look its namespace back up via __module__
         sys.modules[name] = module
         spec.loader.exec_module(module)
         return module
@@ -58,30 +58,30 @@ coverage = _load("check_usage_coverage")
 
 
 class TestMetricVocabulary:
-    """口径词表本身就是护栏——它必须是封闭的，且不能悄悄多出一个成员。"""
+    """The metric vocabulary is itself a guardrail — it must be closed and must not quietly gain a member."""
 
     def test_two_usage_metrics_only(self):
-        """TokenMetric 只覆盖"用量"这一个问题域的两个口径。"""
+        """TokenMetric covers only the two metrics of the single problem domain of "usage"."""
         assert {m.value for m in TokenMetric} == {"usage_sum", "ctx_last"}
 
     def test_context_watermark_is_deliberately_outside_the_enum(self):
-        """第三口径（上下文水位）刻意不是 TokenMetric 成员，但仍必须可标注。
+        """The third metric (context watermark) is deliberately not a TokenMetric member, but must still be labelable.
 
-        它与用量归因无关（服务于 agent 复用治理），可页面上的每个 token 数值都得挂
-        口径——包括不参与归因的那些。所以它在词表里、不在枚举里。
+        It is unrelated to usage attribution (it serves agent reuse governance), yet every token number on a page must carry
+        its metric — including those not participating in attribution. So it is in the vocabulary, not in the enum.
         """
         assert CTX_WATERMARK_METRIC not in {m.value for m in TokenMetric}
         assert CTX_WATERMARK_METRIC in TOKEN_METRIC_LABELS
         assert TOKEN_METRIC_LABELS == frozenset({"usage_sum", "ctx_last", CTX_WATERMARK_METRIC})
 
     def test_every_metric_has_a_definition_and_a_producer(self):
-        """口径必须说得清是谁产出的——否则"这个数哪来的"事后无从追。"""
+        """A metric must state clearly who produced it — otherwise "where did this number come from" is untraceable afterwards."""
         assert set(TOKEN_METRIC_SPECS) == set(TOKEN_METRIC_LABELS)
         for label, (name, producer, definition) in TOKEN_METRIC_SPECS.items():
-            assert name and producer and definition, f"{label} 的口径说明不完整"
+            assert name and producer and definition, f"{label}'s metric description is incomplete"
 
     def test_four_layers_are_the_unit_of_presentation(self):
-        """四层分列是硬要求：实测 95.6% 的量是 cache_read，只报总量等于只报缓存读。"""
+        """Four-layer itemization is a hard requirement: measured 95.6% of the volume is cache_read; reporting only the total equals reporting only cache reads."""
         assert TOKEN_LAYERS == (
             "input_tokens",
             "output_tokens",
@@ -91,14 +91,14 @@ class TestMetricVocabulary:
 
 
 class TestTokensSourceColumn:
-    """新增的唯一一列 —— 加列必须四处同步（types / ORM / 双向转换 / 迁移）。"""
+    """The only newly added column — adding a column must sync four places (types / ORM / bidirectional conversion / migration)."""
 
     def test_declared_in_columns_to_ensure(self):
-        """项目铁律：ORM 加字段必须同步 COLUMNS_TO_ENSURE，否则既有库永远没有这列。"""
+        """Project iron rule: ORM field additions must sync COLUMNS_TO_ENSURE, otherwise existing databases never get this column."""
         assert ("agents", "tokens_source") in {(t, c) for t, c, _ in COLUMNS_TO_ENSURE}
 
     def test_legacy_db_gets_the_column(self, tmp_path: Path):
-        """对着一个没有该列的老 agents 表跑迁移，列必须被补出来。"""
+        """Run the migration against an old agents table without the column; the column must be added."""
         db = str(tmp_path / "legacy.db")
         con = sqlite3.connect(db)
         con.execute(
@@ -128,7 +128,7 @@ class TestTokensSourceColumn:
         assert back.tokens_source is TokenSource.TRANSCRIPT
 
     def test_unmeasured_is_none_not_a_guess(self):
-        """NULL = 尚未采集，既不是 transcript 定真也不是别名兜底。no-data ≠ zero。"""
+        """NULL = not yet collected; it is neither transcript ground truth nor an alias fallback. no-data ≠ zero."""
         agent = Agent(team_id="t1", name="w", role="worker")
         assert agent.tokens_source is None
         assert AgentModel.from_pydantic(agent).tokens_source is None
@@ -140,23 +140,23 @@ class TestI12Dimensions:
         assert dimensions.main() == 0
 
     def test_forbidden_words_match_by_word_not_substring(self):
-        """子串匹配会把 isPending 读成 "spend"、statusDone 读成 "usd"。
+        """Substring matching would read isPending as "spend" and statusDone as "usd".
 
-        第一版就是这么写的，一跑 64 条假阳性。天天误报的机检等于没有机检，所以
-        改成按 camelCase / snake_case 切词再判。
+        The first version was written that way and produced 64 false positives in one run. A machine check that false-alarms daily equals no machine check, so
+        it was changed to split words by camelCase / snake_case before judging.
         """
         for innocent in ("isPending", "statusDone", "agentStatusDone", "statusData",
                          "taskStatusPending", "credential", "discount_free"):
-            assert dimensions._forbidden_word(innocent) == "", f"{innocent} 被误判"
+            assert dimensions._forbidden_word(innocent) == "", f"{innocent} was falsely judged"
 
     def test_forbidden_words_catch_real_cross_unit_conversions(self):
-        """金额/工时这类第五类量纲，无论怎么拼都要被抓住。"""
+        """A fifth dimension class like money/work hours must be caught however it is spelled."""
         for guilty in ("cost_usd", "costUsd", "totalCost", "priceCny", "manHour",
                        "man_hour", "estimated_workdays", "monthlyBudget", "credits_used"):
-            assert dimensions._forbidden_word(guilty), f"{guilty} 漏网"
+            assert dimensions._forbidden_word(guilty), f"{guilty} slipped through"
 
     def test_undeclared_numeric_field_is_red(self, monkeypatch):
-        """呈现面新增未申报量纲的数值字段 = 红（白名单只有在申报完整时才封闭）。"""
+        """A new undeclared dimension numeric field on a presentation surface = red (the whitelist is only closed when declarations are complete)."""
         surface = registry.PySurface(
             model="WorkflowAgent",
             kind="row",
@@ -164,14 +164,14 @@ class TestI12Dimensions:
         )
         monkeypatch.setattr(dimensions, "PY_SURFACES", (surface,))
         problems = dimensions.check_python_schema()
-        assert any("未申报量纲" in p and "tool_calls" in p for p in problems)
+        assert any("undeclared dimension" in p and "tool_calls" in p for p in problems)
 
     def test_dimension_outside_the_whitelist_is_red(self, monkeypatch):
         surface = registry.PySurface(
             model="WorkflowAgent",
             kind="row",
             fields={
-                "phase_index": registry.FieldSpec(registry.NON_USAGE, note="序号"),
+                "phase_index": registry.FieldSpec(registry.NON_USAGE, note="index"),
                 "tokens": registry.FieldSpec("usd", metric="ctx_last"),
                 "tool_calls": registry.FieldSpec("count"),
                 "duration_ms": registry.FieldSpec("duration_ms"),
@@ -179,10 +179,10 @@ class TestI12Dimensions:
         )
         monkeypatch.setattr(dimensions, "PY_SURFACES", (surface,))
         problems = dimensions.check_python_schema()
-        assert any("不在白名单" in p for p in problems)
+        assert any("not in the whitelist" in p for p in problems)
 
     def test_unnamed_exemption_is_red(self, monkeypatch):
-        """申报为"非用量字段"必须写理由——豁免不能是沉默的。"""
+        """Declaring a "non-usage field" must state a reason — exemption cannot be silent."""
         surface = registry.PySurface(
             model="WorkflowAgent",
             kind="row",
@@ -194,15 +194,15 @@ class TestI12Dimensions:
             },
         )
         monkeypatch.setattr(dimensions, "PY_SURFACES", (surface,))
-        assert any("豁免必须具名" in p for p in dimensions.check_python_schema())
+        assert any("exemptions must be named" in p for p in dimensions.check_python_schema())
 
     def test_unregistered_frontend_surface_is_red(self, monkeypatch):
-        """页面上新出现 token 数值却没登记 = 红，否则白名单就有了绕过口。"""
+        """A token number newly appearing on a page without registration = red, otherwise the whitelist has a bypass."""
         monkeypatch.setattr(
             dimensions, "FRONTEND_SURFACES", ("dashboard/src/api/workflows.ts",)
         )
         problems, _warnings = dimensions.check_frontend()
-        assert any("未登记为用量呈现面" in p for p in problems)
+        assert any("not registered as a usage presentation surface" in p for p in problems)
 
 
 class TestI13Coverage:
@@ -210,21 +210,21 @@ class TestI13Coverage:
         assert coverage.main() == 0
 
     def test_token_field_without_metric_is_red(self, monkeypatch):
-        """脱离口径的 token 数没有意义——两个口径差 5~25 倍。"""
+        """A token number detached from its metric is meaningless — the two metrics differ by 5–25×."""
         surface = registry.PySurface(
             model="WorkflowAgent",
             kind="row",
             fields={"tokens": registry.FieldSpec("token")},
-            coverage_gap={"tokens": "历史遗产"},
+            coverage_gap={"tokens": "historical legacy"},
         )
         monkeypatch.setattr(coverage, "PY_SURFACES", (surface,))
         problems, _ = coverage.check_python()
-        assert any("未标口径" in p for p in problems)
+        assert any("metric not labeled" in p for p in problems)
 
     def test_metric_only_in_the_registry_is_red(self, monkeypatch):
-        """口径必须与字段同屏。只写在注册表里 = 下一个改这行的人看不见。"""
-        # Agent 定义块里写着 USAGE_SUM 与 CTX_WATERMARK_METRIC，唯独没有 ctx_last——
-        # 拿它冒充 ctx_last，机检必须看得出来"这个口径在源码里根本不存在"。
+        """The metric must be on the same screen as the field. Only in the registry = the next person editing this line cannot see it."""
+        # The Agent definition block writes USAGE_SUM and CTX_WATERMARK_METRIC, but not ctx_last —
+        # pass it off as ctx_last and the machine check must see that "this metric does not exist in the source at all".
         surface = registry.PySurface(
             model="Agent",
             kind="row",
@@ -232,10 +232,10 @@ class TestI13Coverage:
         )
         monkeypatch.setattr(coverage, "PY_SURFACES", (surface,))
         problems, _ = coverage.check_python()
-        assert any("只写在注册表里" in p for p in problems)
+        assert any("only written in the registry" in p for p in problems)
 
     def test_aggregate_without_denominator_is_red(self, monkeypatch):
-        """聚合面缺分母 = 局部冒充全貌。这一条今天上膛未击发，阶段 2 落地即生效。"""
+        """An aggregate surface missing its denominator = a part impersonating the whole. This rule is loaded but not fired today; it takes effect when phase 2 lands."""
         surface = registry.PySurface(
             model="WorkflowRun",
             kind="aggregate",
@@ -243,22 +243,22 @@ class TestI13Coverage:
         )
         monkeypatch.setattr(coverage, "PY_SURFACES", (surface,))
         problems, _ = coverage.check_python()
-        assert any("缺同层覆盖率字段" in p for p in problems)
+        assert any("missing same-level coverage fields" in p for p in problems)
 
     def test_usage_sum_aggregate_cannot_declare_a_gap(self, monkeypatch):
-        """归因数字的分母没有例外——ctx_last 侧的历史缺口不可类推到 usage_sum。"""
+        """The attribution numbers' denominator has no exceptions — the ctx_last-side historical gap cannot be analogized to usage_sum."""
         surface = registry.PySurface(
             model="Agent",
             kind="aggregate",
             fields={"input_tokens": registry.FieldSpec("token", metric="usage_sum")},
-            coverage_gap={"input_tokens": "以后再说"},
+            coverage_gap={"input_tokens": "later"},
         )
         monkeypatch.setattr(coverage, "PY_SURFACES", (surface,))
         problems, _ = coverage.check_python()
-        assert any("不接受缺口申报" in p for p in problems)
+        assert any("does not accept gap declarations" in p for p in problems)
 
     def test_row_surface_zero_as_no_data_must_be_declared(self, monkeypatch):
-        """非 Optional 的 token 列，0 兼表"未采集"——不改就必须具名申报，不能沉默。"""
+        """A non-Optional token column where 0 also means "not collected" — if not changed, it must be declared by name, not silently."""
         surface = registry.PySurface(
             model="WorkflowAgent",
             kind="row",
@@ -266,29 +266,29 @@ class TestI13Coverage:
         )
         monkeypatch.setattr(coverage, "PY_SURFACES", (surface,))
         problems, _ = coverage.check_python()
-        assert any("'未采集'与'真的是 0'" in p for p in problems)
+        assert any("'not collected' and 'really 0'" in p for p in problems)
 
     def test_declared_gaps_stay_visible(self, monkeypatch):
-        """申报不是豁免：每次机检都把缺口打印出来，不让它变成默认状态。"""
+        """A declaration is not an exemption: every machine check prints the gap, so it does not become the default state."""
         surface = registry.PySurface(
             model="WorkflowAgent",
             kind="row",
             fields={"tokens": registry.FieldSpec("token", metric="ctx_last")},
-            coverage_gap={"tokens": "ctx_last 侧历史遗产"},
+            coverage_gap={"tokens": "ctx_last-side historical legacy"},
         )
         monkeypatch.setattr(coverage, "PY_SURFACES", (surface,))
         problems, warnings = coverage.check_python()
         assert not problems
-        assert any("已申报覆盖率缺口" in w for w in warnings)
+        assert any("declared coverage gap" in w for w in warnings)
 
     def test_closed_gap_must_be_cleaned_up(self, monkeypatch):
-        """字段已可空却还挂着缺口申报 = 注册表腐烂，同样是红。"""
+        """A field already nullable still carrying a gap declaration = registry rot; also red."""
         surface = registry.PySurface(
             model="WorkflowRun",
             kind="row",
             fields={"live_tokens": registry.FieldSpec("token", metric="ctx_last")},
-            coverage_gap={"live_tokens": "早就收口了"},
+            coverage_gap={"live_tokens": "closed long ago"},
         )
         monkeypatch.setattr(coverage, "PY_SURFACES", (surface,))
         problems, _ = coverage.check_python()
-        assert any("缺口已收口" in p for p in problems)
+        assert any("gap already closed" in p for p in problems)

@@ -85,19 +85,19 @@ async def test_auto_create(db_repository):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/api/context/resolve",
-            json={"cwd": "C:/Users/TUF/Desktop/靖安笔试", "auto_create": True},
+            json={"cwd": "C:/Users/TUF/Desktop/Jingan Written Exam", "auto_create": True},
         )
     assert resp.status_code == 200
     data = resp.json()
     assert data["project_id"] != ""
-    assert data["project_name"] == "靖安笔试"
+    assert data["project_name"] == "Jingan Written Exam"
     assert data["created"] is True
 
     # Calling again must be idempotent — no duplicate created
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp2 = await client.post(
             "/api/context/resolve",
-            json={"cwd": "C:/Users/TUF/Desktop/靖安笔试", "auto_create": True},
+            json={"cwd": "C:/Users/TUF/Desktop/Jingan Written Exam", "auto_create": True},
         )
     data2 = resp2.json()
     assert data2["project_id"] == data["project_id"]
@@ -106,13 +106,13 @@ async def test_auto_create(db_repository):
 
 @pytest.mark.asyncio
 async def test_default_never_auto_creates(db_repository):
-    """归属铁律（2026-07-08）：缺省请求匹配不到项目时留空，绝不自动立项——
-    hook 每次工具调用都打这个端点，默认 True 曾把产出物目录注册成项目。"""
+    """Ownership iron rule (2026-07-08): when a default request matches no project, leave it empty and never auto-create a project —
+    the hook hits this endpoint on every tool call, and the former default of True registered output directories as projects."""
     app = _make_app(db_repository)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
             "/api/context/resolve",
-            json={"cwd": "C:/Users/TUF/Desktop/某产出物目录/demo"},
+            json={"cwd": "C:/Users/TUF/Desktop/some-output-dir/demo"},
         )
     assert resp.status_code == 200
     data = resp.json()

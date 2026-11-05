@@ -1,8 +1,8 @@
-"""AI Team OS — Broadcast编排模式 单元测试."""
+"""AI Team OS — Broadcast orchestration mode unit tests."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -26,30 +26,30 @@ from aiteam.types import Agent, OrchestrationMode, Team
 
 @pytest.fixture()
 def sample_agents() -> list[Agent]:
-    """创建测试用Agent列表."""
+    """Create the test Agent list."""
     return [
-        Agent(team_id="t1", name="researcher", role="研究员"),
-        Agent(team_id="t1", name="developer", role="开发者"),
-        Agent(team_id="t1", name="reviewer", role="审查员"),
+        Agent(team_id="t1", name="researcher", role="Researcher"),
+        Agent(team_id="t1", name="developer", role="Developer"),
+        Agent(team_id="t1", name="reviewer", role="Reviewer"),
     ]
 
 
 @pytest.fixture()
 def single_agent() -> list[Agent]:
-    """创建单Agent列表."""
-    return [Agent(team_id="t1", name="worker", role="工程师")]
+    """Create a single-Agent list."""
+    return [Agent(team_id="t1", name="worker", role="Engineer")]
 
 
 # ================================================================
-# Graph结构测试
+# Graph structure tests
 # ================================================================
 
 
 def test_build_broadcast_graph_structure(sample_agents: list[Agent]) -> None:
-    """验证Broadcast图的节点和边结构."""
+    """Verify the structure of the Broadcast graph's nodes and edges."""
     graph = build_broadcast_graph(agents=sample_agents, memory_store=None)
 
-    # 验证所有节点存在
+    # Verify all nodes exist
     node_names = set(graph.nodes.keys())
     assert "broadcast_node" in node_names
     assert "agent_researcher" in node_names
@@ -59,20 +59,20 @@ def test_build_broadcast_graph_structure(sample_agents: list[Agent]) -> None:
 
 
 def test_build_broadcast_graph_no_agents() -> None:
-    """无Agent时图应从broadcast_node直接到reducer_node."""
+    """With no Agents, the graph should go directly from broadcast_node to reducer_node."""
     graph = build_broadcast_graph(agents=[], memory_store=None)
 
     node_names = set(graph.nodes.keys())
     assert "broadcast_node" in node_names
     assert "reducer_node" in node_names
 
-    # 不应有Agent节点
+    # No Agent nodes
     agent_nodes = [n for n in node_names if n.startswith("agent_")]
     assert len(agent_nodes) == 0
 
 
 def test_build_broadcast_graph_single_agent(single_agent: list[Agent]) -> None:
-    """单Agent时图结构正确."""
+    """With a single Agent, the graph structure is correct."""
     graph = build_broadcast_graph(agents=single_agent, memory_store=None)
 
     node_names = set(graph.nodes.keys())
@@ -80,28 +80,28 @@ def test_build_broadcast_graph_single_agent(single_agent: list[Agent]) -> None:
     assert "agent_worker" in node_names
     assert "reducer_node" in node_names
 
-    # 只有一个Agent节点
+    # Only one Agent node
     agent_nodes = [n for n in node_names if n.startswith("agent_")]
     assert len(agent_nodes) == 1
 
 
 def test_build_broadcast_graph_compiles(sample_agents: list[Agent]) -> None:
-    """验证Broadcast图可以成功编译."""
+    """Verify the Broadcast graph can be compiled successfully."""
     graph = build_broadcast_graph(agents=sample_agents, memory_store=None)
     compiled = graph.compile()
     assert hasattr(compiled, "ainvoke")
 
 
 # ================================================================
-# broadcast_node 测试
+# broadcast_node tests
 # ================================================================
 
 
 def test_broadcast_node() -> None:
-    """验证broadcast_node正确初始化agent_outputs."""
+    """Verify broadcast_node correctly initializes agent_outputs."""
     state = {
         "team_id": "t1",
-        "current_task": "分析市场数据",
+        "current_task": "Analyze market data",
         "messages": [],
         "agent_outputs": {"old_key": "old_value"},
         "final_result": None,
@@ -109,55 +109,55 @@ def test_broadcast_node() -> None:
 
     result = _broadcast_node(state)
 
-    # 应初始化为空字典（清除之前的输出）
+    # Should initialize to an empty dict (clearing previous outputs)
     assert result["agent_outputs"] == {}
 
 
 def test_broadcast_node_preserves_task() -> None:
-    """验证broadcast_node不修改current_task."""
+    """Verify broadcast_node does not modify current_task."""
     state = {
-        "current_task": "测试任务",
+        "current_task": "Test task",
         "agent_outputs": {},
     }
 
     result = _broadcast_node(state)
 
-    # 不应包含current_task的更新
+    # Should not contain an update to current_task
     assert "current_task" not in result
 
 
 # ================================================================
-# reducer_node 测试
+# reducer_node tests
 # ================================================================
 
 
 @pytest.mark.asyncio()
 async def test_reducer_node() -> None:
-    """验证reducer_node正确调用LLM并合并结果."""
-    mock_response = AIMessage(content="合并后的最终结果")
+    """Verify reducer_node correctly calls the LLM and merges the results."""
+    mock_response = AIMessage(content="The merged final result")
 
     state = {
-        "current_task": "分析市场趋势",
+        "current_task": "Analyze market trends",
         "agent_outputs": {
-            "researcher": "市场调研结果...",
-            "developer": "技术分析结果...",
+            "researcher": "Market research results...",
+            "developer": "Technical analysis results...",
         },
     }
 
-    config = {"configurable": {"llm_model": "claude-opus-4-7"}}
+    # Standalone injection: the node resolves its LLM through
+    # llm_factory.resolve_llm, so tests inject a mock via configurable["llm"]
+    # instead of patching a hard-coded ChatAnthropic symbol.
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke.return_value = mock_response
+    config = {"configurable": {"llm_model": "claude-opus-4-7", "llm": mock_llm}}
 
-    with patch("aiteam.orchestrator.nodes.reducer_node.ChatAnthropic") as mock_llm_cls:
-        mock_llm = AsyncMock()
-        mock_llm.ainvoke.return_value = mock_response
-        mock_llm_cls.return_value = mock_llm
+    result = await reducer_node(state, config)
 
-        result = await reducer_node(state, config)
-
-    assert result["final_result"] == "合并后的最终结果"
+    assert result["final_result"] == "The merged final result"
     assert len(result["messages"]) == 1
     assert result["messages"][0] == mock_response
 
-    # 验证LLM调用参数中包含了所有Agent输出
+    # Verify the LLM call parameters contained all Agent outputs
     call_args = mock_llm.ainvoke.call_args[0][0]
     user_msg = call_args[1].content
     assert "researcher" in user_msg
@@ -166,55 +166,52 @@ async def test_reducer_node() -> None:
 
 @pytest.mark.asyncio()
 async def test_reducer_node_no_outputs() -> None:
-    """验证reducer_node在无Agent输出时的行为."""
-    mock_response = AIMessage(content="无内容可合并")
+    """Verify reducer_node's behavior when there are no Agent outputs."""
+    mock_response = AIMessage(content="No content to merge")
 
     state = {
-        "current_task": "测试任务",
+        "current_task": "Test task",
         "agent_outputs": {},
     }
 
-    config = {"configurable": {}}
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke.return_value = mock_response
+    config = {"configurable": {"llm": mock_llm}}
 
-    with patch("aiteam.orchestrator.nodes.reducer_node.ChatAnthropic") as mock_llm_cls:
-        mock_llm = AsyncMock()
-        mock_llm.ainvoke.return_value = mock_response
-        mock_llm_cls.return_value = mock_llm
+    result = await reducer_node(state, config)
 
-        result = await reducer_node(state, config)
+    assert result["final_result"] == "No content to merge"
 
-    assert result["final_result"] == "无内容可合并"
-
-    # 验证提示词中包含无输出提示
+    # Verify the prompt contains a no-output hint
     call_args = mock_llm.ainvoke.call_args[0][0]
     user_msg = call_args[1].content
-    assert "无Agent输出" in user_msg
+    assert "No Agent output" in user_msg
 
 
 # ================================================================
-# compile_graph 集成测试
+# compile_graph integration tests
 # ================================================================
 
 
 def test_compile_graph_broadcast_mode(sample_agents: list[Agent]) -> None:
-    """验证编译器正确选择Broadcast模式."""
+    """Verify the compiler correctly selects Broadcast mode."""
     team = Team(name="broadcast-team", mode=OrchestrationMode.BROADCAST)
     compiled = compile_graph(team=team, agents=sample_agents)
 
-    # compiled 应该是可调用的（CompiledGraph）
+    # The compiled output should be callable (a CompiledGraph)
     assert hasattr(compiled, "ainvoke")
 
 
 def test_compile_graph_broadcast_no_agents() -> None:
-    """验证编译器在无Agent时也能编译Broadcast图."""
+    """Verify the compiler can compile a Broadcast graph even with no Agents."""
     team = Team(name="empty-team", mode=OrchestrationMode.BROADCAST)
     compiled = compile_graph(team=team, agents=[])
     assert hasattr(compiled, "ainvoke")
 
 
 def test_compile_graph_coordinate_still_works() -> None:
-    """验证Coordinate模式在添加Broadcast后仍然正常."""
+    """Verify Coordinate mode still works normally after Broadcast was added."""
     team = Team(name="coord-team", mode=OrchestrationMode.COORDINATE)
-    agents = [Agent(team_id=team.id, name="worker", role="工程师")]
+    agents = [Agent(team_id=team.id, name="worker", role="Engineer")]
     compiled = compile_graph(team=team, agents=agents)
     assert hasattr(compiled, "ainvoke")

@@ -1,6 +1,6 @@
-"""AI Team OS — API单元测试.
+"""AI Team OS — API unit tests.
 
-使用FastAPI TestClient和内存SQLite测试REST API。
+Uses FastAPI TestClient and in-memory SQLite to test the REST API.
 """
 
 from __future__ import annotations
@@ -21,16 +21,16 @@ from aiteam.storage.repository import StorageRepository
 
 @pytest.fixture()
 def app_client():
-    """创建测试客户端，使用内存SQLite."""
+    """Create a test client using in-memory SQLite."""
     import asyncio
 
-    # 初始化依赖
+    # Initialize the dependencies
     repo = StorageRepository(db_url="sqlite+aiosqlite://")
     asyncio.get_event_loop().run_until_complete(repo.init_db())
     memory = MemoryStore(repository=repo)
     manager = TeamManager(repository=repo, memory=memory)
 
-    # 注入到deps模块（含EventBus和HookTranslator）
+    # Inject into the deps module (including EventBus and HookTranslator)
     event_bus = EventBus(repo=repo)
     hook_translator = HookTranslator(repo=repo, event_bus=event_bus)
     deps._repository = repo
@@ -41,7 +41,7 @@ def app_client():
 
     app = create_app()
 
-    # 覆盖lifespan：测试中不需要自动init/cleanup
+    # Override the lifespan: no automatic init/cleanup is needed in tests
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
@@ -53,7 +53,7 @@ def app_client():
     client = TestClient(app)
     yield client
 
-    # 清理
+    # Cleanup
     asyncio.get_event_loop().run_until_complete(close_db())
     deps._repository = None
     deps._memory_store = None
@@ -63,13 +63,13 @@ def app_client():
 
 
 # ============================================================
-# 团队 CRUD
+# Team CRUD
 # ============================================================
 
 
 def test_list_teams(app_client):
-    """测试列出团队."""
-    # 先创建两个团队
+    """Test listing teams."""
+    # Create two teams first
     make_team({"name": "team-a"})
     make_team({"name": "team-b"})
 
@@ -81,7 +81,7 @@ def test_list_teams(app_client):
 
 
 def test_get_team(app_client):
-    """测试获取团队详情."""
+    """Test getting team details."""
     team_name = make_team({"name": "get-team"})["name"]
 
     resp = app_client.get(f"/api/teams/{team_name}")
@@ -90,7 +90,7 @@ def test_get_team(app_client):
 
 
 def test_update_team(app_client):
-    """测试更新团队模式."""
+    """Test updating the team mode."""
     team_name = make_team({"name": "update-team"})["name"]
 
     resp = app_client.put(f"/api/teams/{team_name}", json={"mode": "broadcast"})
@@ -99,20 +99,20 @@ def test_update_team(app_client):
 
 
 def test_delete_team(app_client):
-    """测试删除团队."""
+    """Test deleting a team."""
     team_name = make_team({"name": "del-team"})["name"]
 
     resp = app_client.delete(f"/api/teams/{team_name}")
     assert resp.status_code == 200
     assert resp.json()["data"] is True
 
-    # 再查应该404
+    # Querying again should 404
     resp = app_client.get(f"/api/teams/{team_name}")
     assert resp.status_code == 404
 
 
 def test_get_team_status(app_client):
-    """测试获取团队状态."""
+    """Test getting the team status."""
     team_name = make_team({"name": "status-team"})["name"]
 
     resp = app_client.get(f"/api/teams/{team_name}/status")
@@ -123,36 +123,36 @@ def test_get_team_status(app_client):
 
 
 # ============================================================
-# Agent 管理
+# Agent management
 # ============================================================
 
 
 def test_create_agent(app_client):
-    """测试添加Agent."""
+    """Test adding an Agent."""
     team_name = make_team({"name": "agent-team"})["name"]
 
     resp = app_client.post(
         f"/api/teams/{team_name}/agents",
-        json={"name": "dev-1", "role": "后端开发"},
+        json={"name": "dev-1", "role": "Backend Development"},
     )
     assert resp.status_code == 201
     data = resp.json()
     assert data["data"]["name"] == "dev-1"
-    assert data["data"]["role"] == "后端开发"
+    assert data["data"]["role"] == "Backend Development"
 
 
 def test_list_agents(app_client):
-    """测试列出Agent."""
+    """Test listing Agents."""
     agents_list_team = make_team({"name": "agents-list-team"})
     team_id = agents_list_team["id"]
 
     app_client.post(
         f"/api/teams/{agents_list_team['name']}/agents",
-        json={"name": "a1", "role": "前端"},
+        json={"name": "a1", "role": "Frontend"},
     )
     app_client.post(
         f"/api/teams/{agents_list_team['name']}/agents",
-        json={"name": "a2", "role": "后端"},
+        json={"name": "a2", "role": "Backend"},
     )
 
     resp = app_client.get(f"/api/teams/{team_id}/agents")
@@ -161,12 +161,12 @@ def test_list_agents(app_client):
 
 
 def test_delete_agent(app_client):
-    """测试删除Agent."""
+    """Test deleting an Agent."""
     team_name = make_team({"name": "del-agent-team"})["name"]
 
     agent_resp = app_client.post(
         f"/api/teams/{team_name}/agents",
-        json={"name": "to-delete", "role": "测试"},
+        json={"name": "to-delete", "role": "Testing"},
     )
     agent_id = agent_resp.json()["data"]["id"]
 
@@ -176,12 +176,12 @@ def test_delete_agent(app_client):
 
 
 # ============================================================
-# 任务管理
+# Task management
 # ============================================================
 
 
 def test_list_tasks(app_client):
-    """测试列出任务（空列表）."""
+    """Test listing tasks (empty list)."""
     team_id = make_team({"name": "task-team"})["id"]
 
     resp = app_client.get(f"/api/teams/{team_id}/tasks")
@@ -190,28 +190,28 @@ def test_list_tasks(app_client):
 
 
 def test_run_task_mock(app_client):
-    """测试运行任务（创建任务记录）."""
+    """Test running a task (creating a task record)."""
     team_name = make_team({"name": "run-team"})["name"]
 
     resp = app_client.post(
         f"/api/teams/{team_name}/tasks/run",
-        json={"description": "测试任务", "title": "测试"},
+        json={"description": "Test task", "title": "Test"},
     )
 
     assert resp.status_code == 200
     data = resp.json()["data"]
     assert data["status"] == "pending"
-    assert data["title"] == "测试"
+    assert data["title"] == "Test"
     assert "id" in data
 
 
 def test_get_task_status(app_client):
-    """测试查询任务状态."""
+    """Test querying a task's status."""
     team_name = make_team({"name": "task-status-team"})["name"]
 
     run_resp = app_client.post(
         f"/api/teams/{team_name}/tasks/run",
-        json={"description": "状态查询测试", "title": "状态查询"},
+        json={"description": "Status query test", "title": "Status query"},
     )
 
     task_id = run_resp.json()["data"]["id"]
@@ -221,43 +221,43 @@ def test_get_task_status(app_client):
 
 
 # ============================================================
-# 事件
+# Events
 # ============================================================
 
 
 def test_list_events(app_client):
-    """测试列出事件（空列表）."""
+    """Test listing events (empty list)."""
     resp = app_client.get("/api/events")
     assert resp.status_code == 200
     assert resp.json()["success"] is True
 
 
 def test_list_events_with_filter(app_client):
-    """测试事件过滤参数."""
+    """Test event filter parameters."""
     resp = app_client.get("/api/events?type=team.created&source=api&limit=10")
     assert resp.status_code == 200
     assert resp.json()["success"] is True
 
 
 # ============================================================
-# 记忆
+# Memories
 # ============================================================
 
 
 def test_search_memories(app_client):
-    """测试搜索记忆."""
+    """Test searching memories."""
     resp = app_client.get("/api/memory?scope=global&scope_id=system")
     assert resp.status_code == 200
     assert resp.json()["success"] is True
 
 
 # ============================================================
-# 错误处理
+# Error handling
 # ============================================================
 
 
 def test_error_team_not_found(app_client):
-    """测试团队不存在返回404."""
+    """Test that a non-existent team returns 404."""
     resp = app_client.get("/api/teams/nonexistent-id-12345")
     assert resp.status_code == 404
     data = resp.json()
@@ -266,18 +266,18 @@ def test_error_team_not_found(app_client):
 
 
 def test_error_task_not_found(app_client):
-    """测试任务不存在返回404."""
+    """Test that a non-existent task returns 404."""
     resp = app_client.get("/api/tasks/nonexistent-task-id")
     assert resp.status_code == 404
 
 
 # ============================================================
-# CORS和OpenAPI
+# CORS and OpenAPI
 # ============================================================
 
 
 def test_cors_headers(app_client):
-    """测试CORS响应头."""
+    """Test CORS response headers."""
     resp = app_client.options(
         "/api/teams",
         headers={
@@ -289,7 +289,7 @@ def test_cors_headers(app_client):
 
 
 def test_openapi_docs_accessible(app_client):
-    """测试OpenAPI文档可访问."""
+    """Test that the OpenAPI documentation is accessible."""
     resp = app_client.get("/openapi.json")
     assert resp.status_code == 200
     data = resp.json()
@@ -298,12 +298,12 @@ def test_openapi_docs_accessible(app_client):
 
 
 # ============================================================
-# Hook Schema验证
+# Hook schema validation
 # ============================================================
 
 
 def test_hook_event_valid_payload(app_client):
-    """测试Hook端点接受合法payload."""
+    """Test that the Hook endpoint accepts a valid payload."""
     resp = app_client.post(
         "/api/hooks/event",
         json={
@@ -320,13 +320,13 @@ def test_hook_event_valid_payload(app_client):
 
 
 def test_hook_event_empty_payload(app_client):
-    """测试Hook端点接受空payload（所有字段有默认值）."""
+    """Test that the Hook endpoint accepts an empty payload (all fields have defaults)."""
     resp = app_client.post("/api/hooks/event", json={})
     assert resp.status_code == 200
 
 
 def test_hook_event_extra_fields_allowed(app_client):
-    """测试Hook端点允许额外字段（向后兼容）."""
+    """Test that the Hook endpoint allows extra fields (backward compatibility)."""
     resp = app_client.post(
         "/api/hooks/event",
         json={
@@ -339,7 +339,7 @@ def test_hook_event_extra_fields_allowed(app_client):
 
 
 def test_hook_event_field_too_long(app_client):
-    """测试Hook端点拒绝超长字段."""
+    """Test that the Hook endpoint rejects over-long fields."""
     resp = app_client.post(
         "/api/hooks/event",
         json={"hook_event_name": "x" * 100},  # max_length=50
@@ -348,7 +348,7 @@ def test_hook_event_field_too_long(app_client):
 
 
 def test_hook_event_invalid_type(app_client):
-    """测试Hook端点拒绝错误类型字段."""
+    """Test that the Hook endpoint rejects wrongly-typed fields."""
     resp = app_client.post(
         "/api/hooks/event",
         json={"tool_input": "not_a_dict"},

@@ -1,4 +1,4 @@
-"""AI Team OS — 常驻成员配置API测试."""
+"""AI Team OS — persistent member configuration API tests."""
 
 from __future__ import annotations
 
@@ -13,25 +13,25 @@ from aiteam.api.routes import team_config
 
 @pytest.fixture()
 def config_client(tmp_path):
-    """创建测试客户端，配置文件指向临时目录."""
+    """Create a test client, with the configuration file pointing at a temporary directory."""
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     config_file = config_dir / "team-defaults.json"
 
-    # 写入默认配置
+    # Write the default configuration
     default = {
         "auto_create_team": True,
         "team_name_prefix": "auto",
         "permanent_members": [
             {
                 "name": "qa-observer",
-                "role": "常驻QA观察员",
+                "role": "Resident QA Observer",
                 "model": "claude-sonnet-4-6",
                 "enabled": True,
             },
             {
                 "name": "bug-fixer",
-                "role": "常驻Bug工程师",
+                "role": "Resident Bug Engineer",
                 "model": "claude-sonnet-4-6",
                 "enabled": True,
             },
@@ -39,7 +39,7 @@ def config_client(tmp_path):
     }
     config_file.write_text(json.dumps(default, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    # Patch配置路径
+    # Patch the configuration path
     with (
         patch.object(team_config, "CONFIG_DIR", config_dir),
         patch.object(team_config, "CONFIG_FILE", config_file),
@@ -53,7 +53,7 @@ def config_client(tmp_path):
 
 
 class TestGetDefaults:
-    """测试GET默认配置."""
+    """Test GET of the default configuration."""
 
     def test_get_defaults(self, config_client):
         resp = config_client.get("/api/config/team-defaults")
@@ -72,7 +72,7 @@ class TestGetDefaults:
 
 
 class TestPutDefaults:
-    """测试PUT更新配置."""
+    """Test PUT updating the configuration."""
 
     def test_put_update_config(self, config_client):
         new_config = {
@@ -81,7 +81,7 @@ class TestPutDefaults:
             "permanent_members": [
                 {
                     "name": "researcher",
-                    "role": "研究员",
+                    "role": "Researcher",
                     "model": "claude-opus-4-7",
                     "enabled": True,
                 }
@@ -95,18 +95,18 @@ class TestPutDefaults:
         assert data["data"]["team_name_prefix"] == "test"
         assert len(data["data"]["permanent_members"]) == 1
 
-        # 验证持久化
+        # Verify persistence
         resp2 = config_client.get("/api/config/team-defaults")
         assert resp2.json()["data"]["auto_create_team"] is False
 
 
 class TestPostMember:
-    """测试POST添加成员."""
+    """Test POST adding a member."""
 
     def test_add_member(self, config_client):
         new_member = {
             "name": "researcher",
-            "role": "研究员",
+            "role": "Researcher",
             "model": "claude-opus-4-7",
             "enabled": True,
         }
@@ -114,7 +114,7 @@ class TestPostMember:
         assert resp.status_code == 201
         assert resp.json()["success"] is True
 
-        # 验证已添加
+        # Verify it was added
         resp2 = config_client.get("/api/config/team-defaults")
         members = resp2.json()["data"]["permanent_members"]
         assert len(members) == 3
@@ -124,21 +124,21 @@ class TestPostMember:
     def test_add_duplicate_member(self, config_client):
         dup_member = {
             "name": "qa-observer",
-            "role": "重复的QA",
+            "role": "Duplicate QA",
         }
         resp = config_client.post("/api/config/team-defaults/members", json=dup_member)
         assert resp.status_code == 409
 
 
 class TestDeleteMember:
-    """测试DELETE删除成员."""
+    """Test DELETE removing a member."""
 
     def test_delete_member(self, config_client):
         resp = config_client.delete("/api/config/team-defaults/members/qa-observer")
         assert resp.status_code == 200
         assert resp.json()["success"] is True
 
-        # 验证已删除
+        # Verify it was deleted
         resp2 = config_client.get("/api/config/team-defaults")
         members = resp2.json()["data"]["permanent_members"]
         assert len(members) == 1
@@ -150,7 +150,7 @@ class TestDeleteMember:
 
 
 class TestPatchMember:
-    """测试PATCH更新成员."""
+    """Test PATCH updating a member."""
 
     def test_disable_member(self, config_client):
         resp = config_client.patch(
@@ -174,10 +174,10 @@ class TestPatchMember:
     def test_update_role(self, config_client):
         resp = config_client.patch(
             "/api/config/team-defaults/members/qa-observer",
-            json={"role": "高级QA观察员"},
+            json={"role": "Senior QA Observer"},
         )
         assert resp.status_code == 200
-        assert resp.json()["data"]["role"] == "高级QA观察员"
+        assert resp.json()["data"]["role"] == "Senior QA Observer"
 
     def test_patch_nonexistent_member(self, config_client):
         resp = config_client.patch(

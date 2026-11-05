@@ -1,10 +1,10 @@
-"""cc_task_bridge — 完成时点记账，只镜像有主或有依赖链的 CC 任务。
+"""cc_task_bridge — accounting at completion time; it mirrors only CC tasks that have an owner or a dependency chain.
 
-Q1 裁定 C+B（2026-07-27）。改造前的桥有三处问题，本文件逐条钉死：
-- 挂在 TaskCreated 上：没完成的任务对项目账目没有意义。
-- 全量镜像：CC 的任务列表是会话内清单，无主无依赖的条目上墙就是噪声。
-- 项目缓存是**全局单值** + 5 分钟 TTL：本机同时跑着好几个不同项目的 CC 会话，
-  谁先解析谁赢，接下来 5 分钟别人的任务全落进他的项目——不是罕见竞态，是必然串台。
+Q1 ruling C+B (2026-07-27). The bridge before the change had three problems; this file pins them one by one:
+- Mounted on TaskCreated: tasks that have not completed are meaningless to a project's accounts.
+- Full mirroring: a CC task list is an in-session inventory; ownerless, dependency-free entries on the wall are noise.
+- The project cache is a **global single value** + a 5-minute TTL: with several CC sessions from different projects running on this machine at the same time,
+  whoever resolves first wins, and for the next 5 minutes everyone else's tasks all land in their project — not a rare race, but inevitable cross-talk.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def _mock_response(payload: dict) -> MagicMock:
 
 class TestProjectCacheIsPerCwd:
     def test_two_projects_do_not_share_one_cached_id(self):
-        """本机多会话并行的真实场景：两个 cwd 必须各自解析。"""
+        """The real scenario of multiple sessions running in parallel on this machine: two cwds must each resolve their own."""
         mod = _import_module()
         state: dict = {}
         with patch.object(mod, "_load_state", side_effect=lambda: state), patch.object(
@@ -85,7 +85,7 @@ class TestProjectCacheIsPerCwd:
 
 
 class TestMirrorFilter:
-    """有主 or 有依赖链才上墙。"""
+    """Only with an owner or a dependency chain does it go on the wall."""
 
     def test_owned_task_is_mirrored(self):
         mod = _import_module()
@@ -111,7 +111,7 @@ class TestReadCcTask:
             json.dumps(
                 {
                     "id": "20",
-                    "subject": "建 fetcher",
+                    "subject": "Build fetcher",
                     "description": "d",
                     "activeForm": "a",
                     "status": "completed",
@@ -147,8 +147,8 @@ class TestMain:
             {
                 "hook_event_name": "TaskCompleted",
                 "task_id": "20",
-                "task_subject": "建 fetcher",
-                "task_description": "细节",
+                "task_subject": "Build fetcher",
+                "task_description": "Details",
                 "teammate_name": "alice",
                 "team_name": "session-0def8f84",
                 "cwd": "/p",
@@ -167,7 +167,7 @@ class TestMain:
             {
                 "hook_event_name": "TaskCompleted",
                 "task_id": "21",
-                "task_subject": "随手记一笔",
+                "task_subject": "Jot down a note",
                 "cwd": "/p",
             },
             {"blocks": [], "blockedBy": []},

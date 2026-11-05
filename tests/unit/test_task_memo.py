@@ -1,4 +1,4 @@
-"""AI Team OS — 任务Memo追踪单元测试."""
+"""AI Team OS — task Memo tracking unit tests."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from aiteam.storage.repository import StorageRepository
 
 @pytest.fixture()
 def app_client():
-    """创建测试客户端，使用内存SQLite."""
+    """Create a test client using in-memory SQLite."""
     import asyncio
 
     repo = StorageRepository(db_url="sqlite+aiosqlite://")
@@ -56,14 +56,14 @@ def app_client():
 
 
 def _create_team_and_task(client: TestClient) -> tuple[str, str]:
-    """辅助：创建团队和任务，返回 (team_id, task_id)."""
+    """Helper: create a team and a task, return (team_id, task_id)."""
     team_id = make_team({"name": "memo-test-team"})["id"]
 
     task_resp = client.post(
         f"/api/teams/{team_id}/tasks/run",
         json={
-            "title": "测试任务",
-            "description": "用于memo测试",
+            "title": "Test task",
+            "description": "For memo tests",
         },
     )
     task_id = task_resp.json()["data"]["id"]
@@ -71,7 +71,7 @@ def _create_team_and_task(client: TestClient) -> tuple[str, str]:
 
 
 def test_empty_memo(app_client: TestClient):
-    """空memo返回空列表."""
+    """An empty memo returns an empty list."""
     _, task_id = _create_team_and_task(app_client)
     resp = app_client.get(f"/api/tasks/{task_id}/memo")
     assert resp.status_code == 200
@@ -81,12 +81,12 @@ def test_empty_memo(app_client: TestClient):
 
 
 def test_add_memo(app_client: TestClient):
-    """POST追加memo."""
+    """POST appends a memo."""
     _, task_id = _create_team_and_task(app_client)
     resp = app_client.post(
         f"/api/tasks/{task_id}/memo",
         json={
-            "content": "开始实施任务",
+            "content": "Start implementing the task",
             "type": "progress",
             "author": "engineer-1",
         },
@@ -94,27 +94,27 @@ def test_add_memo(app_client: TestClient):
     assert resp.status_code == 200
     data = resp.json()
     assert data["success"] is True
-    assert data["data"]["content"] == "开始实施任务"
+    assert data["data"]["content"] == "Start implementing the task"
     assert data["data"]["type"] == "progress"
     assert data["data"]["author"] == "engineer-1"
     assert "timestamp" in data["data"]
 
 
 def test_read_memo(app_client: TestClient):
-    """GET读取memo列表."""
+    """GET reads the memo list."""
     _, task_id = _create_team_and_task(app_client)
 
-    # 追加两条
+    # Append two
     app_client.post(
         f"/api/tasks/{task_id}/memo",
         json={
-            "content": "第一条",
+            "content": "First",
         },
     )
     app_client.post(
         f"/api/tasks/{task_id}/memo",
         json={
-            "content": "第二条",
+            "content": "Second",
         },
     )
 
@@ -122,19 +122,19 @@ def test_read_memo(app_client: TestClient):
     assert resp.status_code == 200
     memos = resp.json()["data"]
     assert len(memos) == 2
-    assert memos[0]["content"] == "第一条"
-    assert memos[1]["content"] == "第二条"
+    assert memos[0]["content"] == "First"
+    assert memos[1]["content"] == "Second"
 
 
 def test_memo_types(app_client: TestClient):
-    """不同type正确存储."""
+    """Different types are stored correctly."""
     _, task_id = _create_team_and_task(app_client)
 
     for memo_type in ("progress", "decision", "issue", "summary"):
         app_client.post(
             f"/api/tasks/{task_id}/memo",
             json={
-                "content": f"类型={memo_type}",
+                "content": f"type={memo_type}",
                 "type": memo_type,
             },
         )
@@ -147,7 +147,7 @@ def test_memo_types(app_client: TestClient):
 
 
 def test_memo_not_found(app_client: TestClient):
-    """不存在的任务返回404."""
+    """A nonexistent task returns 404."""
     resp = app_client.get("/api/tasks/nonexistent-id/memo")
     assert resp.status_code == 404
 
@@ -161,11 +161,11 @@ def test_memo_not_found(app_client: TestClient):
 
 
 def test_memo_rejects_invisible_unicode(app_client: TestClient):
-    """情景层写入扫描：不可见字符拒收（v2.1）."""
+    """Scenario-layer write scan: invisible characters are rejected (v2.1)."""
     _, task_id = _create_team_and_task(app_client)
     resp = app_client.post(
         f"/api/tasks/{task_id}/memo",
-        json={"content": "进展记录" + chr(0x200B) + "含零宽空格"},
+        json={"content": "Progress record" + chr(0x200B) + "contains a zero-width space"},
     )
     body = resp.json()
     assert body["success"] is False
@@ -174,13 +174,13 @@ def test_memo_rejects_invisible_unicode(app_client: TestClient):
 
 
 def test_memo_keeps_injection_shaped_text(app_client: TestClient):
-    """情景层**只**扫不可见字符：memo 不进任何 system prompt，注入句式只是被记录的文本.
+    """The scenario layer scans **only** invisible characters: memos enter no system prompt; injection phrasings are just recorded text.
 
-    高频路径保持轻，也避免把"复盘一次注入事件"这类正当记录挡在门外。
+    Keep the high-frequency path light, and avoid blocking legitimate records like "retrospect on an injection incident".
     """
     _, task_id = _create_team_and_task(app_client)
     resp = app_client.post(
         f"/api/tasks/{task_id}/memo",
-        json={"content": "复盘：攻击载荷形如 ignore all previous instructions"},
+        json={"content": "Retrospective: the attack payload looks like ignore all previous instructions"},
     )
     assert resp.json()["success"] is True

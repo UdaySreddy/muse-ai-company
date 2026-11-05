@@ -2,7 +2,7 @@
 
 auto_install.py (plugin-only, no src twin) turned "import succeeds → short-circuit"
 into a version comparison, and now converges every entry point onto one absolute-path
-runtime chain in ~/.claude/settings.json (the '单运行时' core, also the Windows
+runtime chain in ~/.claude/settings.json (the 'single runtime' core, also the Windows
 self-heal). These tests pin: version compare, _sync_main_chain correctness +
 idempotency (including against install.py's register_hooks), and the main() decision
 flow (silent when current+registered, card + sync when behind).
@@ -239,8 +239,8 @@ class TestMainFlow:
         assert calls.get("upgrade") is True, "should upgrade (not fresh) when behind"
         payload = json.loads(out)
         ctx = payload["hookSpecificOutput"]["additionalContext"]
-        assert "已升级" in ctx
-        assert "重启" in ctx
+        assert "upgraded" in ctx
+        assert "restart" in ctx
         # main chain got registered
         assert ai._main_chain_registered() is True
 
@@ -259,7 +259,7 @@ class TestMainFlow:
         out = capsys.readouterr().out
         assert seen.get("upgrade") is False, "fresh install must not pass --upgrade"
         ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
-        assert "已安装" in ctx
+        assert "installed" in ctx
 
     def test_pip_failure_is_non_blocking_with_clear_hint(self, ai, fake_home, tmp_path, monkeypatch, capsys):
         plugin = _make_fake_plugin(tmp_path, "9.9.9")
@@ -268,7 +268,7 @@ class TestMainFlow:
         monkeypatch.setattr(ai, "_pip_install", lambda upgrade: (False, "network down"))
         ai.main()  # must not raise
         ctx = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
-        assert "失败" in ctx
+        assert "failed" in ctx
         assert "pip install" in ctx  # actionable retry hint
 
 
@@ -297,10 +297,10 @@ class TestWindowsLauncher:
         for group in manifest["hooks"]["SessionStart"]:
             for hook in group["hooks"]:
                 if "auto_install.py" in hook["command"]:
-                    # timeout 单位是**秒**（CC 官方文档："Seconds before canceling"，
-                    # command 类默认 600）。2026-07-27 修正：此前全仓按毫秒思维写
-                    # 3000/5000/300000，等于把超时保护关掉（3000 秒 = 50 分钟）。
-                    # auto_install 要跑 git+pip 安装，给 120-600 秒区间。
+                    # The timeout unit is **seconds** (CC official documentation: "Seconds before canceling",
+                    # with a default of 600 for the command class). Corrected 2026-07-27: previously the whole repo wrote with a millisecond mindset,
+                    # 3000/5000/300000, which amounted to turning the timeout protection off (3000 seconds = 50 minutes).
+                    # auto_install runs git+pip installs; give it a 120-600 second range.
                     assert 120 <= hook["timeout"] <= 600
                     return
 

@@ -24,25 +24,25 @@ def _use_temp_state(tmp_path: str):
 
 
 class TestTeamCreateRemindsTask:
-    """TeamCreate后应提醒任务上墙。"""
+    """After TeamCreate, should remind to put tasks on the wall."""
 
     def test_teamcreate_reminds_task(self):
         state = {}
         event = {"tool_name": "TeamCreate", "hook_event_name": "PostToolUse"}
         warnings = _check_workflow_reminders(event, state)
         assert len(warnings) >= 1
-        assert any("任务墙" in w for w in warnings)
+        assert any("task wall" in w for w in warnings)
         assert any("task_run" in w or "task_create" in w for w in warnings)
 
 
 class TestAgentRemindsMemo:
-    """Agent(team_name)创建前应提醒查看memo。"""
+    """Before creating an Agent(team_name), should remind to view the memo."""
 
     def test_agent_reminds_memo(self):
         state = {"last_memo_reminder": 0}
         event = {
             "tool_name": "Agent",
-            "tool_input": {"prompt": "实现功能", "team_name": "dev-team"},
+            "tool_input": {"prompt": "Implement the feature", "team_name": "dev-team"},
             "hook_event_name": "PreToolUse",
         }
         warnings = _check_workflow_reminders(event, state)
@@ -54,7 +54,7 @@ class TestAgentRemindsMemo:
         state = {"last_memo_reminder": 0}
         event = {
             "tool_name": "Agent",
-            "tool_input": {"prompt": "探索代码", "subagent_type": "explore"},
+            "tool_input": {"prompt": "Explore the code", "subagent_type": "explore"},
             "hook_event_name": "PreToolUse",
         }
         warnings = _check_workflow_reminders(event, state)
@@ -63,7 +63,7 @@ class TestAgentRemindsMemo:
 
 
 class TestShutdownRemindsComplete:
-    """SendMessage(shutdown)应提醒标记任务完成。"""
+    """SendMessage(shutdown) should remind to mark the task complete."""
 
     def test_shutdown_reminds_complete(self):
         state = {}
@@ -75,65 +75,65 @@ class TestShutdownRemindsComplete:
         warnings = _check_workflow_reminders(event, state)
         # Rule 3 shutdown reminder + possible Rule 6 parallel task reminder
         assert any("task_memo_add" in w for w in warnings)
-        assert any("完成" in w or "标记" in w for w in warnings)
+        assert any("complete" in w or "mark" in w for w in warnings)
 
     def test_normal_sendmessage_no_shutdown_warning(self):
         state = {}
         event = {
             "tool_name": "SendMessage",
-            "tool_input": {"to": "dev-agent", "message": "请继续工作"},
+            "tool_input": {"to": "dev-agent", "message": "Please continue working"},
             "hook_event_name": "PreToolUse",
         }
         warnings = _check_workflow_reminders(event, state)
-        assert not any("关闭Agent" in w for w in warnings)
+        assert not any("Close Agent" in w for w in warnings)
 
 
 class TestTaskwallViewResetsTimer:
-    """taskwall_view应重置计时器。"""
+    """taskwall_view should reset the timer."""
 
     def test_taskwall_view_resets_timer(self):
         state = {"last_taskwall_view": 0}
         event = {"tool_name": "taskwall_view", "hook_event_name": "PostToolUse"}
         warnings = _check_workflow_reminders(event, state)
         assert state["last_taskwall_view"] > 0
-        # taskwall_view本身不应产生staleness warning
-        assert not any("距上次查看任务墙" in w for w in warnings)
+        # taskwall_view itself should not produce a staleness warning
+        assert not any("since the task wall was last viewed" in w for w in warnings)
 
 
 class TestStaleTaskwallWarning:
-    """超过30分钟未查看任务墙应提醒（催办治理：间隔 900→1800s）。"""
+    """Not viewing the task wall for over 30 minutes should remind (reminder governance: interval 900→1800s)."""
 
     def test_stale_taskwall_warning(self):
-        # 设置last_taskwall_view为35分钟前（超过 1800s 阈值）
+        # Set last_taskwall_view to 35 minutes ago (beyond the 1800s threshold)
         stale_ago = time.time() - 2100
         state = {"last_taskwall_view": stale_ago}
         event = {"tool_name": "Bash", "hook_event_name": "PreToolUse"}
         warnings = _check_workflow_reminders(event, state)
-        assert any("距上次查看任务墙" in w for w in warnings)
-        # 提醒后应重置timer
+        assert any("since the task wall was last viewed" in w for w in warnings)
+        # After reminding, the timer should reset
         assert state["last_taskwall_view"] > stale_ago
 
     def test_no_stale_warning_within_30_minutes(self):
-        # 设置last_taskwall_view为20分钟前（在 1800s 阈值内，不再催）
+        # Set last_taskwall_view to 20 minutes ago (within the 1800s threshold, no more nagging)
         twenty_min_ago = time.time() - 1200
         state = {"last_taskwall_view": twenty_min_ago}
         event = {"tool_name": "Bash", "hook_event_name": "PreToolUse"}
         warnings = _check_workflow_reminders(event, state)
-        assert not any("距上次查看任务墙" in w for w in warnings)
+        assert not any("since the task wall was last viewed" in w for w in warnings)
 
     def test_no_stale_warning_when_never_viewed(self):
-        # last_taskwall_view为0（从未查看），不应产生staleness提醒
+        # last_taskwall_view is 0 (never viewed); should not produce a staleness reminder
         state = {"last_taskwall_view": 0}
         event = {"tool_name": "Bash", "hook_event_name": "PreToolUse"}
         warnings = _check_workflow_reminders(event, state)
-        assert not any("距上次查看任务墙" in w for w in warnings)
+        assert not any("since the task wall was last viewed" in w for w in warnings)
 
 
 class TestTaskwallCatchupGovernance:
-    """催办治理①：重置事件扩大到全部 task_*/taskwall_* + 会话内催办上限 2 次后静默。"""
+    """Reminder governance ①: reset events expand to all task_*/taskwall_* + a per-session reminder cap of 2, then silence."""
 
     def test_task_create_resets_timer(self):
-        # task_create 属任务墙操作，应重置计时器（旧实现只认 view 两工具）
+        # task_create is a task-wall operation and should reset the timer (the old implementation only recognized the two view tools)
         stale_ago = time.time() - 2100
         state = {"last_taskwall_view": stale_ago}
         event = {
@@ -141,7 +141,7 @@ class TestTaskwallCatchupGovernance:
             "hook_event_name": "PostToolUse",
         }
         warnings = _check_workflow_reminders(event, state)
-        assert not any("距上次查看任务墙" in w for w in warnings)
+        assert not any("since the task wall was last viewed" in w for w in warnings)
         assert state["last_taskwall_view"] > stale_ago
 
     def test_task_update_and_memo_add_reset_timer(self):
@@ -154,27 +154,27 @@ class TestTaskwallCatchupGovernance:
             state = {"last_taskwall_view": stale_ago}
             event = {"tool_name": tool, "hook_event_name": "PostToolUse"}
             warnings = _check_workflow_reminders(event, state)
-            assert not any("距上次查看任务墙" in w for w in warnings), tool
+            assert not any("since the task wall was last viewed" in w for w in warnings), tool
             assert state["last_taskwall_view"] > stale_ago, tool
 
     def test_catchup_silenced_after_two_times_same_session(self):
-        # 同一会话催办 2 次后静默；换会话重新计数
+        # Silent after 2 reminders in the same session; a new session counts afresh
         sid = "sess-catchup-1"
         emitted = 0
         state: dict = {}
         for _ in range(4):
-            state["last_taskwall_view"] = time.time() - 2100  # 每轮制造超时
+            state["last_taskwall_view"] = time.time() - 2100  # Manufacture a timeout each round
             event = {
                 "tool_name": "Bash",
                 "hook_event_name": "PreToolUse",
                 "session_id": sid,
             }
             warnings = _check_workflow_reminders(event, state)
-            if any("距上次查看任务墙" in w for w in warnings):
+            if any("since the task wall was last viewed" in w for w in warnings):
                 emitted += 1
-        assert emitted == 2, f"应最多催 2 次，实际 {emitted}"
+        assert emitted == 2, f"Should remind at most 2 times, actually {emitted}"
 
-        # 另一会话独立计数，仍能催
+        # Another session counts independently and can still be reminded
         state["last_taskwall_view"] = time.time() - 2100
         event2 = {
             "tool_name": "Bash",
@@ -182,34 +182,34 @@ class TestTaskwallCatchupGovernance:
             "session_id": "sess-catchup-2",
         }
         warnings2 = _check_workflow_reminders(event2, state)
-        assert any("距上次查看任务墙" in w for w in warnings2)
+        assert any("since the task wall was last viewed" in w for w in warnings2)
 
 
 class TestMemoReminderCooldown:
-    """5分钟冷却内不应重复提醒查看memo。"""
+    """Within the 5-minute cooldown, should not repeat the memo-viewing reminder."""
 
     def test_memo_reminder_cooldown(self):
-        # 第一次触发
+        # First trigger
         state = {"last_memo_reminder": 0}
         event = {
             "tool_name": "Agent",
-            "tool_input": {"prompt": "实现功能", "team_name": "dev-team"},
+            "tool_input": {"prompt": "Implement the feature", "team_name": "dev-team"},
             "hook_event_name": "PreToolUse",
         }
         warnings1 = _check_workflow_reminders(event, state)
         assert any("task_memo_read" in w for w in warnings1)
 
-        # 立即再次触发（冷却内）
+        # Trigger again immediately (within the cooldown)
         warnings2 = _check_workflow_reminders(event, state)
         assert not any("task_memo_read" in w for w in warnings2)
 
     def test_memo_reminder_after_cooldown(self):
-        # 设置last_memo_reminder为6分钟前（超过5分钟冷却）
+        # Set last_memo_reminder to 6 minutes ago (beyond the 5-minute cooldown)
         six_min_ago = time.time() - 360
         state = {"last_memo_reminder": six_min_ago}
         event = {
             "tool_name": "Agent",
-            "tool_input": {"prompt": "实现功能", "team_name": "dev-team"},
+            "tool_input": {"prompt": "Implement the feature", "team_name": "dev-team"},
             "hook_event_name": "PreToolUse",
         }
         warnings = _check_workflow_reminders(event, state)
@@ -217,11 +217,11 @@ class TestMemoReminderCooldown:
 
 
 class TestNoWarningNormalFlow:
-    """正常流程不应产生多余提醒。"""
+    """The normal flow should produce no extra reminders."""
 
     def test_no_warning_normal_flow(self):
         state = {}
-        # 普通工具调用不应产生workflow提醒
+        # Ordinary tool calls should not produce workflow reminders
         for tool in ["Bash", "Read", "Edit", "Write", "Glob", "Grep"]:
             event = {"tool_name": tool, "hook_event_name": "PreToolUse"}
             warnings = _check_workflow_reminders(event, state)
@@ -229,7 +229,7 @@ class TestNoWarningNormalFlow:
 
 
 class TestTaskwallToolHelper:
-    """_is_taskwall_tool：全部 task_*/taskwall_*（前缀或裸名）判为任务墙操作。"""
+    """_is_taskwall_tool: all task_*/taskwall_* (prefixed or bare names) count as task-wall operations."""
 
     def test_matches_task_and_taskwall(self):
         from aiteam.hooks.workflow_reminder import _is_taskwall_tool
@@ -253,7 +253,7 @@ class TestTaskwallToolHelper:
 
 
 class TestSessionBucketHelper:
-    """_session_bucket：会话隔离 + 24h TTL 剪枝防状态膨胀。"""
+    """_session_bucket: session isolation + 24h TTL pruning to prevent state bloat."""
 
     def test_per_session_isolation(self):
         from aiteam.hooks.workflow_reminder import _session_bucket
@@ -262,8 +262,8 @@ class TestSessionBucketHelper:
         b1 = _session_bucket(state, "sess-A")
         b1["flag"] = True
         b2 = _session_bucket(state, "sess-B")
-        assert b2.get("flag") is None  # B 看不到 A 的标记
-        # 再取 A 应拿回同一桶
+        assert b2.get("flag") is None  # B cannot see A's flag
+        # Fetching A again should return the same bucket
         assert _session_bucket(state, "sess-A").get("flag") is True
 
     def test_stale_buckets_pruned(self):
@@ -271,22 +271,22 @@ class TestSessionBucketHelper:
 
         state: dict = {}
         _session_bucket(state, "old-sess")
-        # 手工把 old-sess 打成 25h 前
+        # Manually stamp old-sess as 25h ago
         state["session_scoped"]["old-sess"]["_ts"] = time.time() - 25 * 3600
-        _session_bucket(state, "new-sess")  # 触发剪枝
+        _session_bucket(state, "new-sess")  # Triggers pruning
         assert "old-sess" not in state["session_scoped"]
         assert "new-sess" in state["session_scoped"]
 
 
 class TestReportFormatDirectionGating:
-    """催办治理⑤：汇报格式提醒仅对子agent会话（成员汇报）触发，排除 Leader 会话。"""
+    """Reminder governance ⑤: the report-format reminder fires only for subagent sessions (member reports), excluding Leader sessions."""
 
     _MSG = {
         "to": "team-lead",
         "message": (
-            "任务完成了，我做了很多工作，改了几个文件，也把测试跑了一遍，"
-            "但是这条消息故意没有按标准格式写那三个字段，凑够一百字以上以触发校验"
-            "啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊啊"
+            "The task is done, I did a lot of work, changed several files, and ran the tests once,"
+            "but this message deliberately does not write those three fields in the standard format, padded past one hundred characters to trigger the check"
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         ),
     }
 
@@ -299,7 +299,7 @@ class TestReportFormatDirectionGating:
         }
         with mock.patch.object(workflow_reminder, "_is_subagent_session", return_value=True):
             warnings = _check_workflow_reminders(event, {})
-        assert any("汇报可能缺少标准字段" in w for w in warnings)
+        assert any("The report may be missing standard fields" in w for w in warnings)
 
     def test_leader_session_excluded(self):
         event = {
@@ -310,7 +310,7 @@ class TestReportFormatDirectionGating:
         }
         with mock.patch.object(workflow_reminder, "_is_subagent_session", return_value=False):
             warnings = _check_workflow_reminders(event, {})
-        assert not any("汇报可能缺少标准字段" in w for w in warnings)
+        assert not any("The report may be missing standard fields" in w for w in warnings)
 
     def test_member_session_throttled_once(self):
         event = {
@@ -323,17 +323,17 @@ class TestReportFormatDirectionGating:
         with mock.patch.object(workflow_reminder, "_is_subagent_session", return_value=True):
             first = _check_workflow_reminders(event, state)
             second = _check_workflow_reminders(event, state)
-        assert any("汇报可能缺少标准字段" in w for w in first)
-        assert not any("汇报可能缺少标准字段" in w for w in second)
+        assert any("The report may be missing standard fields" in w for w in first)
+        assert not any("The report may be missing standard fields" in w for w in second)
 
 
 class TestCommitBranchOwnership:
-    """A1'(S5) commit 期分支断言：谁在哪个 checkout 上认领了哪条分支。
+    """A1'(S5) commit-time branch assertion: who claimed which branch on which checkout.
 
-    裁决语义（辩论 503e07f1 议题A）：状态全落 hook 自身 supervisor state 不调 API；
-    首次提交记 (checkout, agent)→branch+ts；自己换分支响亮警告不拦；落到他人 24h
-    内的活跃记录硬拦 exit(2)；他人记录过期降为警告（防死 agent 记录误伤合法接手者）；
-    git 探测失败 fail-loud（既不放行也不硬拦，显式声明检查未执行）。
+    Ruling semantics (debate 503e07f1 topic A): all state lives in the hook's own supervisor state, no API calls;
+    the first commit records (checkout, agent)→branch+ts; switching one's own branch warns loudly without blocking; landing on another's record within 24h
+    hard-blocks with exit(2); another's expired record degrades to a warning (so a dead agent's record does not harm a legitimate taker-over);
+    a git probe failure is fail-loud (neither passes nor hard-blocks; it explicitly declares the check was not performed).
     """
 
     _CHECKOUT = "/repo/main"
@@ -356,7 +356,7 @@ class TestCommitBranchOwnership:
 
     @staticmethod
     def _own(warnings: list[str]) -> list[str]:
-        return [w for w in warnings if "分支所有权" in w]
+        return [w for w in warnings if "branch ownership" in w]
 
     def _records(self, state: dict) -> dict:
         return state.get("branch_ownership", {}).get(self._CHECKOUT, {})
@@ -377,7 +377,7 @@ class TestCommitBranchOwnership:
             self._records(state)["agent-1"]["ts"] = time.time() - 600
             warnings = _check_workflow_reminders(self._event("agent-1"), state)
         assert self._own(warnings) == []
-        # 仍在自己的分支上干活 → 认领续期，不让它自然过期
+        # Still working on one's own branch → the claim renews instead of expiring naturally
         assert time.time() - self._records(state)["agent-1"]["ts"] < 5
 
     def test_self_switch_warns_loudly_without_blocking(self):
@@ -388,7 +388,7 @@ class TestCommitBranchOwnership:
             warnings = _check_workflow_reminders(self._event("agent-1"), state)
         own = self._own(warnings)
         assert len(own) == 1
-        # 同屏给出记录分支与当前 HEAD
+        # Shows the recorded branch and the current HEAD on the same screen
         assert "feature-a" in own[0] and "feature-b" in own[0]
 
     def test_other_agent_active_claim_hard_blocks(self):
@@ -405,13 +405,13 @@ class TestCommitBranchOwnership:
         state: dict = {}
         with self._git("feature-a"):
             _check_workflow_reminders(self._event("agent-1"), state)
-            # 记录打成 25h 前：超过活跃 TTL，未到剪枝 TTL
+            # Stamp the record as 25h ago: beyond the active TTL, short of the pruning TTL
             self._records(state)["agent-1"]["ts"] = time.time() - 25 * 3600
             warnings = _check_workflow_reminders(self._event("agent-2"), state)
         own = self._own(warnings)
         assert len(own) == 1
-        assert "过期" in own[0]
-        # 合法接手者拿到自己的认领
+        assert "expired" in own[0]
+        # The legitimate taker-over gets their own claim
         assert self._records(state)["agent-2"]["branch"] == "feature-a"
 
     def test_git_probe_failure_fails_loud(self):
@@ -420,8 +420,8 @@ class TestCommitBranchOwnership:
             warnings = _check_workflow_reminders(self._event("agent-1"), state)
         own = self._own(warnings)
         assert len(own) == 1
-        assert "未能执行" in own[0]
-        # 探测不出来就不记账，免得把错的所有权坐实
+        assert "could not be executed" in own[0]
+        # When it cannot be probed, do not record it, lest a wrong ownership be cemented
         assert state.get("branch_ownership", {}) == {}
 
     def test_detached_head_fails_loud(self):
@@ -440,7 +440,7 @@ class TestCommitBranchOwnership:
         assert state.get("branch_ownership", {}) == {}
 
     def test_post_tool_use_does_not_check(self):
-        """提交后再断言毫无意义（木已成舟），只在 PreToolUse 跑。"""
+        """Asserting after the commit is meaningless (the deed is done); it runs only at PreToolUse."""
         state: dict = {}
         event = self._event("agent-1")
         event["hook_event_name"] = "PostToolUse"
@@ -459,7 +459,7 @@ class TestCommitBranchOwnership:
                 time.time() - _BRANCH_OWNERSHIP_PRUNE_TTL - 60
             )
             _check_workflow_reminders(self._event("agent-9"), state)
-        # 过期到剪枝线的记录被整条清掉，state 文件不随 agent 数无限膨胀
+        # Records expired to the pruning line are removed wholesale; the state file does not bloat indefinitely with the agent count
         assert "agent-1" not in self._records(state)
         assert "agent-9" in self._records(state)
 
@@ -467,7 +467,7 @@ class TestCommitBranchOwnership:
         state: dict = {}
         with self._git("feature-a", checkout="/repo/main"):
             _check_workflow_reminders(self._event("agent-1"), state)
-        # 另一个 worktree 同名分支不该被当成同一次认领（git 本就不允许，但状态键要分得开）
+        # A same-named branch in another worktree should not be treated as the same claim (git does not allow it anyway, but the state keys must separate)
         with self._git("feature-a", checkout="/repo/wt-1"):
             warnings = _check_workflow_reminders(self._event("agent-2"), state)
         assert self._own(warnings) == []

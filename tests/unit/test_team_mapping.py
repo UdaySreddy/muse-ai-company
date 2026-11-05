@@ -362,11 +362,11 @@ class TestWorkflowSubagentTracking:
 
     @pytest.mark.asyncio
     async def test_join_reopens_closed_session_shell(self, translator):
-        """收过的 workflow-session 壳队被再次加入时必须当场复活。
+        """A collected workflow-session shell team, when joined again, must be revived on the spot.
 
-        壳队按名字永远可寻址：一条长命会话在 reaper 收队之后再起 workflow，新成员会
-        落进一支 completed 队里——而所有"活跃"视图都按 status 筛队，成员就此隐形。
-        reaper 的矛盾态自愈能在一 tick 内救回，但加入的那一刻才是最准的时点。
+        A shell team is addressable by name forever: a long-lived session starting a workflow after the reaper collected the team lands new members
+        in a completed team — and every "active" view filters teams by status, so the members become invisible.
+        The reaper's contradiction self-healing can rescue it within one tick, but the moment of joining is the most accurate point.
         """
         ht, repo = translator
         shell = await repo.create_team(
@@ -540,11 +540,11 @@ class TestFleetIdentityP1:
 
 
 class TestTeamlessAutoAdoption:
-    """2026-07-22「全面放开+一律自动追踪」(任务 8705dac2)：直派 agent 自动收编。"""
+    """2026-07-22 "fully open + always auto-track" (task 8705dac2): directly dispatched agents are auto-enrolled."""
 
     @pytest.mark.asyncio
     async def test_teamless_dispatch_auto_adopted(self, translator):
-        """无 cc_team_name、无 Leader、无队可归 → 自动建 session-<sid8> 容器队收编。"""
+        """No cc_team_name, no Leader, no team to belong to → automatically build a session-<sid8> container team and enroll."""
         ht, repo = translator
         payload = {
             "hook_event_name": "SubagentStart",
@@ -556,13 +556,13 @@ class TestTeamlessAutoAdoption:
         assert result["status"] == "created", result
 
         team = await repo.get_team_by_name("session-wengeses")
-        assert team is not None, "应自动创建本会话容器队"
+        assert team is not None, "Should automatically create this session's container team"
         agents = await repo.list_agents(team.id)
         assert any(a.name == "general-purpose" for a in agents)
 
     @pytest.mark.asyncio
     async def test_completed_session_team_revived_on_dispatch(self, translator):
-        """容器队被关(SessionEnd/收割)后直派 → 自动复活 active 并收编(病灶②)。"""
+        """After the container team is closed (SessionEnd/reaped), a direct dispatch → automatically revives it to active and enrolls (lesion ②)."""
         ht, repo = translator
         sid = "revive-sess-0001"
         team, _ = await repo.get_or_create_team(
@@ -585,13 +585,13 @@ class TestTeamlessAutoAdoption:
         assert result["status"] == "created", result
 
         team_after = await repo.get_team(team.id)
-        assert team_after.status == "active", "completed 容器队应被复活"
+        assert team_after.status == "active", "A completed container team should be revived"
         agents = await repo.list_agents(team.id)
         assert any(a.name == "impl-worker" for a in agents)
 
     @pytest.mark.asyncio
     async def test_leader_rehomed_from_completed_workflow_team(self, translator):
-        """Leader 漂移到已完结 workflow 队 → 收编时归位会话容器队(病灶③)。"""
+        """The Leader drifted to a completed workflow team → on enrollment it is homed to the session container team (lesion ③)."""
         ht, repo = translator
         sid = "drift-sess-0001"
         wf_team, _ = await repo.get_or_create_team(
@@ -613,8 +613,8 @@ class TestTeamlessAutoAdoption:
         assert result["status"] == "created", result
 
         container = await repo.get_team_by_name(f"session-{sid[:8]}")
-        assert container is not None, "归属校验应拒绝寄生 workflow 队并按名建容器队"
+        assert container is not None, "Ownership validation should reject the parasitic workflow team and create a container team by name"
         agents = await repo.list_agents(container.id)
         assert any(a.name == "frontend-dev" for a in agents)
         leader_after = await repo.get_agent(leader.id)
-        assert leader_after.team_id == container.id, "Leader 应归位到会话容器队"
+        assert leader_after.team_id == container.id, "The Leader should be homed to the session container team"

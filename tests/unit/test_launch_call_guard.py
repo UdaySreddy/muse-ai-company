@@ -199,7 +199,7 @@ def test_unknown_type_is_reported_with_a_suggestion(only_known_template: str) ->
     assert entry["subagent_type"] == "code-reviwer"
     assert entry["used_by"] == ["reviewer"]
     assert entry["closest_templates"] == ["code-reviewer"], entry
-    assert "不在模板库" in entry["message"]
+    assert "not in the template library" in entry["message"]
     assert FALLBACK_SUBAGENT_TYPE in entry["message"]
 
 
@@ -208,7 +208,7 @@ def test_unknown_type_with_no_near_match_still_reports(only_known_template: str)
 
     assert len(warnings) == 1
     assert warnings[0]["closest_templates"] == []
-    assert "无相近模板" in warnings[0]["message"]
+    assert "No similar template" in warnings[0]["message"]
 
 
 def test_repeated_unknown_type_collapses_to_one_entry(only_known_template: str) -> None:
@@ -232,9 +232,9 @@ def _participant(**overrides) -> dict:
     base = {
         "name": "reviewer",
         "agent_template": "code-reviewer",
-        "role": "评审",
+        "role": "Review",
         "context_files": [],
-        "expected_output": "三段式",
+        "expected_output": "Three-part format",
     }
     base.update(overrides)
     return base

@@ -1,9 +1,9 @@
-"""记忆系统 v2 P1 / v2.1 — 方向层激活单元测试.
+"""Memory system v2 P1 / v2.1 — direction-layer activation unit tests.
 
-覆盖：repository create_memory(kind/source_refs/supersedes)、list_memories
-valid-only + kind 过滤、invalidate_memory、list_direction_memories 组装 +
-kind 优先级排序、桶字符用量口径，以及双 hook 的方向记忆渲染与注入保险丝。
-（pyproject asyncio_mode=auto，async 测试无需装饰器。）
+Coverage: repository create_memory (kind/source_refs/supersedes), list_memories
+valid-only + kind filtering, invalidate_memory, list_direction_memories assembly +
+kind priority sorting, bucket character usage accounting, and the direction-memory rendering and injection fuse of both hooks.
+(pyproject asyncio_mode=auto; async tests need no decorator.)
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ from aiteam.storage.repository import StorageRepository
 async def test_create_memory_with_kind_and_source_refs(
     db_repository: StorageRepository,
 ) -> None:
-    """create_memory 落 kind/source_refs，to_pydantic 往返一致."""
+    """create_memory persists kind/source_refs; the to_pydantic round-trip agrees."""
     m = await db_repository.create_memory(
         scope="global",
         scope_id="system",
-        content="所有输出使用中文",
+        content="All output in Chinese",
         kind="constraint",
         source_refs=["report#abc", "task#123"],
     )
@@ -33,14 +33,14 @@ async def test_create_memory_with_kind_and_source_refs(
 
 
 async def test_supersedes_invalidates_old(db_repository: StorageRepository) -> None:
-    """supersedes 置旧条 invalid_at + invalidated_by；默认列表排除失效条."""
+    """supersedes marks the old entry invalid_at + invalidated_by; the default list excludes invalid entries."""
     old = await db_repository.create_memory(
-        scope="global", scope_id="system", content="偏好旧版", kind="preference"
+        scope="global", scope_id="system", content="Old preference", kind="preference"
     )
     new = await db_repository.create_memory(
         scope="global",
         scope_id="system",
-        content="偏好新版",
+        content="New preference",
         kind="preference",
         supersedes=old.id,
     )
@@ -57,9 +57,9 @@ async def test_supersedes_invalidates_old(db_repository: StorageRepository) -> N
 
 
 async def test_invalidate_memory(db_repository: StorageRepository) -> None:
-    """invalidate_memory 显式失效不删除，再查有效列表消失."""
+    """invalidate_memory explicitly invalidates without deleting; the entry disappears from the valid list."""
     m = await db_repository.create_memory(
-        scope="user", scope_id="user", content="过时偏好", kind="directive"
+        scope="user", scope_id="user", content="Outdated preference", kind="directive"
     )
     out = await db_repository.invalidate_memory(m.id, invalidated_by="manual")
     assert out is not None
@@ -68,26 +68,26 @@ async def test_invalidate_memory(db_repository: StorageRepository) -> None:
 
     valid = await db_repository.list_memories("user", "user")
     assert m.id not in [x.id for x in valid]
-    # 不存在的 id 返回 None
+    # A nonexistent id returns None
     assert await db_repository.invalidate_memory("nope") is None
 
 
 async def test_list_memories_kind_filter(db_repository: StorageRepository) -> None:
-    """list_memories 支持 kind 过滤."""
+    """list_memories supports kind filtering."""
     await db_repository.create_memory(
-        scope="global", scope_id="system", content="约束A", kind="constraint"
+        scope="global", scope_id="system", content="Constraint A", kind="constraint"
     )
     await db_repository.create_memory(
-        scope="global", scope_id="system", content="偏好B", kind="preference"
+        scope="global", scope_id="system", content="Preference B", kind="preference"
     )
     only = await db_repository.list_memories("global", "system", kind="constraint")
-    assert [m.content for m in only] == ["约束A"]
+    assert [m.content for m in only] == ["Constraint A"]
 
 
 async def test_list_direction_memories_scope_and_priority(
     db_repository: StorageRepository,
 ) -> None:
-    """方向层组装：global+user 全局 + 当前项目 project 级；按 kind 优先级排序."""
+    """Direction-layer assembly: global+user global entries + the current project's project-level entries; sorted by kind priority."""
     proj = await db_repository.create_project("dir-proj", root_path="/tmp/dir-proj")
     other = await db_repository.create_project(
         "other-proj", root_path="/tmp/other-proj"
@@ -106,7 +106,7 @@ async def test_list_direction_memories_scope_and_priority(
     await db_repository.create_memory(
         scope="project", scope_id=proj.id, content="directive-proj", kind="directive"
     )
-    # 别的项目的 project 级条目不应进入本项目注入
+    # Project-level entries of other projects should not enter this project's injection
     await db_repository.create_memory(
         scope="project", scope_id=other.id, content="other-proj-entry", kind="constraint"
     )
@@ -117,7 +117,7 @@ async def test_list_direction_memories_scope_and_priority(
     assert set(contents) == {
         "pref-global", "constraint-global", "design-user", "directive-proj"
     }
-    # kind 优先级：constraint(0) < design(1) < directive(2) < preference(3)
+    # kind priority: constraint(0) < design(1) < directive(2) < preference(3)
     kinds = [m.kind for m in items]
     assert kinds == sorted(kinds, key=lambda k: {
         "constraint": 0, "design": 1, "directive": 2, "preference": 3
@@ -128,7 +128,7 @@ async def test_list_direction_memories_scope_and_priority(
 async def test_list_direction_memories_no_project(
     db_repository: StorageRepository,
 ) -> None:
-    """不传 project_id 时只含 global+user，project 级条目全排除."""
+    """Without project_id, only global+user are included; all project-level entries are excluded."""
     proj = await db_repository.create_project("p1")
     await db_repository.create_memory(
         scope="global", scope_id="system", content="g", kind="constraint"
@@ -143,12 +143,12 @@ async def test_list_direction_memories_no_project(
 async def test_bucket_valid_chars_only_counts_valid(
     db_repository: StorageRepository,
 ) -> None:
-    """桶字符用量口径（v2.1 红线的分母）：失效条目不占配额."""
+    """Bucket character usage accounting (the denominator of the v2.1 red line): invalid entries take no quota."""
     a = await db_repository.create_memory(
-        scope="global", scope_id="system", content="甲" * 30, kind="preference"
+        scope="global", scope_id="system", content="A" * 30, kind="preference"
     )
     await db_repository.create_memory(
-        scope="global", scope_id="system", content="乙" * 20, kind="preference"
+        scope="global", scope_id="system", content="B" * 20, kind="preference"
     )
 
     def used() -> int:
@@ -162,53 +162,53 @@ async def test_bucket_valid_chars_only_counts_valid(
 
 
 # ================================================================
-# 双 hook 方向记忆渲染函数（stdlib only，直接单测渲染逻辑）
+# Direction-memory rendering functions of both hooks (stdlib only; unit-test the rendering logic directly)
 # ================================================================
 
 
 def test_render_direction_memories_bootstrap_truncation() -> None:
-    """session_bootstrap 渲染：超预算按顺序截断并注明剩余条数."""
+    """session_bootstrap rendering: over-budget entries are truncated in order with the remaining count noted."""
     from aiteam.hooks.session_bootstrap import _render_direction_memories
 
     items = [
-        {"kind": "constraint", "content": "约" * 50},
-        {"kind": "design", "content": "计" * 50},
-        {"kind": "preference", "content": "偏" * 50},
+        {"kind": "constraint", "content": "C" * 50},
+        {"kind": "design", "content": "D" * 50},
+        {"kind": "preference", "content": "P" * 50},
     ]
     lines = _render_direction_memories(items, budget=120)
     text = "\n".join(lines)
-    assert "方向记忆" in text
-    assert "约束/护栏" in text  # 高优先级先保留
-    assert "另有" in text and "memory_list" in text  # 触发截断提示
+    assert "Directional memories" in text
+    assert "Constraints / Guardrails" in text  # High priority is kept first
+    assert "more entries" in text and "memory_list" in text  # Triggers the truncation hint
 
 
 def test_render_direction_memories_empty() -> None:
-    """空列表渲染为空（不注入噪声）."""
+    """An empty list renders empty (injects no noise)."""
     from aiteam.hooks.session_bootstrap import _render_direction_memories
 
     assert _render_direction_memories([]) == []
 
 
 def test_render_direction_memories_subagent() -> None:
-    """inject_subagent_context 渲染：kind 标签 + 内容都在，全量放得下不截断."""
+    """inject_subagent_context rendering: kind labels + contents all present; everything fits, no truncation."""
     from aiteam.hooks.inject_subagent_context import _render_direction_memories
 
     items = [
-        {"kind": "constraint", "content": "所有输出使用中文"},
-        {"kind": "directive", "content": "完成即汇报"},
+        {"kind": "constraint", "content": "All output in Chinese"},
+        {"kind": "directive", "content": "Report as soon as done"},
     ]
     lines = _render_direction_memories(items)
     text = "\n".join(lines)
-    assert "所有输出使用中文" in text
-    assert "完成即汇报" in text
-    assert "另有" not in text  # 未截断
+    assert "All output in Chinese" in text
+    assert "Report as soon as done" in text
+    assert "more entries" not in text  # Not truncated
 
 
 def test_injection_fuse_covers_full_storage_quota() -> None:
-    """注入保险丝 ≥ 存储总配额（v2.1 单一轴）：存得下的必须传得到.
+    """The injection fuse ≥ the total storage quota (v2.1 single axis): what can be stored must be deliverable.
 
-    双 hook 是纯 stdlib 文件、常量各自定义，所以这里逐个对齐服务端配额之和——
-    保险丝掉到配额以下就意味着注入又回到"常态截断"，方向层继承再次被架空。
+    Both hooks are pure-stdlib files with constants defined separately, so align each here against the sum of the server-side quotas —
+    if the fuse drops below the quota, injection falls back to "routine truncation" and direction-layer inheritance is hollowed out again.
     """
     from aiteam.api.routes.memory import _DIRECTION_TOTAL_BUDGET
     from aiteam.hooks.inject_subagent_context import (
@@ -221,14 +221,14 @@ def test_injection_fuse_covers_full_storage_quota() -> None:
 
 
 def test_full_quota_direction_layer_injects_without_truncation() -> None:
-    """满配额（3000 字）的方向层整体注入，不出现"另有 N 条"截断尾巴."""
+    """A full-quota (3000-character) direction layer injected whole, with no "N more entries" truncation tail."""
     from aiteam.hooks.inject_subagent_context import _render_direction_memories
 
-    # 30 条 × 100 字 = 3000 字，正好是三桶配额之和
+    # 30 entries × 100 characters = 3000 characters, exactly the sum of the three buckets' quotas
     items = [
-        {"kind": "constraint", "content": f"条目{i:02d}" + "甲" * 95}
+        {"kind": "constraint", "content": f"Entry {i:02d}" + "A" * 95}
         for i in range(30)
     ]
     text = "\n".join(_render_direction_memories(items))
-    assert "另有" not in text
-    assert "条目29" in text
+    assert "more entries" not in text
+    assert "Entry 29" in text

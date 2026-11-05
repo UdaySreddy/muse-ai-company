@@ -59,14 +59,14 @@ def test_rounds_count_matches_total(name):
 def test_recommend_debate():
     """Keyword 'debate' in topic should return 'debate' template."""
     m = _fresh_module()
-    name, reason = m.recommend_template("请组织一个 debate")
+    name, reason = m.recommend_template("Please organize a debate")
     assert name == "debate"
 
 
 def test_recommend_brainstorm_fallback():
     """No keyword match should fall back to 'brainstorm'."""
     m = _fresh_module()
-    name, reason = m.recommend_template("随便聊聊xyz123无关词")
+    name, reason = m.recommend_template("Just chat xyz123 unrelated words")
     assert name == "brainstorm"
     assert "no keyword match" in reason
 

@@ -60,11 +60,11 @@ def test_build_cmd_resume_explicit_bare_override_honored():
 # ---------------------------------------------------------------------------
 
 def test_dispatch_prompt_wraps_instruction_and_carries_guardrails():
-    prompt = _build_dispatch_prompt("推进任务 T-42")
+    prompt = _build_dispatch_prompt("Advance task T-42")
     assert "<dispatch-instruction>" in prompt
-    assert "推进任务 T-42" in prompt
+    assert "Advance task T-42" in prompt
     # Strategic-decision guardrail must be present in the preamble.
-    assert "不替用户拍板" in prompt
+    assert "do not decide for the user" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ def test_dispatch_per_session_dedup_skips_without_spawn():
             "aiteam.api.wake_manager.asyncio.create_subprocess_exec",
             side_effect=AssertionError("must not spawn on dedup"),
         ):
-            return await mgr.dispatch_to_session("sess-1", "推进任务")
+            return await mgr.dispatch_to_session("sess-1", "Advance the task")
 
     result = asyncio.run(run())
     assert result["status"] == "skipped_concurrent"
@@ -139,7 +139,7 @@ def test_dispatch_fused_skips_without_spawn():
             "aiteam.api.wake_manager.asyncio.create_subprocess_exec",
             side_effect=AssertionError("must not spawn when fused"),
         ):
-            return await mgr.dispatch_to_session("sess-1", "推进任务")
+            return await mgr.dispatch_to_session("sess-1", "Advance the task")
 
     result = asyncio.run(run())
     assert result["status"] == "fused"
@@ -160,7 +160,7 @@ def test_dispatch_started_records_ledger_metadata():
             AsyncMock(return_value=fake_proc),
         ):
             res = await mgr.dispatch_to_session(
-                "sess-1", "推进任务 T-9", cwd="/tmp/proj"
+                "sess-1", "Advance task T-9", cwd="/tmp/proj"
             )
             # Let the fire-and-forget tracking task settle, then clean it up.
             await asyncio.sleep(0)

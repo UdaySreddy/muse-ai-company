@@ -1,11 +1,11 @@
-"""存量平移脚本的行为契约 —— 见 docs/utc-unification-design.md §6。
+"""The behavioral contract of the legacy-data shifting script — see docs/utc-unification-design.md §6.
 
-这个脚本会一次性改写 32 万个单元且由缔造者亲手执行，所以它的承诺必须机检：
-**无损**（亚秒位不丢）、**可逆**（回滚逐字节还原）、**拦得住**（顺序颠倒时中止）、
-**认得出混口径**（新代码已写进去的 UTC 行逐行排除，两次平移都不许碰它们）、
-**只做一次**（幂等标记 + journal 防覆盖）。
+This script rewrites 320,000 cells in one pass and is executed by the creator personally, so its promises must be machine-checked:
+**lossless** (sub-second digits not dropped), **reversible** (rollback restores byte for byte), **able to stop** (aborts when the order is reversed),
+**able to recognize mixed conventions** (UTC rows already written by new code are excluded row by row; neither of the two shifts may touch them),
+**runs only once** (idempotency marker + journal overwrite protection).
 
-全部用例只跑 tmp_path 里的临时库，一个字节都不碰生产库。
+All cases run only against temporary databases in tmp_path; not one byte of the production database is touched.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ IS_UTC_HOST = LOCAL_SHIFT_HOURS == 0
 
 @pytest.fixture()
 def db(tmp_path: Path) -> sqlite3.Connection:
-    """一个只含 events 表的最小库，行的时间戳按本地墙钟写。"""
+    """A minimal database containing only the events table, with row timestamps written by the local wall clock."""
     conn = sqlite3.connect(tmp_path / "t.db")
     conn.execute("create table events (id integer primary key, timestamp text)")
     conn.commit()
@@ -56,7 +56,7 @@ def _reports(conn: sqlite3.Connection, now_local: datetime):
 
 class TestLosslessShift:
     def test_subsecond_digits_survive(self, db: sqlite3.Connection) -> None:
-        """整秒截断会抹掉 32 万行的微秒位，而事件账本按 timestamp 排同秒内的先后。"""
+        """Second truncation would erase the microsecond digits of 320,000 rows, and the event ledger orders same-second precedence by timestamp."""
         _seed(db, ["2026-07-28 17:01:25.068573"])
         db.execute(f"update events set timestamp = {mig.shift_expr('timestamp', -8)}")
         db.commit()
@@ -76,7 +76,7 @@ class TestLosslessShift:
         assert db.execute("select timestamp from events").fetchone()[0] == "2026-07-27 19:30:00.500000"
 
     def test_half_hour_zones_are_supported(self, db: sqlite3.Connection) -> None:
-        """+05:30 这类时区不是理论边角——印度是它。"""
+        """Time zones like +05:30 are not theoretical corners — India is one."""
         _seed(db, ["2026-07-28 17:01:25.068573"])
         db.execute(f"update events set timestamp = {mig.shift_expr('timestamp', -5.5)}")
         db.commit()
@@ -99,82 +99,82 @@ class TestWidthGuard:
     def test_date_only_values_abort_instead_of_being_nulled(
         self, db: sqlite3.Connection
     ) -> None:
-        """前缀切分遇到只有日期的值会拼出非法串，SQLite 静默给 NULL —— 那是数据丢失。"""
+        """Prefix splitting on a date-only value builds an illegal string and SQLite silently gives NULL — that is data loss."""
         _seed(db, ["2026-07-28"])
         reports = _reports(db, datetime(2026, 7, 28, 17, 0))
-        with pytest.raises(SystemExit, match="无法安全切分"):
+        with pytest.raises(SystemExit, match="Cannot safely split"):
             mig.assert_uniform_width(db, reports)
 
 
-@pytest.mark.skipif(IS_UTC_HOST, reason="宿主时区即 UTC，无本地/UTC 之分可判")
+@pytest.mark.skipif(IS_UTC_HOST, reason="The host timezone is UTC; there is no local/UTC distinction to judge")
 class TestOrderGuard:
-    """护栏拦的是"先部署新代码、后跑平移"的顺序颠倒。"""
+    """What the guardrail blocks is the reversed order of "deploy new code first, run the shift afterwards"."""
 
     @staticmethod
     def _now() -> datetime:
         return datetime.now()
 
     def test_local_written_rows_are_positively_proven(self, db: sqlite3.Connection) -> None:
-        """UTC 时钟写不出未来的值 —— 所以 max 晚于 UTC 此刻就是正面确证，不是启发式。"""
+        """A UTC clock cannot write a future value — so a max later than the current UTC moment is positive proof, not a heuristic."""
         now_local = self._now()
         _seed(db, [now_local.strftime("%Y-%m-%d %H:%M:%S.%f")])
         reports = _reports(db, now_local)
-        assert reports[0].guard.startswith("确证本地")
+        assert reports[0].guard.startswith("Confirmed local")
         passed, notes = mig.verdict(reports, now_local)
         assert passed, notes
 
     def test_utc_written_rows_block_the_migration(self, db: sqlite3.Connection) -> None:
-        """库已经是 UTC 了还去平移，等于把每一行再推早一个时区。"""
+        """Shifting a database that is already UTC pushes every row earlier by one timezone again."""
         now_local = self._now()
         now_utc_naive = now_local.astimezone(UTC).replace(tzinfo=None)
         _seed(db, [now_utc_naive.strftime("%Y-%m-%d %H:%M:%S.%f")])
         reports = _reports(db, now_local)
         passed, notes = mig.verdict(reports, now_local)
         assert not passed, notes
-        assert any("新代码很可能已经在写库" in n for n in notes)
+        assert any("New code is likely already writing to the database" in n for n in notes)
 
     def test_all_cold_data_is_refused_rather_than_guessed(
         self, db: sqlite3.Connection
     ) -> None:
-        """全是冷数据时无从判定 —— 宁可停下要人确认，也不替人猜。"""
+        """When everything is cold data there is no way to judge — stop and ask a human to confirm rather than guessing for them."""
         now_local = self._now()
         _seed(db, [(now_local - timedelta(days=90)).strftime("%Y-%m-%d %H:%M:%S.%f")])
         reports = _reports(db, now_local)
         passed, notes = mig.verdict(reports, now_local)
         assert not passed
-        assert any("请人工确认" in n for n in notes)
+        assert any("Please confirm manually" in n for n in notes)
 
 
 class TestManifest:
     def test_ecosystem_tables_are_never_in_the_shift_list(self) -> None:
-        """ecosystem 域本就写 UTC；平移它等于把这些行推早一个时区。"""
+        """The ecosystem domain already writes UTC; shifting it pushes those rows earlier by one timezone."""
         offenders = [t for t in mig.LOCAL_COLUMNS if t.startswith("ecosystem")]
         assert not offenders, offenders
         assert "pipeline_stage_history" not in mig.LOCAL_COLUMNS
 
     def test_manifest_matches_the_design_document(self) -> None:
-        """清单与设计文档 §3.1 是同一份账；数量对不上说明有一侧被单方面改过。"""
+        """The checklist and design document §3.1 are the same ledger; a count mismatch means one side was changed unilaterally."""
         columns = sum(len(v) for v in mig.LOCAL_COLUMNS.values())
-        assert len(mig.LOCAL_COLUMNS) == 20, f"表数变了：{len(mig.LOCAL_COLUMNS)}"
-        assert columns == 46, f"列数变了：{columns}"
+        assert len(mig.LOCAL_COLUMNS) == 20, f"Table count changed: {len(mig.LOCAL_COLUMNS)}"
+        assert columns == 46, f"Column count changed: {columns}"
 
     def test_every_table_declares_a_birth_column(self) -> None:
-        """出生列是逐行口径判定的地基；漏一张表就等于那张表的行没人判。"""
+        """The birth column is the foundation of per-row convention judgment; a missing table means that table's rows are judged by no one."""
         assert set(mig.ROW_BIRTH_COLUMN) == set(mig.LOCAL_COLUMNS)
         for table, birth in mig.ROW_BIRTH_COLUMN.items():
-            assert birth in mig.LOCAL_COLUMNS[table], f"{table}.{birth} 不在平移清单里"
+            assert birth in mig.LOCAL_COLUMNS[table], f"{table}.{birth} is not in the migration list"
 
     def test_birth_column_is_classified_before_the_columns_that_anchor_on_it(self) -> None:
-        """原地更新列拿出生列当锚，所以出生列必须排在同表首位，先被判定。"""
+        """In-place updated columns anchor on the birth column, so the birth column must be first in its table and judged first."""
         for table, columns in mig.LOCAL_COLUMNS.items():
-            assert columns[0] == mig.ROW_BIRTH_COLUMN[table], f"{table} 的出生列不在首位"
+            assert columns[0] == mig.ROW_BIRTH_COLUMN[table], f"{table}'s birth column is not first"
 
     def test_after_birth_whitelist_excludes_columns_that_predate_creation(self) -> None:
-        """白名单一旦混进"可能早于创建"的列，预言机就是在对着假不变量下判断。
+        """Once the whitelist mixes in a column that "may predate creation", the oracle judges against a fake invariant.
 
-        实测反例：workflow_* 的 started_at/queued_at/completed_at 来自 CC 状态文件的
-        epoch，最早到 2026-06-23，比该行 created_at(2026-07-06) 早好几周；
-        scheduled_tasks.next_run_at 干脆记的是未来。
+        Measured counterexample: workflow_*'s started_at/queued_at/completed_at come from CC status files'
+        epoch, earliest 2026-06-23, several weeks earlier than the row's created_at (2026-07-06);
+        scheduled_tasks.next_run_at simply records the future.
         """
         forbidden = {
             ("workflow_runs", "started_at"),
@@ -190,11 +190,11 @@ class TestManifest:
 
 
 # ---------------------------------------------------------------------------
-# 混口径 —— 2026-07-28 的生产现状：UTC 新代码已合入 master 且是 editable 安装，
-# 于是每一个新起的进程都往还没平移的库里写 UTC 行。以下用例全部是对着这个现实
-# 做的故障注入。
+# Mixed conventions — the production reality of 2026-07-28: UTC new code was merged into master and is an editable install,
+# so every newly started process writes UTC rows into a not-yet-shifted database. All cases below are fault injections
+# made against this reality.
 # ---------------------------------------------------------------------------
-OFFSET = timedelta(hours=-LOCAL_SHIFT_HOURS)  # 本地 − UTC；UTC+8 上为 +8h
+OFFSET = timedelta(hours=-LOCAL_SHIFT_HOURS)  # local − UTC; +8h on UTC+8
 
 
 def _stamp(moment: datetime) -> str:
@@ -216,11 +216,11 @@ def _read_journal(path: Path) -> dict:
 
 @pytest.fixture()
 def mixed(tmp_path: Path) -> tuple[Path, sqlite3.Connection, datetime]:
-    """旧代码还在写、新代码刚混进来几行的库 —— 即 --apply 真正要面对的那个库。
+    """A database the old code is still writing and new code has just mixed a few rows into — i.e. the one --apply actually faces.
 
-    events（追加型）：一串本地行 → 3 行新代码写的 UTC 行 → 又几行本地行。
-    teams（含原地更新列）：一行更新值可判为 UTC、一行两种读法都自洽（该进人审）、
-    一行全干净。
+    events (append-only): a run of local rows → 3 UTC rows written by new code → a few more local rows.
+    teams (with in-place update columns): one row whose update value judges as UTC, one row where both readings are self-consistent (goes to human review),
+    one row fully clean.
     """
     now = datetime.now().replace(microsecond=246810)
     path = tmp_path / "mixed.db"
@@ -236,17 +236,17 @@ def mixed(tmp_path: Path) -> tuple[Path, sqlite3.Connection, datetime]:
     conn.executemany(
         "insert into events (timestamp) values (?)",
         [(_stamp(m),) for m in early]
-        + [(_stamp(m - OFFSET),) for m in utc_rows]  # 新代码写的：同一瞬刻的 UTC 表达
+        + [(_stamp(m - OFFSET),) for m in utc_rows]  # Written by new code: the UTC expression of the same instant
         + [(_stamp(m),) for m in late],
     )
     conn.executemany(
         "insert into teams (created_at, updated_at, completed_at) values (?, ?, ?)",
         [
-            # ① 更新值比创建早了整整一个时区 —— 只可能是 UTC 口径
+            # ① The update value is a full timezone earlier than creation — can only be the UTC convention
             (_stamp(now - timedelta(minutes=5)), _stamp(now - timedelta(seconds=90) - OFFSET), None),
-            # ② 三天前建的行，更新值落在风险带内：两种读法都不违反"更新不早于创建"
+            # ② A row created three days ago whose update value falls in the risk band: neither reading violates "updates do not predate creation"
             (_stamp(now - timedelta(days=3)), _stamp(now - timedelta(seconds=100) - OFFSET), None),
-            # ③ 全干净
+            # ③ Fully clean
             (
                 _stamp(now - timedelta(minutes=4)),
                 _stamp(now - timedelta(minutes=2)),
@@ -264,14 +264,14 @@ def _contamination(conn: sqlite3.Connection, now_local: datetime) -> dict:
     return found
 
 
-@pytest.mark.skipif(IS_UTC_HOST, reason="宿主时区即 UTC，无本地/UTC 之分可判")
+@pytest.mark.skipif(IS_UTC_HOST, reason="The host timezone is UTC; there is no local/UTC distinction to judge")
 class TestMixedCaliberDetection:
-    """混口径是**逐行**问题，不是"放行/拦停"的二元问题。"""
+    """Mixed conventions are a **per-row** problem, not a binary "pass/block" problem."""
 
     def test_minority_utc_rows_are_pinned_down_row_by_row(
         self, mixed: tuple[Path, sqlite3.Connection, datetime]
     ) -> None:
-        """少数派 UTC 行既不影响列 max 也不影响全库 max —— 只有 rowid 写入序抓得到。"""
+        """Minority UTC rows affect neither the column max nor the whole-database max — only the rowid write order catches them."""
         _, conn, now = mixed
         found = _contamination(conn, now)
         assert found["events.timestamp"].excluded == [36, 37, 38]
@@ -280,7 +280,7 @@ class TestMixedCaliberDetection:
     def test_clean_rows_are_never_excluded(
         self, mixed: tuple[Path, sqlite3.Connection, datetime]
     ) -> None:
-        """排除是有代价的：漏排会推早 8 小时，错排会留下一行永远晚 8 小时。"""
+        """Exclusion has a cost: missing one pushes it 8 hours earlier; wrongly excluding one leaves a row forever 8 hours later."""
         _, conn, now = mixed
         found = _contamination(conn, now)
         assert found["teams.created_at"].excluded == []
@@ -289,7 +289,7 @@ class TestMixedCaliberDetection:
     def test_in_place_columns_are_judged_against_their_birth_column(
         self, mixed: tuple[Path, sqlite3.Connection, datetime]
     ) -> None:
-        """rowid 对原地更新列没意义，靠的是"更新不可能早于创建"这条不变量。"""
+        """rowid is meaningless for in-place update columns; what it relies on is the invariant "an update cannot predate creation"."""
         _, conn, now = mixed
         found = _contamination(conn, now)
         assert found["teams.updated_at"].excluded == [1]
@@ -297,7 +297,7 @@ class TestMixedCaliberDetection:
     def test_undecidable_rows_are_listed_rather_than_silently_shifted(
         self, mixed: tuple[Path, sqlite3.Connection, datetime]
     ) -> None:
-        """判不了就点名交人审 —— 静默按多数派处理正是这类事故的成因。"""
+        """What cannot be judged is named and handed to human review — silently following the majority is exactly how such incidents happen."""
         _, conn, now = mixed
         found = _contamination(conn, now)
         pending = mig.all_undecidable(found)
@@ -306,16 +306,16 @@ class TestMixedCaliberDetection:
     def test_legitimate_out_of_order_backfill_is_not_mistaken_for_a_timezone(
         self, db: sqlite3.Connection
     ) -> None:
-        """生产库 task_memos.created_at 有 7.1~8.7 小时的合法乱序（记忆 v2 批量回填）。
+        """The production task_memos.created_at has 7.1–8.7 hours of legitimate disorder (memory v2 batch backfill).
 
-        容差给到小时级就会把它们当成时区指纹整批排除掉 —— 所以容差按分钟给。
+        An hour-level tolerance would treat them as a timezone fingerprint and exclude them wholesale — so the tolerance is given in minutes.
         """
         now = datetime.now()
         _seed(
             db,
             [
                 _stamp(now - timedelta(minutes=5)),
-                _stamp(now - timedelta(hours=8, minutes=31)),  # 回填行，倒退 8.5h
+                _stamp(now - timedelta(hours=8, minutes=31)),  # Backfill row, 8.5h backwards
                 _stamp(now - timedelta(minutes=1)),
             ],
         )
@@ -326,36 +326,36 @@ class TestMixedCaliberDetection:
         assert found["events.timestamp"].excluded == []
 
 
-@pytest.mark.skipif(IS_UTC_HOST, reason="宿主时区即 UTC，无本地/UTC 之分可判")
+@pytest.mark.skipif(IS_UTC_HOST, reason="The host timezone is UTC; there is no local/UTC distinction to judge")
 class TestGuardSeesMinorities:
     def test_already_shifted_db_with_one_stray_local_row_is_not_waved_through(
         self, db: sqlite3.Connection
     ) -> None:
-        """旧护栏在这里放绿：一行旧代码补写的本地值就把全库 max 顶到本地此刻。
+        """The old guardrail waves this through: one local value backfilled by old code tops the whole-database max at the local now.
 
-        真正的判据必须是**多数**近期写入的口径，少数派掀不翻中位数。
+        The real criterion must be the convention of the **majority** of recent writes; a minority cannot overturn the median.
         """
         now_local = datetime.now()
         now_utc_naive = now_local.astimezone(UTC).replace(tzinfo=None)
         _seed(
             db,
             [_stamp(now_utc_naive - timedelta(seconds=5 * i)) for i in range(40, 0, -1)]
-            + [_stamp(now_local)],  # 没死透的旧代码进程刚补的一行
+            + [_stamp(now_local)],  # A row just backfilled by a not-quite-dead old-code process
         )
         reports = _reports(db, now_local)
-        assert any(r.guard.startswith("确证本地") for r in reports)  # 旧判据仍然"确证"
+        assert any(r.guard.startswith("Confirmed local") for r in reports)  # The old criterion still "confirms"
         passed, notes = mig.verdict(reports, now_local)
         assert not passed, notes
-        assert any("新代码很可能已经在写库" in n for n in notes)
+        assert any("New code is likely already writing to the database" in n for n in notes)
 
     def test_guard_reports_how_many_rows_will_be_excluded(
         self, mixed: tuple[Path, sqlite3.Connection, datetime]
     ) -> None:
-        """混口径不再是放行/拦停的二元 —— 护栏的职责是确证污染行已被识别并排除。"""
+        """Mixed conventions are no longer a binary pass/block — the guardrail's duty is to confirm polluted rows are identified and excluded."""
         _, conn, now = mixed
         found = _contamination(conn, now)
         _, notes = mig.verdict(mig.collect(conn, now), now, found, ack_undecidable=True)
-        assert any("events.timestamp: 3 行" in n for n in notes)
+        assert any("events.timestamp: 3 rows" in n for n in notes)
 
     def test_undecidable_rows_block_until_acknowledged(
         self, mixed: tuple[Path, sqlite3.Connection, datetime]
@@ -370,12 +370,12 @@ class TestGuardSeesMinorities:
         assert passed
 
 
-@pytest.mark.skipif(IS_UTC_HOST, reason="宿主时区即 UTC，无本地/UTC 之分可判")
+@pytest.mark.skipif(IS_UTC_HOST, reason="The host timezone is UTC; there is no local/UTC distinction to judge")
 class TestApplyIsIdempotentAndReversible:
     def test_apply_excludes_utc_rows_and_rollback_leaves_them_alone_too(
         self, mixed: tuple[Path, sqlite3.Connection, datetime], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """排除行两次都不能动：平移时 −8h 会推早，回滚时 +8h 会推晚。"""
+        """Excluded rows must not move in either pass: shifting gives −8h (earlier), rollback gives +8h (later)."""
         path, conn, _ = mixed
         before_events = _dump(conn, "events", "timestamp")
         before_teams = _dump(conn, "teams", "created_at, updated_at, completed_at")
@@ -402,7 +402,7 @@ class TestApplyIsIdempotentAndReversible:
     def test_second_apply_is_refused_by_the_marker(
         self, mixed: tuple[Path, sqlite3.Connection, datetime], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """二次 --apply 会再减 8 小时，且旧护栏对"多数已 UTC + 少数本地"仍可能放绿。"""
+        """A second --apply subtracts another 8 hours, and the old guardrail may still wave through "majority UTC + minority local"."""
         path, conn, _ = mixed
         assert _run(monkeypatch, "--db", str(path), "--apply", "--journal",
                     str(path.parent / "j1.json"), "--ack-undecidable") == 0
@@ -414,7 +414,7 @@ class TestApplyIsIdempotentAndReversible:
     def test_rollback_without_the_marker_is_refused(
         self, mixed: tuple[Path, sqlite3.Connection, datetime], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """没平移过的库回滚一次就是整体推晚 8 小时。"""
+        """Rolling back a never-shifted database pushes everything 8 hours later wholesale."""
         path, conn, _ = mixed
         journal = path.parent / "fake.json"
         journal.write_text('{"db": "x", "shift_hours": -8, "columns": []}')
@@ -425,14 +425,14 @@ class TestApplyIsIdempotentAndReversible:
     def test_existing_journal_is_never_overwritten(
         self, mixed: tuple[Path, sqlite3.Connection, datetime], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """journal 是唯一的恢复凭证（含逐行排除清单），覆盖它等于销毁它。"""
+        """The journal is the only recovery credential (including the per-row exclusion list); overwriting it destroys it."""
         path, conn, _ = mixed
         journal = path.parent / "j.json"
-        journal.write_text('{"这是上一次平移的凭证": true}')
+        journal.write_text('{"This is the credential of the previous migration": true}')
         snapshot = _dump(conn, "events", "timestamp")
         assert _run(monkeypatch, "--db", str(path), "--apply", "--journal", str(journal),
                     "--ack-undecidable", "--force") == 2
-        assert journal.read_text() == '{"这是上一次平移的凭证": true}'
+        assert journal.read_text() == '{"This is the credential of the previous migration": true}'
         assert _dump(conn, "events", "timestamp") == snapshot
 
     def test_apply_demands_a_journal(
@@ -446,7 +446,7 @@ class TestApplyIsIdempotentAndReversible:
     def test_undecidable_rows_stop_apply_even_with_force(
         self, mixed: tuple[Path, sqlite3.Connection, datetime], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """--force 是给"冷数据无法自证"用的，不是给"有行判不了口径"用的。"""
+        """--force is for "cold data cannot prove itself", not for "some rows' conventions cannot be judged"."""
         path, conn, _ = mixed
         snapshot = _dump(conn, "events", "timestamp")
         assert _run(monkeypatch, "--db", str(path), "--apply", "--journal",

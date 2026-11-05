@@ -1,4 +1,4 @@
-"""AI Team OS — 记忆后端单元测试."""
+"""AI Team OS — memory backend unit tests."""
 
 from __future__ import annotations
 
@@ -13,23 +13,23 @@ from aiteam.types import Memory, MemoryScope
 
 
 async def test_sqlite_backend_create(db_repository: StorageRepository) -> None:
-    """SQLite后端创建记忆."""
+    """The SQLite backend creates a memory."""
     backend = SqliteMemoryBackend(db_repository)
-    memory = await backend.create("agent", "a1", "测试记忆内容", {"tag": "test"})
+    memory = await backend.create("agent", "a1", "Test memory content", {"tag": "test"})
 
     assert isinstance(memory, Memory)
     assert memory.scope == MemoryScope.AGENT
     assert memory.scope_id == "a1"
-    assert memory.content == "测试记忆内容"
+    assert memory.content == "Test memory content"
     assert memory.metadata == {"tag": "test"}
 
 
 async def test_sqlite_backend_search(db_repository: StorageRepository) -> None:
-    """SQLite后端搜索记忆."""
+    """The SQLite backend searches memories."""
     backend = SqliteMemoryBackend(db_repository)
-    await backend.create("agent", "a1", "Python编程语言")
-    await backend.create("agent", "a1", "Java虚拟机")
-    await backend.create("agent", "a1", "Python数据分析")
+    await backend.create("agent", "a1", "The Python programming language")
+    await backend.create("agent", "a1", "The Java virtual machine")
+    await backend.create("agent", "a1", "Python data analysis")
 
     results = await backend.search("agent", "a1", "Python", limit=5)
     assert len(results) >= 1
@@ -37,11 +37,11 @@ async def test_sqlite_backend_search(db_repository: StorageRepository) -> None:
 
 
 async def test_sqlite_backend_list(db_repository: StorageRepository) -> None:
-    """SQLite后端列出所有记忆."""
+    """The SQLite backend lists all memories."""
     backend = SqliteMemoryBackend(db_repository)
-    await backend.create("team", "t1", "记忆A")
-    await backend.create("team", "t1", "记忆B")
-    await backend.create("team", "t2", "其他团队记忆")
+    await backend.create("team", "t1", "Memory A")
+    await backend.create("team", "t1", "Memory B")
+    await backend.create("team", "t2", "Another team's memory")
 
     t1_list = await backend.list_all("team", "t1")
     assert len(t1_list) == 2
@@ -51,37 +51,37 @@ async def test_sqlite_backend_list(db_repository: StorageRepository) -> None:
 
 
 async def test_sqlite_backend_get(db_repository: StorageRepository) -> None:
-    """SQLite后端根据ID获取记忆."""
+    """The SQLite backend gets a memory by ID."""
     backend = SqliteMemoryBackend(db_repository)
-    created = await backend.create("agent", "a1", "获取测试")
+    created = await backend.create("agent", "a1", "Get test")
 
     fetched = await backend.get(created.id)
     assert fetched is not None
     assert fetched.id == created.id
-    assert fetched.content == "获取测试"
+    assert fetched.content == "Get test"
 
-    # 不存在的ID返回None
+    # A nonexistent ID returns None
     assert await backend.get("nonexistent-id") is None
 
 
 async def test_sqlite_backend_delete(db_repository: StorageRepository) -> None:
-    """SQLite后端删除记忆."""
+    """The SQLite backend deletes a memory."""
     backend = SqliteMemoryBackend(db_repository)
-    created = await backend.create("agent", "a1", "待删除")
+    created = await backend.create("agent", "a1", "To be deleted")
 
     result = await backend.delete(created.id)
     assert result is True
 
-    # 删除后获取应返回None
+    # Getting it after deletion should return None
     assert await backend.get(created.id) is None
 
-    # 删除不存在的ID返回False
+    # Deleting a nonexistent ID returns False
     assert await backend.delete("nonexistent-id") is False
 
 
 async def test_sqlite_backend_implements_protocol(
     db_repository: StorageRepository,
 ) -> None:
-    """SQLite后端应满足 MemoryBackend Protocol."""
+    """The SQLite backend should satisfy the MemoryBackend Protocol."""
     backend = SqliteMemoryBackend(db_repository)
     assert isinstance(backend, MemoryBackend)

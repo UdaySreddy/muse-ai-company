@@ -1,7 +1,7 @@
-"""工具分组开关 + 只读档单测（工具渐进式加载 P2）。
+"""Tool group switches + read-only tier unit tests (tool progressive loading P2).
 
-覆盖：AITEAM_TOOLSETS 解析（all/default/列表/未知组名警告/混用增量）、
-default 组 ≤50 硬顶、AITEAM_READONLY 剔除写工具且保留读工具、缺省全量 112 不变。
+Coverage: AITEAM_TOOLSETS parsing (all/default/list/unknown group name warning/mixed incremental),
+the default group hard cap of ≤50, AITEAM_READONLY removing write tools while keeping read tools, and the default full set of 112 unchanged.
 """
 
 from __future__ import annotations
@@ -20,16 +20,16 @@ from aiteam.mcp.tools.toolsets import (
     resolve_toolsets,
 )
 
-# 全量工具数基线——改动此数须同步 docs/CHANGELOG（红线 I6 只认工具计数）。
+# Full tool count baseline — changing this number must sync docs/CHANGELOG (red line I6 only recognizes the tool count).
 TOTAL_TOOLS = 113
 DEFAULT_HARD_CAP = 50
 
 
 def _registered_names(monkeypatch, env: dict[str, str] | None = None) -> list[str]:
-    """在给定 env 下注册全部模块，返回裸工具名列表。
+    """Under the given env, register all modules and return the bare tool name list.
 
-    走公开的 ``list_tools()``，不读私有组件表——私有面是 fastmcp 4.0 的必炸点，
-    测试替身先于生产代码撞上去没有意义。
+    Go through the public ``list_tools()`` rather than reading the private component table — the private surface is a guaranteed blow-up point of fastmcp 4.0,
+    and there is no point in a test double hitting it before the production code does.
     """
     monkeypatch.delenv("AITEAM_TOOLSETS", raising=False)
     monkeypatch.delenv("AITEAM_READONLY", raising=False)
@@ -41,7 +41,7 @@ def _registered_names(monkeypatch, env: dict[str, str] | None = None) -> list[st
 
 
 # ---------------------------------------------------------------------------
-# resolve_toolsets：纯函数解析
+# resolve_toolsets: pure function parsing
 # ---------------------------------------------------------------------------
 
 
@@ -78,7 +78,7 @@ def test_resolve_unknown_name_warns_and_ignored(capsys: pytest.CaptureFixture) -
 
 
 def test_resolve_incremental_default_plus_group() -> None:
-    # default + 增量组
+    # default + incremental groups
     result = resolve_toolsets("default,ecosystem")
     assert result == set(DEFAULT_TOOLSETS) | {"ecosystem"}
 
@@ -88,7 +88,7 @@ def test_resolve_all_unknown_falls_back_to_all(
 ) -> None:
     result = resolve_toolsets("zzz,qqq")
     assert result == set(ALL_TOOLSETS)
-    assert "回退" in capsys.readouterr().err
+    assert "falling back" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -107,12 +107,12 @@ def test_resolve_readonly_falsy(raw) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 注册期行为
+# Registration-time behavior
 # ---------------------------------------------------------------------------
 
 
 def test_default_env_registers_full_total(monkeypatch: pytest.MonkeyPatch) -> None:
-    """无任何 env → 全量工具注册（TOTAL_TOOLS），向后兼容不变。"""
+    """No env at all → full tool registration (TOTAL_TOOLS), backward compatible and unchanged."""
     names = _registered_names(monkeypatch)
     assert len(names) == TOTAL_TOOLS
 
@@ -123,10 +123,10 @@ def test_toolsets_all_registers_full_total(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_default_group_under_hard_cap(monkeypatch: pytest.MonkeyPatch) -> None:
-    """default 组注册后工具数硬顶 ≤50（普适护栏 + 官方 30-50 拐点）。"""
+    """After registering the default group, the tool count hard cap is ≤50 (universal guardrail + the official 30-50 inflection point)."""
     names = _registered_names(monkeypatch, {"AITEAM_TOOLSETS": "default"})
     assert len(names) <= DEFAULT_HARD_CAP
-    # 核心组代表工具必须在
+    # Representative core-group tools must be present
     assert "task_create" in names
     assert "task_memo_add" in names
     assert "memory_search" in names
@@ -137,7 +137,7 @@ def test_explicit_group_only_registers_that_group(
 ) -> None:
     names = _registered_names(monkeypatch, {"AITEAM_TOOLSETS": "task"})
     assert all(n.startswith("task") for n in names)
-    # ecosystem 组不该出现
+    # The ecosystem group should not appear
     assert not any(n.startswith("ecosystem_") for n in names)
 
 
@@ -151,55 +151,55 @@ def test_incremental_registration(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 只读档
+# Read-only tier
 # ---------------------------------------------------------------------------
 
 
 def test_readonly_removes_write_tools(monkeypatch: pytest.MonkeyPatch) -> None:
-    """全量 + 只读 → 写工具全部剔除，读工具全部保留。"""
+    """Full set + read-only → all write tools removed, all read tools kept."""
     full = set(_registered_names(monkeypatch))
     ro = set(_registered_names(monkeypatch, {"AITEAM_READONLY": "1"}))
-    # 剔除量 == 全量里命中 WRITE_TOOLS 的数量
+    # The removed count == the count of WRITE_TOOLS hits in the full set
     assert full - ro == (full & WRITE_TOOLS)
-    # 写工具一个不剩
+    # Not one write tool remains
     assert not (ro & WRITE_TOOLS)
-    # 代表性写工具确实没了
+    # Representative write tools are indeed gone
     for w in ("task_create", "task_update", "report_save", "os_restart_api"):
         assert w not in ro
-    # 代表性读工具仍在
+    # Representative read tools are still there
     for r in ("task_list_project", "task_memo_read", "task_status", "team_list"):
         assert r in ro
 
 
 def test_readonly_orthogonal_to_toolsets(monkeypatch: pytest.MonkeyPatch) -> None:
-    """只读与分组正交叠加：default + 只读。"""
+    """Read-only is orthogonal to grouping: default + read-only."""
     ro = set(
         _registered_names(
             monkeypatch,
             {"AITEAM_TOOLSETS": "default", "AITEAM_READONLY": "1"},
         )
     )
-    assert "task_create" not in ro  # 写，剔除
-    assert "task_memo_add" not in ro  # 写，剔除
-    assert "task_memo_read" in ro  # 读，保留
+    assert "task_create" not in ro  # Write, removed
+    assert "task_memo_add" not in ro  # Write, removed
+    assert "task_memo_read" in ro  # Read, kept
     assert not (ro & WRITE_TOOLS)
 
 
 def test_write_tools_all_exist_in_full_registry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """WRITE_TOOLS 清单不得含幽灵名（防工具改名后清单失效）。"""
+    """The WRITE_TOOLS list must not contain ghost names (guards against the list going stale after a tool rename)."""
     full = set(_registered_names(monkeypatch))
     ghosts = WRITE_TOOLS - full
-    assert not ghosts, f"WRITE_TOOLS 含已不存在的工具：{ghosts}"
+    assert not ghosts, f"WRITE_TOOLS contains tools that no longer exist: {ghosts}"
 
 
 def test_agent_templates_deny_no_ghost_tools(monkeypatch: pytest.MonkeyPatch) -> None:
-    """plugin/agents/*.md 的 disallowedTools 不得点名已退役的工具。
+    """The disallowedTools of plugin/agents/*.md must not name retired tools.
 
-    frontmatter 里的 denylist 是靠手工维护的第二份工具清单，工具一退役它就烂在
-    那儿——CC 对未知工具名不报错，于是幽灵名可以一直挂着没人发现（2026-07-27
-    批 8a 实测：5 个模板全都还在拒 git_auto_commit / git_create_pr）。
+    The denylist in frontmatter is a second, hand-maintained tool list; when a tool retires it rots
+    there — CC does not error on unknown tool names, so ghost names can hang there unnoticed (2026-07-27
+    batch 8a measurement: all 5 templates still deny git_auto_commit / git_create_pr).
     """
     import re
     from pathlib import Path
@@ -212,4 +212,4 @@ def test_agent_templates_deny_no_ghost_tools(monkeypatch: pytest.MonkeyPatch) ->
         missing = [n for n in named if n not in live]
         if missing:
             ghosts[md.name] = missing
-    assert not ghosts, f"agent 模板 disallowedTools 含已不存在的工具：{ghosts}"
+    assert not ghosts, f"agent template disallowedTools contains tools that no longer exist: {ghosts}"

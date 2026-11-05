@@ -1,4 +1,4 @@
-"""测试数据库连接管理 — PostgreSQL连接池参数验证 + EnginePool."""
+"""Tests database connection management — PostgreSQL connection pool parameter validation + EnginePool."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from aiteam.storage.engine_pool import EnginePool, engine_pool
 
 @pytest.fixture(autouse=True)
 def _reset_engine_pool():
-    """每个测试前后重置全局 EnginePool 缓存."""
+    """Reset the global EnginePool cache before and after each test."""
     original_engines = engine_pool._engines.copy()
     original_factories = engine_pool._factories.copy()
     engine_pool._engines.clear()
@@ -43,11 +43,11 @@ def _patch_sqlalchemy_event():
 
 
 class TestGetEnginePoolConfig:
-    """验证 get_engine() 根据不同数据库URL传递正确的参数."""
+    """Verify get_engine() passes the correct parameters for different database URLs."""
 
     @patch("aiteam.storage.engine_pool.create_async_engine")
     def test_sqlite_uses_check_same_thread(self, mock_create: MagicMock) -> None:
-        """SQLite URL 应传递 check_same_thread=False."""
+        """A SQLite URL should pass check_same_thread=False."""
         mock_create.return_value = MagicMock()
         mock_create.return_value.url = "sqlite+aiosqlite:///test.db"
 
@@ -56,13 +56,13 @@ class TestGetEnginePoolConfig:
         mock_create.assert_called_once()
         kwargs = mock_create.call_args
         assert kwargs[1]["connect_args"] == {"check_same_thread": False, "timeout": 30}
-        # SQLite 不应有连接池参数
+        # SQLite should not have connection pool parameters
         assert "pool_size" not in kwargs[1]
         assert "max_overflow" not in kwargs[1]
 
     @patch("aiteam.storage.engine_pool.create_async_engine")
     def test_postgresql_uses_pool_config(self, mock_create: MagicMock) -> None:
-        """PostgreSQL URL 应传递连接池参数."""
+        """A PostgreSQL URL should pass connection pool parameters."""
         mock_create.return_value = MagicMock()
         mock_create.return_value.url = "postgresql+asyncpg://user:pass@localhost/db"
 
@@ -74,12 +74,12 @@ class TestGetEnginePoolConfig:
         assert kwargs["max_overflow"] == 20
         assert kwargs["pool_pre_ping"] is True
         assert kwargs["pool_recycle"] == 3600
-        # PostgreSQL 不应有 SQLite 的 connect_args
+        # PostgreSQL should not have SQLite connect_args
         assert "connect_args" not in kwargs
 
     @patch("aiteam.storage.engine_pool.create_async_engine")
     def test_postgresql_no_check_same_thread(self, mock_create: MagicMock) -> None:
-        """PostgreSQL URL 不应包含 check_same_thread 参数."""
+        """A PostgreSQL URL should not contain the check_same_thread parameter."""
         mock_create.return_value = MagicMock()
         mock_create.return_value.url = "postgresql+asyncpg://localhost/db"
 
@@ -90,7 +90,7 @@ class TestGetEnginePoolConfig:
 
     @patch("aiteam.storage.engine_pool.create_async_engine")
     def test_echo_always_false(self, mock_create: MagicMock) -> None:
-        """所有引擎的 echo 参数应为 False."""
+        """The echo parameter of all engines should be False."""
         mock_create.return_value = MagicMock()
 
         # SQLite
@@ -98,7 +98,7 @@ class TestGetEnginePoolConfig:
         get_engine("sqlite+aiosqlite:///test.db")
         assert mock_create.call_args[1]["echo"] is False
 
-        # 重置引擎缓存
+        # Reset the engine cache
         engine_pool._engines.clear()
         engine_pool._factories.clear()
 
@@ -109,11 +109,11 @@ class TestGetEnginePoolConfig:
 
 
 class TestGetEngineCache:
-    """验证引擎缓存机制 — EnginePool."""
+    """Verify the engine caching mechanism — EnginePool."""
 
     @patch("aiteam.storage.engine_pool.create_async_engine")
     def test_same_url_returns_cached_engine(self, mock_create: MagicMock) -> None:
-        """相同URL应返回缓存的引擎实例."""
+        """The same URL should return the cached engine instance."""
         mock_engine = MagicMock()
         mock_engine.url = "sqlite+aiosqlite:///test.db"
         mock_create.return_value = mock_engine
@@ -126,7 +126,7 @@ class TestGetEngineCache:
 
     @patch("aiteam.storage.engine_pool.create_async_engine")
     def test_different_url_creates_new_engine(self, mock_create: MagicMock) -> None:
-        """不同URL应创建新引擎."""
+        """Different URLs should create new engines."""
         mock_engine1 = MagicMock()
         mock_engine1.url = "sqlite+aiosqlite:///test1.db"
         mock_engine2 = MagicMock()
@@ -140,11 +140,11 @@ class TestGetEngineCache:
 
 
 class TestEnginePoolEviction:
-    """验证 EnginePool 的 LRU 淘汰机制."""
+    """Verify the EnginePool LRU eviction mechanism."""
 
     @patch("aiteam.storage.engine_pool.create_async_engine")
     def test_evicts_oldest_when_full(self, mock_create: MagicMock) -> None:
-        """超过 max_size 时应淘汰最旧的引擎."""
+        """When max_size is exceeded, the oldest engine should be evicted."""
         pool = EnginePool(max_size=2)
 
         engines = []

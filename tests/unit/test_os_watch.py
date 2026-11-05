@@ -1,7 +1,7 @@
-"""Subprocess tests for scripts/os-watch.sh (唤醒体系 v2 §7.4).
+"""Subprocess tests for scripts/os-watch.sh (wake system v2 §7.4).
 
-用 curl 桩（PATH 前置）+ HOME 覆盖，验证退出码语义与 armed 文件生命周期。
-不依赖真实 API/网络。bash 不可用时跳过。
+Uses a curl stub (prepended to PATH) + HOME override to verify exit-code semantics and the armed file lifecycle.
+Does not depend on a real API/network. Skipped when bash is unavailable.
 """
 
 from __future__ import annotations
@@ -19,12 +19,12 @@ SCRIPT = REPO_ROOT / "scripts" / "os-watch.sh"
 
 pytestmark = pytest.mark.skipif(
     shutil.which("bash") is None or not SCRIPT.is_file(),
-    reason="bash 或 os-watch.sh 不可用",
+    reason="bash or os-watch.sh unavailable",
 )
 
 
 def _make_curl_stub(bindir: Path, body: str, exit_code: int = 0) -> None:
-    """在 bindir 放一个 curl 桩，忽略参数、输出 body、按 exit_code 退出。"""
+    """Place a curl stub in bindir: ignores arguments, outputs body, exits with exit_code."""
     stub = bindir / "curl"
     stub.write_text(
         "#!/usr/bin/env bash\n"
@@ -61,7 +61,7 @@ def test_api_unreachable_exits_two(tmp_path):
     bindir.mkdir()
     home = tmp_path / "home"
     home.mkdir()
-    _make_curl_stub(bindir, "", exit_code=7)  # curl 连接失败码
+    _make_curl_stub(bindir, "", exit_code=7)  # curl connection failure code
     r = _run(bindir, home, {"OS_WATCH_POLL": "1", "OS_WATCH_MAX": "30"})
     assert r.returncode == 2
     assert "WATCHER_API_UNREACHABLE" in r.stdout
@@ -76,11 +76,11 @@ def test_benign_then_hard_timeout_exits_three(tmp_path):
     r = _run(bindir, home, {"OS_WATCH_POLL": "1", "OS_WATCH_MAX": "1"})
     assert r.returncode == 3
     assert "WATCHER_TIMEOUT" in r.stdout
-    assert "STATUS benign" in r.stdout  # 良性信号被吸收过至少一轮
+    assert "STATUS benign" in r.stdout  # The benign signal was absorbed for at least one round
 
 
 def test_armed_file_lifecycle(tmp_path):
-    """运行期写 armed 心跳文件；退出(trap)后清除。"""
+    """Writes the armed heartbeat file while running; clears it on exit (trap)."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
     home = tmp_path / "home"
@@ -96,15 +96,15 @@ def test_armed_file_lifecycle(tmp_path):
     proc = subprocess.Popen(["bash", str(SCRIPT), "sess-1", "team-1"], env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        # 等它武装
+        # Wait for it to arm
         deadline = time.time() + 6
         while time.time() < deadline and not armed.exists():
             time.sleep(0.2)
-        assert armed.exists(), "运行期应写 armed 心跳文件"
+        assert armed.exists(), "Should write the armed heartbeat file while running"
         armed_until = float(armed.read_text().strip())
-        assert armed_until > time.time()  # 未过期
+        assert armed_until > time.time()  # Not expired
     finally:
         proc.terminate()
         proc.wait(timeout=10)
-    # trap 清理：退出后 armed 文件应被移除
-    assert not armed.exists(), "退出后 trap 应清除 armed 文件"
+    # trap cleanup: the armed file should be removed after exit
+    assert not armed.exists(), "The trap should clear the armed file after exit"

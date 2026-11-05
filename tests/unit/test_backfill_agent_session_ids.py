@@ -1,12 +1,12 @@
-"""回填脚本的行为契约 —— 见 docs/token-attribution-v1-design.md §7 阶段1。
+"""The backfill script's behavioral contract — see docs/token-attribution-v1-design.md §7 phase 1.
 
-这个脚本会一次性改写近两千行生产数据、由缔造者亲手执行，所以它的承诺必须机检：
-**只写空列**（绝不覆盖观测值）、**幂等**（重跑零变更）、**分类而非静默跳过**
-（写不了的行必须带原因码）、**不越界**（只碰 agents 的两列，``workflow_agents.tokens``
-逐行未变——那是 ctx_last 口径，混进 usage_sum 会永久污染历史）、**风险可见**
-（会造出 (session,name) 碰撞时硬拒写入）。
+This script will rewrite nearly two thousand rows of production data in one pass, executed by the Creator personally, so its promises must be machine-checked:
+**write only empty columns** (never overwrite observed values), **idempotent** (a rerun changes nothing), **classify rather than silently skip**
+(rows that cannot be written must carry a reason code), **do not cross boundaries** (touch only the two columns of agents; ``workflow_agents.tokens``
+unchanged row by row — that is the ctx_last metric, and mixing it into usage_sum would permanently pollute history), **risks visible**
+(when it would create (session,name) collisions, refuse to write, hard).
 
-全部用例只跑 tmp_path 里的临时库，一个字节都不碰生产库。
+All cases run only against temporary databases in tmp_path; not a single byte touches the production database.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 _spec = importlib.util.spec_from_file_location("backfill_agent_session_ids", SCRIPT)
 assert _spec and _spec.loader
 bf = importlib.util.module_from_spec(_spec)
-# 必须先登记进 sys.modules 再 exec：脚本里的 @dataclass 会回查自己的模块命名空间。
+# It must first be registered into sys.modules and then exec'd: the @dataclass in the script looks back into its own module namespace.
 sys.modules["backfill_agent_session_ids"] = bf
 _spec.loader.exec_module(bf)
 
@@ -41,7 +41,7 @@ def _path(session_id: str, cc_id: str, slug: str = SLUG) -> str:
 
 @pytest.fixture()
 def db(tmp_path: Path) -> sqlite3.Connection:
-    """最小三表库：agents / teams / projects，列名与生产一致。"""
+    """A minimal three-table database: agents / teams / projects, with column names matching production."""
     con = sqlite3.connect(tmp_path / "t.db")
     con.row_factory = sqlite3.Row
     con.executescript(
@@ -89,7 +89,7 @@ class TestJobASubagentSessionId:
         assert [(r.reason, r.value) for r in job.rows] == [("written", SESSION)]
 
     def test_never_overwrites_an_existing_value(self, db):
-        """已有值与派生值不同 = conflict，一行都不动。覆盖等于用推断抹掉观测。"""
+        """An existing value differing from the derived value = conflict; not a single row moves. Overwriting would erase observation with inference."""
         _add_agent(db, "a1", session_id=OTHER, transcript_path=_path(SESSION, "cc1"))
         job = bf.job_subagent_session_id(bf.load_agents(db))
         assert job.rows[0].reason == "conflict"
@@ -102,20 +102,20 @@ class TestJobASubagentSessionId:
         assert job.written() == []
 
     def test_missing_and_unparseable_paths_get_distinct_reason_codes(self, db):
-        """写不了的行必须分类：no-data ≠ zero，一个总数说明不了能不能救。"""
+        """Rows that cannot be written must be classified: no-data ≠ zero; a single total cannot say whether they can be saved."""
         _add_agent(db, "a1", transcript_path=None)
         _add_agent(db, "a2", transcript_path="/tmp/whatever.jsonl")
         job = bf.job_subagent_session_id(bf.load_agents(db))
         assert job.counts() == {"no_transcript_path": 1, "unparseable_path": 1}
 
     def test_slug_mismatch_is_flagged_but_never_changes_attribution(self, db):
-        """slug 是有损映射，对不上只是提醒，绝不据此改归属列。"""
+        """The slug is a lossy mapping; a mismatch is only a reminder and must never be used to change the ownership column."""
         _add_agent(db, "a1", transcript_path=_path(SESSION, "cc1", slug="-Volumes-other"))
         job = bf.job_subagent_session_id(bf.load_agents(db))
         row = job.rows[0]
-        assert row.reason == "written"  # 照样回填 session_id
-        assert "对不上" in row.warn  # 但人能看见
-        assert row.column == "session_id"  # 只写这一列，project_id 一个字没动
+        assert row.reason == "written"  # The session_id is backfilled anyway
+        assert "does not match" in row.warn  # But a human can see it
+        assert row.column == "session_id"  # Only this column is written; project_id is untouched, not a single character
 
     def test_leader_rows_are_not_this_jobs_business(self, db):
         _add_agent(db, "L1", name="Leader", role="leader")
@@ -138,7 +138,7 @@ class TestJobBLeaderTranscriptPath:
         assert job.rows[0].value.endswith(f"{SLUG}/{SESSION}.jsonl")
 
     def test_file_gone_is_its_own_reason_not_silence(self, db, disk):
-        """回采窗口只会关闭不会打开——这一类必须能被单独数出来。"""
+        """The re-collection window only closes and never opens — this class must be countable separately."""
         db.execute(
             "update teams set config=? where id='t1'",
             (json.dumps({"owner_session_id": "deadbeef-0000-0000-0000-000000000000"}),),
@@ -156,7 +156,7 @@ class TestJobBLeaderTranscriptPath:
         assert job.rows[0].reason == "no_session_id"
 
     def test_team_name_prefix_is_not_accepted_as_identity(self, db, disk):
-        """队名只留了 session 前 8 位——前缀不是身份，不许当兜底。"""
+        """A team name kept only the first 8 characters of the session — a prefix is not an identity and must not be used as a fallback."""
         db.execute("update teams set config='{}' where id='t1'")
         db.commit()
         _add_agent(db, "L1", name="Leader", role="leader")
@@ -175,21 +175,21 @@ class TestJobCIsOptIn:
         db.close()
         assert _run(monkeypatch, tmp_path / "t.db", "--sample", "1") == 0
         out = capsys.readouterr().out
-        assert "Job C 默认不执行" in out
+        assert "Job C is not executed by default" in out
         con = sqlite3.connect(tmp_path / "t.db")
         assert con.execute("select session_id from agents where id='L1'").fetchone()[0] is None
         con.close()
 
     def test_resolution_shift_is_spelled_out_before_it_happens(self, db):
-        """Job C 改的是活体解析结果，所以必须先说清"会命中哪一行"。"""
+        """Job C changes live resolution results, so it must first make clear 'which row it will hit'."""
         _add_agent(db, "L1", name="Leader", role="leader", created_at="2026-07-20 09:00:00")
         _add_agent(db, "L2", name="Leader", role="leader", created_at="2026-07-28 09:00:00")
         agents = bf.load_agents(db)
         job_c = bf.job_leader_session_id(agents)
         lines = bf.describe_leader_resolution_shift(agents, job_c)
         assert len(lines) == 1
-        assert "2 个 Leader 行" in lines[0]
-        assert "L1"[:8] in lines[0]  # 命中最早那行，不是最新那行
+        assert "2 Leader rows" in lines[0]
+        assert "L1"[:8] in lines[0]  # It hits the earliest row, not the newest one
 
 
 class TestApplyIsSafeAndIdempotent:
@@ -199,10 +199,10 @@ class TestApplyIsSafeAndIdempotent:
         dbfile = tmp_path / "t.db"
 
         assert _run(monkeypatch, dbfile, "--apply") == 0
-        assert "已写入：1 行" in capsys.readouterr().out
+        assert "Written: 1 row" in capsys.readouterr().out
 
         assert _run(monkeypatch, dbfile) == 0
-        assert "待写入合计：0 行" in capsys.readouterr().out
+        assert "Total to write: 0 rows" in capsys.readouterr().out
 
     def test_dry_run_writes_nothing_at_all(self, db, tmp_path, monkeypatch):
         _add_agent(db, "a1", transcript_path=_path(SESSION, "cc1"))
@@ -215,7 +215,7 @@ class TestApplyIsSafeAndIdempotent:
         con.close()
 
     def test_workflow_agents_tokens_is_never_touched(self, db, tmp_path, monkeypatch):
-        """R3：usage_sum 写进 ctx_last 列会永久污染历史且事后不可分辨。"""
+        """R3: writing usage_sum into the ctx_last column would permanently pollute history and be indistinguishable afterwards."""
         _add_agent(db, "a1", transcript_path=_path(SESSION, "cc1"))
         db.close()
         dbfile = tmp_path / "t.db"
@@ -225,7 +225,7 @@ class TestApplyIsSafeAndIdempotent:
         con.close()
 
     def test_apply_refuses_when_it_would_create_a_name_collision(self, db, tmp_path, monkeypatch):
-        """同 (session,name) 多行会让登记去重旁路复用旧行并覆盖其 token 列。"""
+        """Multiple rows with the same (session,name) would make the registration dedup bypass reuse an old row and overwrite its token columns."""
         _add_agent(db, "a1", name="Explore", transcript_path=_path(SESSION, "cc1"))
         _add_agent(db, "a2", name="Explore", transcript_path=_path(SESSION, "cc2"))
         db.close()
@@ -248,7 +248,7 @@ class TestApplyIsSafeAndIdempotent:
         con.close()
 
     def test_workflow_subagents_are_exempt_from_the_collision_check(self, db, tmp_path, monkeypatch):
-        """workflow 扇出按 cc_agent_id 去重，从不按名字——它们撞名不构成风险。"""
+        """Workflow fan-out dedupes by cc_agent_id and never by name — their name collisions constitute no risk."""
         _add_agent(db, "a1", name="wf-x", role="workflow-subagent",
                    transcript_path=_path(SESSION, "cc1"))
         _add_agent(db, "a2", name="wf-x", role="workflow-subagent",

@@ -1,6 +1,6 @@
-"""AI Team OS — Analytics API 测试.
+"""AI Team OS — Analytics API tests.
 
-测试活动分析统计端点：工具使用分布、Agent产能、时间线、团队概览。
+Tests the activity analytics statistics endpoints: tool usage distribution, Agent productivity, timeline, team overview.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from aiteam.storage.repository import StorageRepository
 
 @pytest.fixture()
 def app_client():
-    """创建测试客户端，使用内存SQLite."""
+    """Create a test client using in-memory SQLite."""
     import asyncio
 
     repo = StorageRepository(db_url="sqlite+aiosqlite://")
@@ -56,20 +56,20 @@ def app_client():
 
 
 def _setup_team_with_activities(client) -> tuple[str, str]:
-    """创建团队、Agent和活动数据，返回 (team_id, agent_id)."""
-    # 创建团队
+    """Create team, Agent and activity data; returns (team_id, agent_id)."""
+    # Create a team
     analytics_team = make_team({"name": "analytics-team"})
     team_id = analytics_team["id"]
     team_name = analytics_team["name"]
 
-    # 添加Agent
+    # Add an Agent
     resp = client.post(
         f"/api/teams/{team_name}/agents",
-        json={"name": "dev-1", "role": "开发"},
+        json={"name": "dev-1", "role": "Development"},
     )
     agent_id = resp.json()["data"]["id"]
 
-    # 添加活动记录
+    # Add activity records
     import asyncio
 
     repo = deps._repository
@@ -86,12 +86,12 @@ def _setup_team_with_activities(client) -> tuple[str, str]:
 
 
 # ============================================================
-# 工具使用分布
+# Tool usage distribution
 # ============================================================
 
 
 def test_tool_usage_empty(app_client):
-    """无活动数据时返回空列表."""
+    """With no activity data, returns an empty list."""
     resp = app_client.get("/api/analytics/tool-usage")
     assert resp.status_code == 200
     data = resp.json()
@@ -100,14 +100,14 @@ def test_tool_usage_empty(app_client):
 
 
 def test_tool_usage_with_data(app_client):
-    """有活动数据时返回按计数排序的工具分布."""
+    """With activity data, returns the tool distribution sorted by count."""
     team_id, _ = _setup_team_with_activities(app_client)
 
     resp = app_client.get("/api/analytics/tool-usage")
     assert resp.status_code == 200
     data = resp.json()["data"]
     assert len(data) == 3  # Bash, Read, Edit
-    # Bash和Read各2次（排序不确定），Edit 1次
+    # Bash and Read twice each (the order is uncertain), Edit once
     counts = {item["tool_name"]: item["count"] for item in data}
     assert counts["Bash"] == 2
     assert counts["Read"] == 2
@@ -115,7 +115,7 @@ def test_tool_usage_with_data(app_client):
 
 
 def test_tool_usage_filter_by_team(app_client):
-    """按团队筛选工具使用."""
+    """Filter tool usage by team."""
     team_id, _ = _setup_team_with_activities(app_client)
 
     resp = app_client.get(f"/api/analytics/tool-usage?team_id={team_id}")
@@ -124,19 +124,19 @@ def test_tool_usage_filter_by_team(app_client):
 
 
 # ============================================================
-# Agent产能
+# Agent productivity
 # ============================================================
 
 
 def test_agent_productivity_empty(app_client):
-    """无数据时返回空."""
+    """With no data, returns empty."""
     resp = app_client.get("/api/analytics/agent-productivity")
     assert resp.status_code == 200
     assert resp.json()["data"] == []
 
 
 def test_agent_productivity_with_data(app_client):
-    """有数据时返回每Agent的产能指标."""
+    """With data, returns each Agent's productivity metrics."""
     team_id, agent_id = _setup_team_with_activities(app_client)
 
     resp = app_client.get("/api/analytics/agent-productivity")
@@ -150,32 +150,32 @@ def test_agent_productivity_with_data(app_client):
 
 
 # ============================================================
-# 活动时间线
+# Activity timeline
 # ============================================================
 
 
 def test_timeline_empty(app_client):
-    """无数据时返回空."""
+    """With no data, returns empty."""
     resp = app_client.get("/api/analytics/timeline")
     assert resp.status_code == 200
     assert resp.json()["data"] == []
 
 
 def test_timeline_with_data(app_client):
-    """有数据时按小时聚合."""
+    """With data, aggregates by hour."""
     _setup_team_with_activities(app_client)
 
     resp = app_client.get("/api/analytics/timeline?hours=1")
     assert resp.status_code == 200
     data = resp.json()["data"]
-    # 所有活动在同一小时内
+    # All activities are within the same hour
     assert len(data) >= 1
     total = sum(item["count"] for item in data)
     assert total == 5
 
 
 def test_timeline_hours_validation(app_client):
-    """hours参数范围限制 (1-168)."""
+    """The hours parameter range limit (1-168)."""
     resp = app_client.get("/api/analytics/timeline?hours=0")
     assert resp.status_code == 422  # validation error
 
@@ -184,18 +184,18 @@ def test_timeline_hours_validation(app_client):
 
 
 # ============================================================
-# 团队概览
+# Team overview
 # ============================================================
 
 
 def test_team_overview_requires_team_id(app_client):
-    """team_id是必填参数."""
+    """team_id is a required parameter."""
     resp = app_client.get("/api/analytics/team-overview")
     assert resp.status_code == 422
 
 
 def test_team_overview_with_data(app_client):
-    """返回完整的团队概览统计."""
+    """Returns the complete team overview statistics."""
     team_id, _ = _setup_team_with_activities(app_client)
 
     resp = app_client.get(f"/api/analytics/team-overview?team_id={team_id}")
@@ -208,12 +208,12 @@ def test_team_overview_with_data(app_client):
 
 
 # ============================================================
-# 效率指标
+# Efficiency metrics
 # ============================================================
 
 
 def test_efficiency_empty(app_client):
-    """无数据时返回零值效率指标."""
+    """With no data, returns zero-valued efficiency metrics."""
     resp = app_client.get("/api/analytics/efficiency")
     assert resp.status_code == 200
     data = resp.json()["data"]
@@ -225,19 +225,19 @@ def test_efficiency_empty(app_client):
 
 
 def test_efficiency_with_tasks(app_client):
-    """有任务和活动数据时返回正确的效率指标."""
+    """With task and activity data, returns the correct efficiency metrics."""
     team_id, agent_id = _setup_team_with_activities(app_client)
 
-    # 创建几个任务并完成部分
+    # Create a few tasks and complete some of them
     import asyncio
 
     repo = deps._repository
 
     async def add_tasks():
-        t1 = await repo.create_task(team_id, "任务1", assigned_to=agent_id)
-        t2 = await repo.create_task(team_id, "任务2", assigned_to=agent_id)
-        await repo.create_task(team_id, "任务3")
-        # 完成t1和t2
+        t1 = await repo.create_task(team_id, "Task 1", assigned_to=agent_id)
+        t2 = await repo.create_task(team_id, "Task 2", assigned_to=agent_id)
+        await repo.create_task(team_id, "Task 3")
+        # Complete t1 and t2
         await repo.update_task(t1.id, status="completed", completed_at=utc_now())
         await repo.update_task(t2.id, status="completed", completed_at=utc_now())
 
@@ -247,33 +247,33 @@ def test_efficiency_with_tasks(app_client):
     assert resp.status_code == 200
     data = resp.json()["data"]
 
-    # 任务完成率：2/3
+    # Task completion rate: 2/3
     tc = data["task_completion"]
     assert tc["total_tasks"] == 3
     assert tc["completed_tasks"] == 2
     assert 0.66 <= tc["completion_rate"] <= 0.67
 
-    # 平均工具调用/任务：5活动 / 2完成任务 = 2.5
+    # Average tool calls / task: 5 activities / 2 completed tasks = 2.5
     assert data["avg_tools_per_task"] == 2.5
 
-    # Agent利用率
+    # Agent utilization rate
     assert len(data["agent_utilization"]) == 1
     assert data["agent_utilization"][0]["agent_name"] == "dev-1"
     assert data["agent_utilization"][0]["activity_count"] == 5
 
-    # 最高效排行
+    # Most-efficient ranking
     assert len(data["top_agents"]) == 1
 
 
 def test_efficiency_filter_by_team(app_client):
-    """按团队筛选效率指标."""
+    """Filter efficiency metrics by team."""
     team_id, _ = _setup_team_with_activities(app_client)
 
     resp = app_client.get(f"/api/analytics/efficiency?team_id={team_id}")
     assert resp.status_code == 200
     assert resp.json()["data"]["agent_utilization"][0]["agent_name"] == "dev-1"
 
-    # 查询不存在的团队
+    # Query a non-existent team
     resp = app_client.get("/api/analytics/efficiency?team_id=nonexistent")
     assert resp.status_code == 200
     assert resp.json()["data"]["agent_utilization"] == []

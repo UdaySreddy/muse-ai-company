@@ -147,7 +147,7 @@ def test_impersonation_flagged_via_http():
         data = resp.json()
         assert data["success"] is True
         # Response message signals impersonation audit
-        assert "代打" in data["message"]
+        assert "on behalf of another" in data["message"]
 
         # Verify metadata stored
         messages = asyncio.get_event_loop().run_until_complete(
@@ -186,7 +186,7 @@ def test_no_impersonation_when_caller_matches():
             },
         )
         assert resp.status_code == 201
-        assert "代打" not in resp.json()["message"]
+        assert "on behalf of another" not in resp.json()["message"]
 
         emitted = [call.args[0] for call in event_bus.emit.call_args_list]
         assert "meeting.impersonation" not in emitted
@@ -340,34 +340,34 @@ def test_conclude_succeeds_when_all_spoke():
 
 
 def test_conclude_does_not_write_memory():
-    """结会**不再**自动写记忆层（2026-07-31 裁定）：结论走 decision 事件 + 任务墙。
+    """Meeting close no longer automatically writes the memory layer (2026-07-31 ruling): conclusions go through decision events + the task wall.
 
-    这曾是记忆层唯一的自动写入口——无人审、不挂失效轴管理、按会议数线性增长。
+    This used to be the memory layer's only automatic write entry point — unreviewed, unmanaged on the invalidation axis, growing linearly with meeting count.
     """
     client, repo, _event_bus = _make_client()
     try:
         team_id = make_team({"name": "no-memory-team", "mode": "coordinate"})["id"]
         meeting_id = client.post(
             f"/api/teams/{team_id}/meetings",
-            json={"topic": "无需入库的讨论", "participants": ["agent-a"]},
+            json={"topic": "A discussion that needs no persistence", "participants": ["agent-a"]},
         ).json()["data"]["id"]
         client.post(
             f"/api/meetings/{meeting_id}/messages",
             json={
                 "agent_id": "agent-a",
                 "agent_name": "agent-a",
-                "content": "结论内容",
+                "content": "Conclusion content",
                 "round_number": 1,
             },
         )
 
         resp = client.put(
             f"/api/meetings/{meeting_id}/conclude",
-            json={"summary": "本次结论", "validate_attendance": False},
+            json={"summary": "This meeting's conclusion", "validate_attendance": False},
         )
         assert resp.status_code == 200
-        # 返回文案要把结论引向正道，而不是宣称"已保存到团队记忆"
-        assert "任务墙" in resp.json()["message"]
+        # The response copy should point conclusions to the right path instead of claiming "saved to team memory"
+        assert "task wall" in resp.json()["message"]
 
         stored = asyncio.get_event_loop().run_until_complete(
             repo.list_memories("team", team_id)

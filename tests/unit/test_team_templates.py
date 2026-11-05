@@ -1,4 +1,4 @@
-"""AI Team OS — 团队模板API测试."""
+"""AI Team OS — team template API tests."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from aiteam.api.routes import templates
 
 @pytest.fixture()
 def templates_client(tmp_path):
-    """创建测试客户端，模板文件指向临时目录."""
+    """Create a test client, with the template file pointing at a temporary directory."""
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     templates_file = config_dir / "team-templates.json"
@@ -23,19 +23,19 @@ def templates_client(tmp_path):
         "templates": [
             {
                 "id": "fullstack",
-                "name": "全栈开发团队",
-                "description": "前后端+测试的标准开发团队",
+                "name": "Full-Stack Development Team",
+                "description": "A standard development team with frontend + backend + testing",
                 "members": [
-                    {"name": "frontend-engineer", "role": "前端工程师"},
-                    {"name": "backend-engineer", "role": "后端工程师"},
+                    {"name": "frontend-engineer", "role": "Frontend Engineer"},
+                    {"name": "backend-engineer", "role": "Backend Engineer"},
                 ],
             },
             {
                 "id": "minimal",
-                "name": "最小团队",
-                "description": "只有常驻成员的最小配置",
+                "name": "Minimal Team",
+                "description": "A minimal configuration with only resident members",
                 "members": [
-                    {"name": "qa-observer", "role": "QA观察员"},
+                    {"name": "qa-observer", "role": "QA Observer"},
                 ],
             },
         ]
@@ -53,7 +53,7 @@ def templates_client(tmp_path):
 
 
 class TestListTemplates:
-    """测试GET列出所有模板."""
+    """Test GET listing all templates."""
 
     def test_list_templates(self, templates_client):
         resp = templates_client.get("/api/config/team-templates")
@@ -67,7 +67,7 @@ class TestListTemplates:
 
 
 class TestGetTemplate:
-    """测试GET获取单个模板."""
+    """Test GET fetching a single template."""
 
     def test_get_template(self, templates_client):
         resp = templates_client.get("/api/config/team-templates/fullstack")
@@ -75,7 +75,7 @@ class TestGetTemplate:
         data = resp.json()
         assert data["success"] is True
         assert data["data"]["id"] == "fullstack"
-        assert data["data"]["name"] == "全栈开发团队"
+        assert data["data"]["name"] == "Full-Stack Development Team"
         assert len(data["data"]["members"]) == 2
 
     def test_template_not_found(self, templates_client):

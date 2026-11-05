@@ -171,7 +171,7 @@ class TestBuildBriefingProjectRegistrationSection:
 
             briefing = mod._build_briefing()
 
-        assert "未注册到 AI Team OS 项目系统" in briefing
+        assert "Not registered in the AI Team OS project system" in briefing
         assert "dismiss_project_registration" in briefing
         assert "project_create" in briefing
 
@@ -196,7 +196,7 @@ class TestBuildBriefingProjectRegistrationSection:
 
             briefing = mod._build_briefing()
 
-        assert "未注册到 AI Team OS 项目系统" not in briefing
+        assert "Not registered in the AI Team OS project system" not in briefing
 
     def test_registered_project_no_registration_prompt(self):
         """Registered project -> no registration prompt in briefing."""
@@ -219,4 +219,4 @@ class TestBuildBriefingProjectRegistrationSection:
 
             briefing = mod._build_briefing()
 
-        assert "未注册到 AI Team OS 项目系统" not in briefing
+        assert "Not registered in the AI Team OS project system" not in briefing

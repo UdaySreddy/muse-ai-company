@@ -1,7 +1,7 @@
-"""AI Team OS — 上下文感知脚本测试.
+"""AI Team OS — context-aware script tests.
 
-测试跨平台Python版pre_compact_save、session_bootstrap。
-context_monitor已由context_tracker替代，见test_context_tracker.py。
+Tests the cross-platform Python versions of pre_compact_save and session_bootstrap.
+context_monitor has been replaced by context_tracker; see test_context_tracker.py.
 """
 
 from __future__ import annotations
@@ -21,12 +21,12 @@ CONFIG_DIR = Path(__file__).parent.parent.parent / "plugin" / "config"
 
 
 class TestPreCompactSave:
-    """pre_compact_save.py — compact事件记录."""
+    """pre_compact_save.py — compact event recording."""
 
     script = HOOKS_DIR / "pre_compact_save.py"
 
     def test_appends_to_jsonl(self, tmp_path):
-        """正确追加JSONL记录."""
+        """Correctly appends a JSONL record."""
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
 
@@ -62,7 +62,7 @@ class TestPreCompactSave:
             assert "timestamp" in record
 
     def test_silent_on_error(self):
-        """错误时不崩溃."""
+        """Does not crash on error."""
         result = subprocess.run(
             [sys.executable, str(self.script)],
             input="invalid json{{{",
@@ -70,7 +70,7 @@ class TestPreCompactSave:
             text=True,
             timeout=10,
         )
-        # 不应崩溃
+        # Should not crash
         assert result.returncode == 0
 
 
@@ -80,13 +80,13 @@ class TestPreCompactSave:
 
 
 class TestSessionBootstrap:
-    """session_bootstrap.py — Session启动引导."""
+    """session_bootstrap.py — session startup bootstrap."""
 
     script = HOOKS_DIR / "session_bootstrap.py"
 
     def test_api_unreachable(self):
-        """API不可达时输出启动提示."""
-        # 使用内联脚本避免Windows路径中文编码问题
+        """Outputs the startup prompt when the API is unreachable."""
+        # Use an inline script to avoid Windows path Chinese-encoding issues
         script_content = """
 import json, sys, urllib.request, urllib.error
 
@@ -116,22 +116,22 @@ if health is None:
         assert "API" in result.stdout
 
     def test_auto_team_instructions(self, tmp_path):
-        """有auto_create_team配置时输出团队创建指令."""
+        """Outputs team creation instructions when auto_create_team is configured."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = {
             "auto_create_team": True,
             "team_name_prefix": "test",
             "permanent_members": [
-                {"name": "qa-observer", "role": "QA观察员", "enabled": True},
-                {"name": "bug-fixer", "role": "Bug工程师", "enabled": True},
+                {"name": "qa-observer", "role": "QA Observer", "enabled": True},
+                {"name": "bug-fixer", "role": "Bug Engineer", "enabled": True},
             ],
         }
         (config_dir / "team-defaults.json").write_text(
             json.dumps(config, ensure_ascii=False), encoding="utf-8"
         )
 
-        # 内联测试 _build_auto_team_instructions 和 _load_team_config
+        # Inline-test _build_auto_team_instructions and _load_team_config
         script_content = f"""
 import json, sys
 from pathlib import Path
@@ -154,8 +154,8 @@ def _build_auto_team_instructions(config):
     if not enabled:
         return []
     team_name = f"{{config.get('team_name_prefix', 'auto')}}-team"
-    lines = ["", "=== 自动团队创建指令 ==="]
-    lines.append("请立即执行以下操作创建团队和常驻成员：")
+    lines = ["", "=== Auto Team Creation Instructions ==="]
+    lines.append("Please execute the following immediately to create the team and persistent members:")
     lines.append(f"1. TeamCreate(team_name='{{team_name}}')")
     for i, m in enumerate(enabled, start=2):
         lines.append(f"{{i}}. Agent(team_name='{{team_name}}', name='{{m['name']}}')")
@@ -174,14 +174,14 @@ if cfg:
             timeout=10,
         )
         assert result.returncode == 0
-        assert "自动团队创建指令" in result.stdout
+        assert "Auto Team Creation Instructions" in result.stdout
         assert "TeamCreate" in result.stdout
         assert "test-team" in result.stdout
         assert "qa-observer" in result.stdout
         assert "bug-fixer" in result.stdout
 
     def test_auto_team_disabled(self, tmp_path):
-        """auto_create_team=false时不输出创建指令."""
+        """Does not output creation instructions when auto_create_team=false."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = {
@@ -214,7 +214,7 @@ def _build_auto_team_instructions(config):
     enabled = [m for m in config.get("permanent_members", []) if m.get("enabled")]
     if not enabled:
         return []
-    return ["=== 自动团队创建指令 ==="]
+    return ["=== Auto Team Creation Instructions ==="]
 
 cfg = _load_team_config()
 if cfg:
@@ -231,12 +231,12 @@ else:
             timeout=10,
         )
         assert result.returncode == 0
-        assert "自动团队创建指令" not in result.stdout
+        assert "Auto Team Creation Instructions" not in result.stdout
 
     def test_missing_config_silent(self, tmp_path):
-        """无配置文件时不报错."""
+        """No error when there is no configuration file."""
         config_dir = tmp_path / "config"
-        # 故意不创建config目录
+        # Deliberately do not create the config directory
 
         script_content = f"""
 import json, sys
@@ -381,7 +381,7 @@ sys.stdout.write(notice if notice else "")
             env={**os.environ, "HOME": str(tmp_path), "USERPROFILE": str(tmp_path)},
         )
         assert result.returncode == 0
-        assert "自动更新失败" in result.stdout
+        assert "Auto-update failed" in result.stdout
         assert "conflict" in result.stdout
         assert not bg_file.exists()
 

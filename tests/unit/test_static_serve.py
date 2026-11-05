@@ -1,6 +1,6 @@
-"""AI Team OS — Dashboard静态文件挂载测试.
+"""AI Team OS — Dashboard static file mounting tests.
 
-验证FastAPI正确serve Dashboard静态文件，且不拦截API路由。
+Verifies FastAPI serves the Dashboard static files correctly and does not intercept API routes.
 """
 
 from __future__ import annotations
@@ -22,14 +22,14 @@ async def _noop_lifespan(app):
 
 
 def _make_client(app):
-    """创建测试客户端，跳过lifespan初始化."""
+    """Create a test client, skipping lifespan initialization."""
     app.router.lifespan_context = _noop_lifespan
     return TestClient(app, raise_server_exceptions=False)
 
 
 @pytest.fixture()
 def fake_dist(tmp_path):
-    """创建模拟的dashboard/dist目录结构."""
+    """Create a mock dashboard/dist directory structure."""
     dist = tmp_path / "dashboard" / "dist"
     dist.mkdir(parents=True)
     (dist / "index.html").write_text(
@@ -45,7 +45,7 @@ def fake_dist(tmp_path):
 
 
 def test_root_serves_html(fake_dist):
-    """dist存在时，/ 返回Dashboard HTML."""
+    """When dist exists, / returns the Dashboard HTML."""
     with patch.object(
         Path, "resolve", lambda self: fake_dist / "src" / "aiteam" / "api" / "app.py"
     ):
@@ -59,7 +59,7 @@ def test_root_serves_html(fake_dist):
 
 
 def test_assets_served(fake_dist):
-    """dist存在时，/assets/ 下的文件可访问."""
+    """When dist exists, files under /assets/ are accessible."""
     with patch.object(
         Path, "resolve", lambda self: fake_dist / "src" / "aiteam" / "api" / "app.py"
     ):
@@ -72,7 +72,7 @@ def test_assets_served(fake_dist):
 
 
 def test_api_routes_not_intercepted(fake_dist):
-    """API路由不被静态文件拦截，/api/teams返回JSON."""
+    """API routes are not intercepted by static files; /api/teams returns JSON."""
     with patch.object(
         Path, "resolve", lambda self: fake_dist / "src" / "aiteam" / "api" / "app.py"
     ):
@@ -80,12 +80,12 @@ def test_api_routes_not_intercepted(fake_dist):
 
     client = _make_client(app)
     resp = client.get("/api/teams")
-    # API应该响应（可能500因为没有初始化deps，但不应该返回HTML）
+    # The API should respond (possibly 500 because deps are not initialized, but should not return HTML)
     assert resp.headers.get("content-type", "").startswith("application/json")
 
 
 def test_app_works_without_dist():
-    """dist不存在时，应用正常启动，API正常工作."""
+    """When dist does not exist, the app starts normally and the API works."""
     with patch.object(
         Path,
         "resolve",
@@ -94,6 +94,6 @@ def test_app_works_without_dist():
         app = create_app()
 
     client = _make_client(app)
-    # API应可访问（可能500因为没有deps，但应用本身不崩溃）
+    # The API should be accessible (possibly 500 because there are no deps, but the app itself does not crash)
     resp = client.get("/api/teams")
     assert resp.headers.get("content-type", "").startswith("application/json")

@@ -178,7 +178,7 @@ class TestPromptEffectiveness:
         await db_repository.create_memory(
             scope="team",
             scope_id=team.id,
-            content="失败分析: some task",
+            content="Failure analysis: some task",
             metadata={
                 "type": "failure_alchemy",
                 "template_name": "engineering-backend-architect",

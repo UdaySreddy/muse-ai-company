@@ -1,25 +1,25 @@
-"""恢复脚本的行为契约 —— 见 report b168eb34-9c19-40e5-8ecb-624a74ccbc5a §4。
+"""The behavioral contract of the restore script — see report b168eb34-9c19-40e5-8ecb-624a74ccbc5a §4.
 
-这个脚本要往生产库里**插回** 843 行历史数据（1 队 + 7 行 agents + 835 条 activities）连同
-3.25 亿 token 的归因账，由缔造者亲手执行。插错的代价与回采脚本对称：写进去的混口径数据
-事后不可分辨。所以它的每一条纪律都必须可机检：
+This script **inserts back** 843 rows of historical data (1 team + 7 agent rows + 835 activities) together with
+an attribution ledger of 325 million tokens into the production database, executed by the creator personally. The cost of a wrong insert is symmetric to the re-collection script: mixed-convention data written in
+is indistinguishable afterwards. So every one of its disciplines must be machine-checkable:
 
-* **双源强校验** —— token 值以重解析 transcript 为准、以 07-29 journal 为独立比对，
-  两者任何一个字段对不上就中止整个事务，**没有降级开关**。
-* **时钟制式是显式判据** —— 源与目标各读 ``PRAGMA user_version``；已知组合才换算，其余
-  一律中止。换算复用 ``migrate_timestamps_utc.py`` 的列清单与位移函数，并保留亚秒位。
-  这条是演练时抓出来的真问题：07-28 那份备份取于 UTC 平移之前，原样恢复会把 843 行
-  +8h 的时间戳塞进 UTC 库（I11 红线"库里不许有第二个时钟"）。
-* **第三方复核** —— 另一份快照对同一批行的说法：NULL→有值判为期间回填取后者，双方非空
-  且不等（或后者反而丢值）判为矛盾并中止。
-* **行与账同一事务** —— 验收不过整事务回滚，目标库一行不留；不存在"先插行、后写账"的
-  中间窗口（那个窗口里的任何一次 reap tick 会把无账 husk 再删一遍）。
-* **写面封闭 + 幂等结构性** —— 只 INSERT 三张表，``workflow_agents.tokens`` 逐行指纹前后
-  不变；``already_present`` 是判定第一分支，SQL 层另有 ``WHERE NOT EXISTS`` 守卫。
-* **``tokens_measured_at`` 写原批次时刻而非 now()** —— 该列兼任回采批次签名与活体采集
-  健康度，写 now() 会污染覆盖率分窗。
+* **Dual-source strong validation** — token values take the re-parsed transcript as authoritative, with the 07-29 journal as an independent comparison;
+  any single field mismatch aborts the whole transaction, **with no downgrade switch**.
+* **The clock convention is an explicit criterion** — source and target each read ``PRAGMA user_version``; only known combinations are converted, everything else
+  aborts. The conversion reuses ``migrate_timestamps_utc.py``'s column list and shift function, and preserves sub-second digits.
+  This is a real problem the drill caught: the 07-28 backup was taken before the UTC shift, and restoring it as-is would stuff 843 rows
+  of +8h timestamps into a UTC database (I11 red line: "no second clock in the database").
+* **Third-party review** — what another snapshot says about the same batch of rows: NULL→valued is judged a backfill in the meantime and takes the latter; both non-empty
+  and unequal (or the latter losing a value) is judged a contradiction and aborts.
+* **Rows and ledger in one transaction** — if acceptance fails the whole transaction rolls back and the target database keeps not one row; there is no "insert rows first, write the ledger later"
+  intermediate window (any reap tick in that window would delete the ledger-less husks again).
+* **Closed write surface + structural idempotency** — only INSERTs into three tables; ``workflow_agents.tokens`` per-row fingerprints are unchanged
+  before and after; ``already_present`` is the first branch of judgment, and the SQL layer has a ``WHERE NOT EXISTS`` guard too.
+* **``tokens_measured_at`` writes the original batch moment, not now()** — that column doubles as the re-collection batch signature and live-collection
+  health; writing now() would pollute the coverage windowing.
 
-全部用例只跑 tmp_path 里的临时库与临时 transcript，一个字节都不碰生产库与那几份备份。
+All cases run only against temporary databases and temporary transcripts in tmp_path; not one byte touches the production database or those backups.
 """
 
 from __future__ import annotations
@@ -42,19 +42,19 @@ sys.path.insert(0, str(ROOT / "src"))
 _spec = importlib.util.spec_from_file_location("restore_purged_container_team", SCRIPT)
 assert _spec and _spec.loader
 rp = importlib.util.module_from_spec(_spec)
-# 必须先登记进 sys.modules 再 exec：脚本里的 @dataclass 会回查自己的模块命名空间。
+# Must be registered in sys.modules before exec: the @dataclass in the script looks up its own module namespace.
 sys.modules["restore_purged_container_team"] = rp
 _spec.loader.exec_module(rp)
 
 TEAM = rp.RESTORE_TEAM_ID
-# 常规用例跑一支**合成队**：真实那支挂着 §3 类① 的期望指纹（7 行 / 835 条 / 3.25 亿），
-# 拿它当通用夹具会让每个用例都撞在计数闸上。期望闸自己由 TestSingleTransaction 专门验。
+# Regular cases run a **synthetic team**: the real one carries the §3 class-① expected fingerprint (7 rows / 835 entries / 325 million),
+# using it as a general fixture would make every case hit the count gate. The expectation gate itself is verified specifically by TestSingleTransaction.
 SYNTH_TEAM = "synthetic-team-for-unit-tests"
 LEADER = "e4495c71-1721-4c08-83af-45f299242bd7"
 W1 = "3603792a-d574-4f8c-b9ee-1d879e0fafff"
 W2 = "321ec68a-df2f-48f0-b88a-d77076e1e7e2"
 
-# 与 §3 类① 的真实形状同构：两行 worker 挂账、一行 Leader 无账。
+# Isomorphic to the real shape of §3 class ①: two worker rows with ledgers, one Leader row without.
 USAGE_A = {
     "input_tokens": 70,
     "output_tokens": 32255,
@@ -94,14 +94,14 @@ create table workflow_agents (
 
 
 # ---------------------------------------------------------------------------
-# 夹具
+# Fixtures
 # ---------------------------------------------------------------------------
 def write_transcript(path: Path, usage: dict[str, int], *, model: str = "claude-opus-5") -> Path:
-    """写一份真 jsonl —— 不 mock 解析器。
+    """Write a real jsonl — do not mock the parser.
 
-    同一 requestId 写两行、第二行 output 更大：复刻流式的真实形态（output 是递增快照而非
-    增量）。解析器必须按 requestId 取末条。这份夹具的存在就是为了让"校验通过"意味着
-    "真解析结果与 journal 一致"，而不是"我以为的解析结果一致"。
+    The same requestId is written as two rows, the second with a larger output: this replicates streaming's real form (output is an increasing snapshot, not
+    an increment). The parser must take the last entry per requestId. This fixture exists so that "validation passed" means
+    "the real parse result agrees with the journal", not "the parse result I assumed agrees".
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = []
@@ -205,7 +205,7 @@ def add_wa(db: Path, wid: str, *, tokens: int) -> None:
 
 
 def write_journal(path: Path, entries: dict[str, dict[str, Any]]) -> Path:
-    """按 backfill_token_usage 的 journal 形状写一份回采凭证。"""
+    """Write a re-collection credential in the journal shape of backfill_token_usage."""
     path.write_text(
         json.dumps(
             {
@@ -248,7 +248,7 @@ def ledger_values(usage: dict[str, int], *, model: str | None = "claude-opus-5")
 
 @pytest.fixture()
 def world(tmp_path: Path) -> dict[str, Any]:
-    """一支两 worker + 一 Leader 的队：源库有、目标库空，形状与真实那支同构。"""
+    """A team of two workers + one Leader: present in the source database, empty in the target, isomorphic to the real one."""
     src = make_db(tmp_path / "source.db", marker=rp.MIGRATION_MARKER)
     tgt = make_db(tmp_path / "target.db", marker=rp.MIGRATION_MARKER)
     add_wa(tgt, "wa1", tokens=424242)
@@ -297,11 +297,11 @@ def count(db: Path, table: str) -> int:
 
 
 # ===========================================================================
-# 双源强校验 —— 两者不一致即中止，没有降级开关
+# Dual-source strong validation — any disagreement aborts; there is no downgrade switch
 # ===========================================================================
 class TestDualSourceVerification:
     def test_matching_sources_produce_the_ledger_overlay(self, world):
-        """happy path：重解析与 journal 一致 → overlay 带四层 + 原批次时刻 + 来源标注。"""
+        """happy path: re-parse agrees with the journal → the overlay carries the four layers + the original batch moment + source annotation."""
         con = rp.open_immutable(world["src"])
         rows = rp.load_source_agents(con, SYNTH_TEAM)
         con.close()
@@ -313,24 +313,24 @@ class TestDualSourceVerification:
         assert overlay["tokens_source"] == "transcript"
 
     def test_a_single_layer_disagreement_aborts_everything(self, world):
-        """一个字段对不上就够了 —— 不是"多数相同即通过"。"""
+        """One mismatched field is enough — not "mostly the same means pass"."""
         bad = dict(USAGE_A, cache_read_tokens=USAGE_A["cache_read_tokens"] + 1)
         write_journal(world["journal"], {W1: ledger_values(bad), W2: ledger_values(USAGE_B)})
         assert run(world, "--apply", "--journal", str(world["tmp"] / "j.json")) == 3
         assert count(world["tgt"], "agents") == 0
 
     def test_a_missing_transcript_aborts_instead_of_trusting_the_journal(self, world):
-        """少一个源 = 双源校验做不成。journal 单独可信也不行，那是"取其一的降级"。"""
+        """One source missing = dual-source validation cannot be done. A journal alone being trustworthy is not acceptable either; that is "take-one downgrade"."""
         world["t1"].unlink()
         assert run(world) == 3
 
     def test_an_empty_transcript_is_never_read_as_zero_tokens(self, world):
-        """no-data ≠ zero：解析不出快照就中止，绝不落成"用了 0 token"。"""
+        """no-data ≠ zero: if no snapshot can be parsed, abort; never persist it as "used 0 tokens"."""
         world["t1"].write_text("")
         assert run(world) == 3
 
     def test_a_ledger_without_a_transcript_path_is_unexplainable(self, world, tmp_path):
-        """journal 说这行有账，源行却没有路径 —— 无从解释，不恢复。"""
+        """The journal says this row has a ledger, but the source row has no path — inexplicable, do not restore."""
         write_journal(
             world["journal"],
             {W1: ledger_values(USAGE_A), W2: ledger_values(USAGE_B),
@@ -339,12 +339,12 @@ class TestDualSourceVerification:
         assert run(world) == 3
 
     def test_a_transcript_without_a_ledger_entry_is_a_source_disagreement(self, world):
-        """有路径却在 journal 里查无此行 —— 两源分歧，同样中止。"""
+        """Has a path but no such row in the journal — the two sources diverge; abort the same way."""
         write_journal(world["journal"], {W2: ledger_values(USAGE_B)})
         assert run(world) == 3
 
     def test_an_observed_model_mismatch_aborts(self, world):
-        """型号也是双源的一部分：journal 记的与重解析出来的必须是同一个。"""
+        """The model is also part of the dual source: what the journal recorded and what the re-parse produced must be the same."""
         write_journal(
             world["journal"],
             {W1: ledger_values(USAGE_A, model="claude-opus-4-8"),
@@ -353,7 +353,7 @@ class TestDualSourceVerification:
         assert run(world) == 3
 
     def test_a_row_that_never_had_a_ledger_is_restored_without_one(self, world):
-        """Leader husk：身份照恢复，账本来就没有，不许凭空造一个。"""
+        """Leader husk: restore the identity as-is; the ledger never existed, so do not fabricate one."""
         assert run(world, "--apply", "--journal", str(world["tmp"] / "j.json")) == 0
         row = fetch(
             world["tgt"],
@@ -364,19 +364,19 @@ class TestDualSourceVerification:
 
 
 # ===========================================================================
-# 时钟制式 —— 显式判据，不是假设
+# Clock convention — an explicit criterion, not an assumption
 # ===========================================================================
 class TestClockConvention:
     @pytest.fixture(autouse=True)
     def _pin_host_timezone(self):
-        """shift_for 的契约是「按宿主机时区推源库墙钟偏移」——逐字继承平移脚本,
-        因为备份里的墙钟就是本机的墙钟。测试因此把宿主时区钉在写下数据的那台
-        机器(+0800);不钉的话 UTC 跑者上偏移为零、断言假红(2026-08-03 public
-        CI 实录)。错机器上跑真脚本不会写坏数据:第三方复核闸(866 时间戳单元
-        逐列零偏差)会在写入前中止。
+        """shift_for's contract is "shift the source database's wall clock by the host timezone" — inherited verbatim from the migration script,
+        because the wall clock in the backup is this machine's wall clock. The test therefore pins the host timezone to the machine that wrote the data
+        (+0800); unpinned, the offset is zero on a UTC runner and the assertions go falsely red (2026-08-03 public
+        CI record). Running the real script on the wrong machine does not corrupt data: the third-party review gate (866 timestamp cells
+        with zero deviation per column) aborts before writing.
         """
         if not hasattr(time, "tzset"):
-            pytest.skip("需要 POSIX tzset 钉宿主时区")
+            pytest.skip("Needs POSIX tzset to pin the host timezone")
         old = os.environ.get("TZ")
         os.environ["TZ"] = "Asia/Shanghai"
         time.tzset()
@@ -395,14 +395,14 @@ class TestClockConvention:
         assert rp.needs_clock_shift(0, rp.MIGRATION_MARKER) is True
 
     def test_any_unknown_pairing_is_refused_rather_than_guessed(self):
-        """没有已知换算就停 —— 猜一个方向的代价是几百行永久偏一个时区。"""
+        """Stop when there is no known conversion — guessing a direction costs hundreds of rows permanently off by one timezone."""
         with pytest.raises(rp.ClockConventionError):
             rp.needs_clock_shift(rp.MIGRATION_MARKER, 0)
         with pytest.raises(rp.ClockConventionError):
             rp.needs_clock_shift(0, 99999999)
 
     def test_the_shift_preserves_sub_minute_bytes(self):
-        """平移脚本只搬"到分钟"的前缀，秒与亚秒位原样接回 —— 事件账本的排序靠那几位。"""
+        """The migration script only moves the "to the minute" prefix; seconds and sub-second digits are spliced back as-is — the event ledger's ordering relies on those digits."""
         shifted = rp.shift_value("2026-07-25 03:01:03.230396")
         assert shifted.endswith(":03.230396")
         assert shifted == "2026-07-24 19:01:03.230396"
@@ -411,10 +411,10 @@ class TestClockConvention:
         assert rp.shift_value(None) is None
 
     def test_restoring_from_a_pre_migration_source_lands_utc_values(self, tmp_path):
-        """端到端：源是平移前的库，插进目标库的**每一个**本地墙钟列都必须已经是 UTC。
+        """End-to-end: the source is a pre-shift database; **every** local wall-clock column inserted into the target database must already be UTC.
 
-        这是演练时抓出来的真问题 —— 取证报告只比了 schema，没比时钟制式；照它直接恢复会把
-        几百行 +8h 的时间戳写进 UTC 库，且事后与真值长得一模一样。
+        This is a real problem the drill caught — the forensics report compared only the schema, not the clock convention; restoring directly from it would
+        write hundreds of rows of +8h timestamps into a UTC database, looking exactly like the real values afterwards.
         """
         src = make_db(tmp_path / "old.db", marker=0)
         tgt = make_db(tmp_path / "new.db", marker=rp.MIGRATION_MARKER)
@@ -440,22 +440,22 @@ class TestClockConvention:
         assert fetch(tgt, "select timestamp from agent_activities where id='act-1'")[0] == (
             "2026-07-24 21:17:19.712719"
         )
-        # 平移标记本身不跟着搬 —— 目标库的制式由目标库自己声明
+        # The shift marker itself does not move along — the target database's convention is declared by the target database itself
         assert fetch(tgt, "pragma user_version")[0] == rp.MIGRATION_MARKER
 
     def test_a_future_timestamp_trips_the_direction_guard(self, world):
-        """换算方向反了会把历史行搬到未来 —— 事务内兜底闸必须抓住。"""
+        """A reversed conversion direction moves historical rows into the future — the in-transaction backstop gate must catch it."""
         con = sqlite3.connect(world["tgt"])
         con.row_factory = sqlite3.Row
         add_team(world["tgt"])
         add_agent(world["tgt"], W1, name="wb-html-final", created="2099-01-01 00:00:00.000000")
         problems = rp.verify_after(con, SYNTH_TEAM, [W1], [], None)
         con.close()
-        assert any("落在未来" in p for p in problems)
+        assert any("falls in the future" in p for p in problems)
 
 
 # ===========================================================================
-# 第三方复核 —— 另一份快照对同一批行的说法
+# Third-party review — what another snapshot says about the same batch of rows
 # ===========================================================================
 class TestCorroboration:
     def _corroborant(self, tmp_path: Path, *, session_id: str | None) -> Path:
@@ -472,36 +472,36 @@ class TestCorroboration:
         return db
 
     def test_a_null_that_later_became_a_value_is_accepted_and_reported(self, world, capsys):
-        """期间被回填：复核源 NULL、主源有值 → 取主源，但必须在报告里看得见。
+        """Backfilled in the meantime: review source NULL, main source valued → take the main source, but it must be visible in the report.
 
-        这正是"主源必须是更晚那份快照"的实证 —— 照更早那份恢复会把这一列丢掉。
+        This is exactly the proof that "the main source must be the later snapshot" — restoring from the earlier one would drop this column.
         """
         corro = self._corroborant(world["tmp"], session_id=None)
         assert run(world, corroborant=corro) == 0
         out = capsys.readouterr().out
-        assert "期间被回填" in out and "session_id" in out
-        assert "零矛盾" in out
+        assert "backfilled in the meantime" in out and "session_id" in out
+        assert "zero contradictions" in out
 
     def test_two_snapshots_disagreeing_on_a_value_aborts(self, world):
-        """双方都非空且不等 = 两个快照对同一行的身份说法不一致，谁对不是脚本该猜的。"""
+        """Both non-empty and unequal = the two snapshots disagree about the same row's identity; which is right is not the script's to guess."""
         corro = self._corroborant(world["tmp"], session_id="sess-OTHER")
         assert run(world, corroborant=corro, ) == 3
 
     def test_a_missing_corroborant_is_loudly_flagged_not_silently_skipped(self, world, capsys):
-        """跳过复核可以，但不能悄悄跳 —— 那样"没报错"会被读成"复核过了"。"""
+        """Skipping the review is allowed, but not silently — otherwise "no error" would be read as "the review passed"."""
         assert run(world) == 0
-        assert "复核源不可用" in capsys.readouterr().out
+        assert "Review source unavailable" in capsys.readouterr().out
 
     def test_rows_absent_from_the_corroborant_are_counted_not_fatal(self, world, capsys):
-        """复核源可能就是比某一行更早的快照 —— 如实计数，不当成问题。"""
+        """The review source may simply be an earlier snapshot than some row — count it truthfully; do not treat it as a problem."""
         corro = make_db(world["tmp"] / "thin.db", marker=rp.MIGRATION_MARKER)
-        add_team(corro)  # 只有队行，3 行成员 + 2 条活动都比它晚
+        add_team(corro)  # Only the team row; the 3 member rows + 2 activities are all later than it
         assert run(world, corroborant=corro) == 0
-        assert "复核源中缺失的行：5" in capsys.readouterr().out
+        assert "Rows missing from the review source: 5" in capsys.readouterr().out
 
 
 # ===========================================================================
-# 写面封闭 + 禁改列
+# Closed write surface + forbidden columns
 # ===========================================================================
 class TestWriteSurface:
     def test_the_write_surface_is_three_tables_and_nothing_else(self):
@@ -509,24 +509,24 @@ class TestWriteSurface:
         assert rp.FORBIDDEN_COLUMN[0] not in rp.WRITABLE_TABLES
 
     def test_the_fingerprint_is_the_backfill_scripts_own_function(self):
-        """指纹算法只此一份 —— 抄一份出来，将来改一处就会长出两种"未变"的判据。"""
+        """The fingerprint algorithm exists in exactly one copy — copy one out and changing one place later grows two criteria of "unchanged"."""
         import backfill_token_usage as bf
 
         assert rp.workflow_tokens_fingerprint is bf.workflow_tokens_fingerprint
         assert rp.FORBIDDEN_COLUMN == bf.FORBIDDEN_COLUMN
 
     def test_the_clock_columns_come_from_the_migration_script(self):
-        """哪些列是本地墙钟由平移脚本定义 —— 这里不另立一份清单。"""
+        """Which columns are local wall clock is defined by the migration script — do not keep a separate list here."""
         import migrate_timestamps_utc as mig
 
         assert rp.LOCAL_COLUMNS is mig.LOCAL_COLUMNS
         assert rp.MIGRATION_MARKER == mig.MIGRATION_MARKER
 
     def test_insert_refuses_a_table_outside_the_whitelist(self, world):
-        """即使将来有人构造出这样的 plan，写入层也当场炸而不是照写。"""
+        """Even if someone constructs such a plan in the future, the write layer blows up on the spot instead of writing it."""
         plan = rp.RowPlan("workflow_agents", "wa1", "wf", "restorable", {"id": "wa1", "tokens": 1})
         con = sqlite3.connect(world["tgt"])
-        with pytest.raises(RuntimeError, match="写表白名单拦截"):
+        with pytest.raises(RuntimeError, match="write-table whitelist interception"):
             rp.insert_row(con, plan)
         con.close()
         assert fetch(world["tgt"], "select tokens from workflow_agents where id='wa1'")[0] == 424242
@@ -540,10 +540,10 @@ class TestWriteSurface:
         after = rp.workflow_tokens_fingerprint(con)
         con.close()
         assert after == before
-        assert count(world["tgt"], "agents") == 3  # 但这次 apply 确实干了活
+        assert count(world["tgt"], "agents") == 3  # But this apply did do work
 
     def test_the_journal_carries_the_fingerprint_and_the_clock_verdict(self, world):
-        """journal 是唯一凭证：禁改列前后指纹、时钟判定都得在里面。"""
+        """The journal is the only credential: the forbidden-column fingerprints before/after and the clock judgment must all be in it."""
         journal = world["tmp"] / "j.json"
         assert run(world, "--apply", "--journal", str(journal)) == 0
         data = json.loads(journal.read_text())
@@ -555,11 +555,11 @@ class TestWriteSurface:
 
 
 # ===========================================================================
-# 行与账同一事务 —— 验收不过整事务回滚
+# Rows and ledger in one transaction — failed acceptance rolls the whole transaction back
 # ===========================================================================
 class TestSingleTransaction:
     def test_a_failed_check_leaves_not_one_row_behind(self, tmp_path):
-        """期望指纹对不上 → 回滚。若行已落地而账没落，下一次 reap tick 就会把它们再删一遍。"""
+        """Expected fingerprint mismatch → rollback. If the rows landed but the ledger did not, the next reap tick would delete them again."""
         src = make_db(tmp_path / "s.db", marker=rp.MIGRATION_MARKER)
         tgt = make_db(tmp_path / "t.db", marker=rp.MIGRATION_MARKER)
         add_team(src, team_id=TEAM)
@@ -573,14 +573,14 @@ class TestSingleTransaction:
             "--corroborate-with", str(tmp_path / "nope.db"),
             "--apply", "--journal", str(tmp_path / "out.json"),
         ])
-        assert rc == 4  # 真实那支队是 7 行 / 835 条，这支只有 1 行 / 1 条
+        assert rc == 4  # The real team is 7 rows / 835 entries; this one has only 1 row / 1 entry
         assert count(tgt, "teams") == 0
         assert count(tgt, "agents") == 0
         assert count(tgt, "agent_activities") == 0
-        assert not (tmp_path / "out.json").exists()  # 没写成功就不该留下"成功凭证"
+        assert not (tmp_path / "out.json").exists()  # A failed write should not leave a "success credential" behind
 
     def test_the_expectation_gate_is_skipped_loudly_for_unknown_teams(self, tmp_path, capsys):
-        """合成队没有期望指纹 —— 明说跳过，而不是拿空 dict 假装比过了。"""
+        """The synthetic team has no expected fingerprint — say the skip plainly instead of pretending an empty dict passed."""
         src = make_db(tmp_path / "s.db", marker=rp.MIGRATION_MARKER)
         tgt = make_db(tmp_path / "t.db", marker=rp.MIGRATION_MARKER)
         add_team(src, team_id="other-team")
@@ -590,11 +590,11 @@ class TestSingleTransaction:
             "--corroborate-with", str(tmp_path / "nope.db"), "--team", "other-team",
         ])
         assert rc == 0
-        assert "没有登记期望指纹" in capsys.readouterr().out
+        assert "No expected fingerprint registered" in capsys.readouterr().out
 
 
 # ===========================================================================
-# 幂等 / dry-run / 凭证
+# Idempotency / dry-run / credentials
 # ===========================================================================
 class TestIdempotenceAndDryRun:
     def test_dry_run_is_the_default_and_writes_nothing(self, world):
@@ -607,7 +607,7 @@ class TestIdempotenceAndDryRun:
         capsys.readouterr()
         assert run(world) == 0
         out = capsys.readouterr().out
-        assert "待恢复合计：0 行" in out
+        assert "Total to restore: 0 rows" in out
         assert "already_present" in out
 
     def test_a_second_apply_inserts_nothing(self, world):
@@ -617,7 +617,7 @@ class TestIdempotenceAndDryRun:
         assert fetch(world["tgt"], "select count(*) from agents")[0] == before
 
     def test_the_sql_guard_lets_a_concurrent_insert_win(self, world):
-        """判定与写入之间别人先插了 —— 守卫在 SQL 里，并发下也不重复插。"""
+        """Someone else inserted between judgment and write — the guard is in the SQL, so no duplicate insert even under concurrency."""
         con = rp.open_immutable(world["src"])
         row = con.execute("select * from agents where id=?", (W1,)).fetchone()
         cols = set(rp.table_columns(con, "agents"))
@@ -629,7 +629,7 @@ class TestIdempotenceAndDryRun:
         )
         plan = rp.RowPlan("agents", W1, "wb-html-final", "restorable", values)
         assert rp.insert_row(target, plan) == 1
-        assert rp.insert_row(target, plan) == 0  # 第二次一行都不动
+        assert rp.insert_row(target, plan) == 0  # The second time moves not a single row
         target.close()
 
     def test_apply_without_a_journal_is_refused(self, world):
@@ -649,11 +649,11 @@ class TestIdempotenceAndDryRun:
 
 
 # ===========================================================================
-# 批次时刻 —— 写原时刻，不写 now()
+# Batch moment — write the original moment, not now()
 # ===========================================================================
 class TestBatchTimestamp:
     def test_the_original_batch_timestamp_is_written_not_now(self, world):
-        """该列兼任回采批次签名与活体采集健康度：写 now() 会凭空造出"新测量"污染分窗。"""
+        """This column doubles as the re-collection batch signature and live-collection health: writing now() would fabricate "new measurements" and pollute the windowing."""
         assert run(world, "--apply", "--journal", str(world["tmp"] / "j.json")) == 0
         stamps = {
             r[0]
@@ -664,7 +664,7 @@ class TestBatchTimestamp:
         assert stamps == {rp.BATCH_TS}
 
     def test_a_declared_batch_timestamp_is_the_one_that_lands(self, world):
-        """批次时刻是参数化的（单测要能换），但写进去的必须就是声明的那一个。"""
+        """The batch moment is parameterized (unit tests must be able to swap it), but what is written must be exactly the declared one."""
         assert run(
             world, "--apply", "--journal", str(world["tmp"] / "j.json"),
             "--batch-ts", "2026-08-03 00:00:00.000000",
@@ -678,10 +678,10 @@ class TestBatchTimestamp:
         assert stamps == {"2026-08-03 00:00:00.000000"}
 
     def test_a_stray_batch_timestamp_is_caught_inside_the_transaction(self, world):
-        """事务内闸：库里出现不属于本批次的时刻 → 报问题（调用方据此回滚）。
+        """In-transaction gate: a moment in the database that does not belong to this batch → report a problem (the caller rolls back accordingly).
 
-        防的是"一半行盖了批次戳、另一半被别的路径写了别的戳" —— 那样这批行就再也不是
-        一个可分窗的 cohort，而覆盖率分窗正是靠"同一时刻被足够多行共享"认批次的。
+        This guards against "half the rows stamped with the batch stamp, the other half written with another stamp by another path" — then this batch of rows is no longer
+        a windowable cohort, and coverage windowing identifies batches precisely by "the same moment shared by enough rows".
         """
         con = sqlite3.connect(world["tgt"])
         con.row_factory = sqlite3.Row
@@ -694,15 +694,15 @@ class TestBatchTimestamp:
         con.commit()
         problems = rp.verify_after(con, SYNTH_TEAM, [W1], [], None)
         con.close()
-        assert any("不是原批次时刻" in p for p in problems)
+        assert any("not the original batch time" in p for p in problems)
 
 
 # ===========================================================================
-# schema 适配 —— 缺列必须有明文规则
+# Schema adaptation — a missing column must have an explicit rule
 # ===========================================================================
 class TestSchemaAdaptation:
     def test_a_known_missing_column_falls_back_to_its_declared_rule(self, tmp_path):
-        """源里没有 tokens_source（它 v1.11.1 才上线）→ 无账行留 NULL，不是补 'transcript'。"""
+        """The source has no tokens_source (it only launched in v1.11.1) → ledger-less rows stay NULL, not backfilled with 'transcript'."""
         src = make_db(tmp_path / "s.db", marker=rp.MIGRATION_MARKER, with_tokens_source=False)
         tgt = make_db(tmp_path / "t.db", marker=rp.MIGRATION_MARKER)
         add_team(src, team_id="other-team")
@@ -719,7 +719,7 @@ class TestSchemaAdaptation:
         assert fetch(tgt, "select tokens_source from agents where id=?", LEADER)[0] is None
 
     def test_an_unknown_missing_column_is_schema_drift_not_a_silent_null(self, world):
-        """没登记过的缺列 = 没人看过的漂移。补 NULL 正是"字段悄悄丢了"的成因。"""
+        """An unregistered missing column = drift nobody has seen. Backfilling NULL is exactly how "fields quietly disappeared" happens."""
         con = sqlite3.connect(world["tgt"])
         con.execute("alter table agents add column brand_new text")
         con.commit()
@@ -727,7 +727,7 @@ class TestSchemaAdaptation:
         assert run(world) == 5
 
     def test_a_column_dropped_by_the_target_aborts_rather_than_losing_data(self, tmp_path):
-        """目标库比源少一列 → 恢复内容会丢，须人工裁定，不许闷头插。"""
+        """The target database has one column fewer than the source → restored content would be lost; requires human ruling, no head-down inserting."""
         src = make_db(tmp_path / "s.db", marker=rp.MIGRATION_MARKER)
         tgt = make_db(tmp_path / "t.db", marker=rp.MIGRATION_MARKER, with_tokens_source=False)
         add_team(src, team_id="other-team")
@@ -739,7 +739,7 @@ class TestSchemaAdaptation:
 
 
 # ===========================================================================
-# 前置备份 —— 走 SQLite 备份 API，且永不覆盖
+# Pre-backup — via the SQLite backup API, and never overwriting
 # ===========================================================================
 class TestPreBackup:
     def test_apply_takes_a_consistent_backup_first(self, world):
@@ -750,12 +750,12 @@ class TestPreBackup:
         ) == 0
         made = list(backups.glob("*.bak-restore-*"))
         assert len(made) == 1
-        # 前置备份记的是**恢复前**的状态：里面不该有被恢复的行
+        # The pre-backup records the **pre-restore** state: it should not contain the restored rows
         assert count(made[0], "agents") == 0
         assert count(world["tgt"], "agents") == 3
 
     def test_a_second_backup_in_the_same_second_never_overwrites_the_first(self, world):
-        """前置备份的全部价值就在于"没被写过" —— 撞名要另起，不许覆盖。"""
+        """The whole value of the pre-backup is "never written" — on a name collision, start a new one; never overwrite."""
         backups = world["tmp"] / "baks"
         run(world, "--apply", "--journal", str(world["tmp"] / "j1.json"),
             "--pre-backup-dir", str(backups))
@@ -763,4 +763,4 @@ class TestPreBackup:
             "--pre-backup-dir", str(backups))
         made = sorted(backups.glob("*.bak-restore-*"))
         assert len(made) == 2
-        assert count(made[0], "agents") == 0  # 第一份仍是恢复前的状态
+        assert count(made[0], "agents") == 0  # The first one is still the pre-restore state

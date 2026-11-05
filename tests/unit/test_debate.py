@@ -21,42 +21,42 @@ class TestDebateTemplate:
     def test_debate_round_names(self):
         rounds = TEMPLATE_ROUNDS["debate"]["rounds"]
         names = [r["name"] for r in rounds]
-        assert names == ["正方陈述", "反方质疑", "正方回应", "裁决"]
+        assert names == ["Advocate Statement", "Critic Challenge", "Advocate Response", "Verdict"]
 
     def test_debate_round1_advocate_rule(self):
         rule = TEMPLATE_ROUNDS["debate"]["rounds"][0]["rule"]
         assert "Advocate" in rule
-        assert "正方" in rule
+        assert "Advocate" in rule
 
     def test_debate_round2_critic_rule(self):
         rule = TEMPLATE_ROUNDS["debate"]["rounds"][1]["rule"]
         assert "Critic" in rule
-        assert "风险等级" in rule
+        assert "risk level" in rule
         # Critic must cite advocate's words
-        assert "引用" in rule
+        assert "cite" in rule
 
     def test_debate_round3_response_rule(self):
         rule = TEMPLATE_ROUNDS["debate"]["rounds"][2]["rule"]
         # Advocate responds to each challenge
-        assert "接受" in rule or "回应" in rule
+        assert "accept" in rule or "respond" in rule
 
     def test_debate_round4_verdict_rule(self):
         rule = TEMPLATE_ROUNDS["debate"]["rounds"][3]["rule"]
         # Judge must produce APPROVED/CONDITIONAL/REJECTED verdict
-        assert "APPROVED" in rule or "裁决" in rule
+        assert "APPROVED" in rule or "verdict" in rule
         assert "Action Items" in rule or "Action" in rule
 
     def test_debate_has_roles_definition(self):
-        # 模板无独立 roles 键——三角色（正方/反方/裁决）语义嵌在四轮的轮名中
+        # The template has no standalone roles key — the three roles (advocate/critic/judge) are semantically embedded in the four rounds' names
         template = TEMPLATE_ROUNDS["debate"]
         round_names = [r["name"] for r in template["rounds"]]
-        assert any("正方" in n for n in round_names)  # advocate
-        assert any("反方" in n for n in round_names)  # critic
-        assert any("裁决" in n for n in round_names)  # judge
+        assert any("Advocate" in n for n in round_names)  # advocate
+        assert any("Critic" in n for n in round_names)  # critic
+        assert any("Verdict" in n for n in round_names)  # judge
 
     def test_debate_description_mentions_4_rounds(self):
         desc = TEMPLATE_ROUNDS["debate"]["description"]
-        assert "四轮" in desc or "4" in desc or "正方" in desc
+        assert "four rounds" in desc or "4" in desc or "Advocate" in desc
 
 
 class TestDebateKeywords:
@@ -143,7 +143,7 @@ class TestDebateMCPTools:
 
             resolved = _resolve_team_id("")
             if not resolved:
-                result = {"success": False, "error": "未找到活跃团队，请提供 team_id 或先创建团队"}
+                result = {"success": False, "error": "No active team found; provide a team_id or create a team first"}
             else:
                 result = {}
             assert result["success"] is False

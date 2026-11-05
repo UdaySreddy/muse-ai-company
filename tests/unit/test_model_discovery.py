@@ -1,4 +1,4 @@
-"""模型治理单测 — 文件真相源扫描 + settings.json 写保护。"""
+"""Model governance unit tests — file source-of-truth scanning + settings.json write protection."""
 
 from __future__ import annotations
 
@@ -21,9 +21,9 @@ def test_scan_extracts_models_and_filters_synthetic(tmp_path, monkeypatch):
     models = {m["model"]: m for m in result}
     assert "claude-test-a" in models
     assert "<synthetic>" not in models
-    assert models["opus"]["alias"] is True  # 别名标注，不进主下拉
+    assert models["opus"]["alias"] is True  # Alias annotation; does not enter the main dropdown
     assert models["claude-test-a"]["alias"] is False
-    assert models["claude-test-a"]["file_count"] == 1  # 同文件去重
+    assert models["claude-test-a"]["file_count"] == 1  # Deduplicated within the same file
 
 
 def test_set_default_model_only_touches_model_key(tmp_path, monkeypatch):
@@ -35,11 +35,11 @@ def test_set_default_model_only_touches_model_key(tmp_path, monkeypatch):
     assert r["ok"] is True
     data = json.loads(sp.read_text())
     assert data["model"] == "claude-test-b"
-    assert data["env"] == {"KEY": "1"}  # 其它键分毫不动
+    assert data["env"] == {"KEY": "1"}  # Other keys untouched to the letter
     assert data["permissions"] == {"deny": ["x"]}
-    assert sp.with_name("settings.json.bak-aiteam").exists()  # 备份
+    assert sp.with_name("settings.json.bak-aiteam").exists()  # Backup
 
-    # 空串 = 移除键
+    # An empty string = remove the key
     r2 = md.set_default_model("")
     assert r2["ok"] is True
     assert "model" not in json.loads(sp.read_text())
@@ -51,5 +51,5 @@ def test_set_default_refuses_on_corrupt_settings(tmp_path, monkeypatch):
     sp.write_text("{corrupt json")
     monkeypatch.setattr(md, "_settings_path", lambda: sp)
     r = md.set_default_model("claude-x")
-    assert r["ok"] is False and "拒绝写入" in r["error"]
-    assert sp.read_text() == "{corrupt json"  # 原文件未被破坏
+    assert r["ok"] is False and "Write refused" in r["error"]
+    assert sp.read_text() == "{corrupt json"  # The original file was not corrupted

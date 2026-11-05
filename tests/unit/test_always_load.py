@@ -1,13 +1,13 @@
-"""工具渐进式加载 P1 — alwaysLoad 动态轮换单元测试。
+"""Progressive tool loading P1 — alwaysLoad dynamic rotation unit tests.
 
-覆盖四层：
-1. 纯逻辑（compute_rotation / build_candidates）：跨天门槛下游、频次排序、硬顶、
-   迟滞防抖（1.1x 不换 / 1.3x 换 / 在位者跌破门槛出局）、冷启动空数据。
-2. 仓库 SQL（alwaysload_tool_frequencies）：跨天门槛挡单日爆发、频次降序、7 天窗口、前缀过滤。
-3. 端点（GET /api/tools/always-load）：审计事件写入、迟滞基线连续性、失败静默返空。
-4. MCP server 侧挂载（apply_always_load_meta）：meta 必须真的出现在 tools/list 的
-   `_meta` 里——断言跨 `to_mcp_tool()` 序列化边界，而不是只看内存对象被赋了值。
-   这同时钉死「`list_tools()` 返回的是活组件而非副本」这条 fastmcp 行为假设。
+Coverage over four layers:
+1. Pure logic (compute_rotation / build_candidates): the cross-day threshold downstream, frequency sorting, the hard cap,
+   hysteresis anti-jitter (no swap at 1.1x / swap at 1.3x / an incumbent falling below the threshold is out), cold start with empty data.
+2. Repository SQL (alwaysload_tool_frequencies): the cross-day threshold blocks single-day bursts, frequency descending, a 7-day window, prefix filtering.
+3. Endpoint (GET /api/tools/always-load): audit event writing, hysteresis baseline continuity, silently returning empty on failure.
+4. MCP server side mounting (apply_always_load_meta): the meta must really appear in tools/list's
+   in `_meta` — the assertions cross the `to_mcp_tool()` serialization boundary instead of only looking at values assigned on in-memory objects.
+   This also pins down the fastmcp behavior assumption that '``list_tools()`` returns live components rather than copies'.
 """
 
 from __future__ import annotations
@@ -41,13 +41,13 @@ from aiteam.storage.repository import StorageRepository
 from aiteam.types import AgentActivity
 
 # ============================================================
-# Part A — 纯逻辑（无 I/O）
+# Part A — Pure logic (no I/O)
 # ============================================================
 
 
 def test_normalize_strips_prefix():
     assert normalize_tool_name("mcp__ai-team-os__task_memo_add") == "task_memo_add"
-    # 无前缀原样返回
+    # No prefix: returned as is
     assert normalize_tool_name("Bash") == "Bash"
 
 
@@ -61,12 +61,12 @@ def test_build_candidates_normalize_and_registered_filter():
     rows = [
         ("mcp__ai-team-os__task_memo_add", 100, 5),
         ("mcp__ai-team-os__memory_search", 40, 3),
-        ("mcp__ai-team-os__ghost_tool", 30, 2),  # 已删工具，不在 registered
+        ("mcp__ai-team-os__ghost_tool", 30, 2),  # A deleted tool, not in registered
     ]
     registered = {"task_memo_add", "memory_search"}
     cands = build_candidates(rows, registered)
     assert [c.name for c in cands] == ["task_memo_add", "memory_search"]
-    # 频次降序
+    # Frequency in descending order
     assert cands[0].count == 100 and cands[1].count == 40
 
 
@@ -77,7 +77,7 @@ def test_build_candidates_no_registration_filter():
 
 
 def test_compute_rotation_hard_cap_and_target():
-    # 6 个合格候选，target=3 → 只留频次最高的 3 个
+    # 6 eligible candidates, target=3 → keep only the 3 with the highest frequencies
     cands = [Candidate(f"t{i}", count=100 - i, days=3) for i in range(6)]
     result = compute_rotation(cands, incumbents=[])
     assert len(result.tools) == ALWAYSLOAD_TARGET
@@ -94,19 +94,19 @@ def test_compute_rotation_cold_start_empty():
 
 
 def test_compute_rotation_data_insufficient_no_padding():
-    # 只有 2 个合格 → 返回 2 个，不凑够 3
+    # Only 2 eligible → return 2; do not pad to 3
     cands = [Candidate("a", 50, 3), Candidate("b", 40, 2)]
     result = compute_rotation(cands, incumbents=[])
     assert result.names == ["a", "b"]
 
 
 def test_hysteresis_challenger_1_1x_no_swap():
-    # 槽位被 3 个在位者占满；挑战者 d 频次 = 最弱在位者 ×1.1，不足 1.2x → 不换
+    # A slot is filled by 3 incumbents; challenger d's frequency = the weakest incumbent ×1.1, short of 1.2x → no swap
     cands = [
         Candidate("a", 300, 5),
         Candidate("b", 200, 5),
-        Candidate("c", 100, 5),  # 最弱在位者
-        Candidate("d", 110, 3),  # 挑战者 110 = 100×1.1 < 100×1.2
+        Candidate("c", 100, 5),  # The weakest incumbent
+        Candidate("d", 110, 3),  # Challenger 110 = 100×1.1 < 100×1.2
     ]
     result = compute_rotation(cands, incumbents=["a", "b", "c"])
     assert set(result.names) == {"a", "b", "c"}
@@ -115,7 +115,7 @@ def test_hysteresis_challenger_1_1x_no_swap():
 
 
 def test_hysteresis_challenger_1_3x_swap():
-    # 挑战者 d 频次 = 最弱在位者 ×1.3 > 1.2x → 顶替最弱在位者 c
+    # Challenger d's frequency = the weakest incumbent ×1.3 > 1.2x → displaces the weakest incumbent c
     cands = [
         Candidate("a", 300, 5),
         Candidate("b", 200, 5),
@@ -129,11 +129,11 @@ def test_hysteresis_challenger_1_3x_swap():
 
 
 def test_incumbent_drops_below_threshold_removed():
-    # 在位者 c 本期不合格（不在候选中，跨天门槛已挡）→ 出局，空槽由挑战者 d 直接补入
+    # Incumbent c is not eligible this period (not among the candidates; blocked by the cross-day threshold) → out; the empty slot is filled directly by challenger d
     cands = [
         Candidate("a", 300, 5),
         Candidate("b", 200, 5),
-        Candidate("d", 50, 3),  # 挑战者，频次低但有空槽可直接进
+        Candidate("d", 50, 3),  # A challenger with a low frequency but an empty slot to enter directly
     ]
     result = compute_rotation(cands, incumbents=["a", "b", "c"])
     assert set(result.names) == {"a", "b", "d"}
@@ -142,7 +142,7 @@ def test_incumbent_drops_below_threshold_removed():
 
 
 def test_incumbent_full_slots_weak_challenger_stays_out():
-    # 所有在位者仍合格且占满槽位，挑战者顶不动 → 名单不变
+    # All incumbents are still eligible and fill the slots; the challenger cannot displace any → the roster is unchanged
     cands = [
         Candidate("a", 300, 5),
         Candidate("b", 200, 5),
@@ -156,7 +156,7 @@ def test_incumbent_full_slots_weak_challenger_stays_out():
 
 
 # ============================================================
-# Part B — 仓库 SQL
+# Part B — Repository SQL
 # ============================================================
 
 
@@ -174,7 +174,7 @@ async def _insert_activity(
     ts: datetime,
     agent_id: str = "agent-1",
 ) -> None:
-    """直插一条 agent_activities，带指定时间戳（create_activity 不支持自定义时间）。"""
+    """Insert one agent_activities row directly, with a specified timestamp (create_activity does not support custom times)."""
     activity = AgentActivity(
         agent_id=agent_id,
         session_id="sess-1",
@@ -188,10 +188,10 @@ async def _insert_activity(
 
 async def test_sql_cross_day_threshold_blocks_single_day_burst(repo: StorageRepository):
     now = utc_now()
-    # burst：同一天 10 次 → 跨天数=1，被挡
+    # burst: 10 times on the same day → cross-day count=1, blocked
     for _ in range(10):
         await _insert_activity(repo, "mcp__ai-team-os__burst_tool", now)
-    # spread：跨 2 天各 1 次 → 跨天数=2，入选
+    # spread: once on each of 2 days → cross-day count=2, selected
     await _insert_activity(repo, "mcp__ai-team-os__spread_tool", now)
     await _insert_activity(repo, "mcp__ai-team-os__spread_tool", now - timedelta(days=1))
 
@@ -204,10 +204,10 @@ async def test_sql_cross_day_threshold_blocks_single_day_burst(repo: StorageRepo
 async def test_sql_frequency_desc_order(repo: StorageRepository):
     now = utc_now()
     yesterday = now - timedelta(days=1)
-    # high：跨 2 天共 4 次
+    # high: 4 times over 2 days in total
     for ts in (now, now, yesterday, yesterday):
         await _insert_activity(repo, "mcp__ai-team-os__high", ts)
-    # low：跨 2 天共 2 次
+    # low: 2 times over 2 days in total
     for ts in (now, yesterday):
         await _insert_activity(repo, "mcp__ai-team-os__low", ts)
 
@@ -219,10 +219,10 @@ async def test_sql_frequency_desc_order(repo: StorageRepository):
 
 async def test_sql_seven_day_window_and_prefix_filter(repo: StorageRepository):
     now = utc_now()
-    # 8 天前的活动 → 超窗，排除
+    # Activity from 8 days ago → outside the window, excluded
     await _insert_activity(repo, "mcp__ai-team-os__stale", now - timedelta(days=8))
     await _insert_activity(repo, "mcp__ai-team-os__stale", now - timedelta(days=9))
-    # 非 mcp 前缀 → 前缀过滤排除（即使跨天合格）
+    # A non-mcp prefix → excluded by the prefix filter (even if cross-day eligible)
     await _insert_activity(repo, "Bash", now)
     await _insert_activity(repo, "Bash", now - timedelta(days=1))
 
@@ -233,13 +233,13 @@ async def test_sql_seven_day_window_and_prefix_filter(repo: StorageRepository):
 
 
 # ============================================================
-# Part C — 端点
+# Part C — Endpoint
 # ============================================================
 
 
 @pytest.fixture()
 def app_ctx():
-    """内存 SQLite 的 TestClient + repo。"""
+    """A TestClient + repo with in-memory SQLite."""
     repo = StorageRepository(db_url="sqlite+aiosqlite://")
     asyncio.get_event_loop().run_until_complete(repo.init_db())
     memory = MemoryStore(repository=repo)
@@ -288,7 +288,7 @@ def test_endpoint_cold_start_empty_and_audit_written(app_ctx):
     assert resp.status_code == 200
     body = resp.json()
     assert body["tools"] == []
-    # 冷启动也落一行审计事件（同时是下期迟滞基线）
+    # A cold start also records one audit event row (which is also next period's hysteresis baseline)
     ev = client.get(f"/api/events?type={ROTATION_EVENT_TYPE}&limit=5")
     assert ev.status_code == 200
     assert ev.json()["total"] >= 1
@@ -305,7 +305,7 @@ def test_endpoint_computes_and_writes_named_result(app_ctx):
     assert set(body["tools"]) == {"task_memo_add", "memory_search"}
     assert set(body["added"]) == {"task_memo_add", "memory_search"}
 
-    # 审计事件的 data.tools 名字与结果一致
+    # The names in the audit event's data.tools agree with the results
     ev = client.get(f"/api/events?type={ROTATION_EVENT_TYPE}&limit=1").json()
     tools_data = ev["data"][0]["data"]["tools"]
     assert {t["name"] for t in tools_data} == {"task_memo_add", "memory_search"}
@@ -317,11 +317,11 @@ def test_endpoint_hysteresis_baseline_continuity(app_ctx):
     _seed(repo, "mcp__ai-team-os__b", 20, 20)
     _seed(repo, "mcp__ai-team-os__c", 10, 10)
     reg = "registered=a,b,c"
-    # 第一次：无基线 → 三个全为换入
+    # First time: no baseline → all three are swapped in
     first = client.get(f"/api/tools/always-load?{reg}").json()
     assert set(first["tools"]) == {"a", "b", "c"}
     assert set(first["added"]) == {"a", "b", "c"}
-    # 第二次：读上一条事件作在位者 → 无变化（换入换出皆空）
+    # Second time: read the previous event as the incumbents → no change (both swap-in and swap-out are empty)
     second = client.get(f"/api/tools/always-load?{reg}").json()
     assert set(second["tools"]) == {"a", "b", "c"}
     assert second["added"] == []
@@ -341,12 +341,12 @@ def test_endpoint_failure_returns_empty_silently(app_ctx, monkeypatch):
 
 
 # ============================================================
-# Part D — MCP server 侧挂载
+# Part D — MCP server-side mounting
 # ============================================================
 
 
 def _tiny_server():
-    """两个工具的迷你 FastMCP，用于验证 meta 挂载。"""
+    """A mini FastMCP with two tools, for verifying meta mounting."""
     from fastmcp import FastMCP
 
     server = FastMCP(name="alwaysload-test")
@@ -373,14 +373,14 @@ def _tiny_server():
 
 
 def _mcp_meta(server, tool_name: str) -> dict:
-    """取工具经 to_mcp_tool() 序列化后的 _meta —— 客户端真正看到的那份。"""
+    """Take a tool's _meta after serialization via to_mcp_tool() — the copy the client really sees."""
     tools = asyncio.run(server.list_tools())
     tool = next(t for t in tools if t.name == tool_name)
     return tool.to_mcp_tool().meta or {}
 
 
 def test_apply_meta_lands_in_serialized_tool(monkeypatch):
-    """挂上的 meta 必须跨 to_mcp_tool() 边界存活，否则 CC 侧看不到豁免。"""
+    """The mounted meta must survive the to_mcp_tool() serialization boundary, otherwise the CC side cannot see the exemption."""
     from aiteam.mcp import _alwaysload
 
     monkeypatch.setattr(_alwaysload, "_fetch_always_load", lambda registered: ["winner"])
@@ -394,7 +394,7 @@ def test_apply_meta_lands_in_serialized_tool(monkeypatch):
 
 
 def test_apply_meta_passes_registered_names_to_api(monkeypatch):
-    """传给 API 的 registered 必须是实际在册的裸工具名。"""
+    """The registered passed to the API must be the bare tool names actually on the roster."""
     from aiteam.mcp import _alwaysload
 
     seen: list[list[str]] = []
@@ -409,7 +409,7 @@ def test_apply_meta_passes_registered_names_to_api(monkeypatch):
 
 
 def test_apply_meta_preserves_existing_meta(monkeypatch):
-    """已有 meta 是合并不是覆盖。"""
+    """An existing meta is merged, not overwritten."""
     from aiteam.mcp import _alwaysload
 
     monkeypatch.setattr(_alwaysload, "_fetch_always_load", lambda registered: ["winner"])
@@ -425,7 +425,7 @@ def test_apply_meta_preserves_existing_meta(monkeypatch):
 
 
 def test_apply_meta_noop_when_api_returns_nothing(monkeypatch):
-    """API 返回空名单（服务未起/超时也走这条）→ 一个工具都不挂，全 defer。"""
+    """The API returns an empty roster (this path is also taken when the service is down/times out) → no tool gets meta mounted; all are deferred."""
     from aiteam.mcp import _alwaysload
 
     monkeypatch.setattr(_alwaysload, "_fetch_always_load", lambda registered: [])

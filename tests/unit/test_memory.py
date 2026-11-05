@@ -1,4 +1,4 @@
-"""AI Team OS — Memory 模块单元测试."""
+"""AI Team OS — Memory module unit tests."""
 
 from __future__ import annotations
 
@@ -22,14 +22,14 @@ from aiteam.types import Memory, MemoryScope
 
 
 async def test_store_and_retrieve(db_repository: StorageRepository) -> None:
-    """存储记忆并通过关键词检索."""
+    """Store a memory and retrieve it by keyword."""
     store = MemoryStore(db_repository)
 
-    mid = await store.store("agent", "a1", "Python是一种编程语言", {"tag": "lang"})
+    mid = await store.store("agent", "a1", "Python is a programming language", {"tag": "lang"})
     assert isinstance(mid, str) and len(mid) > 0
 
-    await store.store("agent", "a1", "FastAPI用于构建REST API")
-    await store.store("agent", "a1", "React是前端框架")
+    await store.store("agent", "a1", "FastAPI is used to build REST APIs")
+    await store.store("agent", "a1", "React is a frontend framework")
 
     results = await store.retrieve("agent", "a1", "Python", limit=5)
     assert len(results) >= 1
@@ -37,91 +37,91 @@ async def test_store_and_retrieve(db_repository: StorageRepository) -> None:
 
 
 async def test_hot_cache(db_repository: StorageRepository) -> None:
-    """验证 store 后记忆同时存在于 Hot 层缓存."""
+    """Verify that after store, the memory exists in the Hot layer cache as well."""
     store = MemoryStore(db_repository)
 
-    await store.store("agent", "a1", "Hot层缓存测试内容")
+    await store.store("agent", "a1", "Hot layer cache test content")
 
-    # 直接检查 Hot 层缓存
+    # Check the Hot layer cache directly
     key = store._cache_key("agent", "a1")
     assert key in store._hot_cache
     assert len(store._hot_cache[key]) == 1
-    assert store._hot_cache[key][0].content == "Hot层缓存测试内容"
+    assert store._hot_cache[key][0].content == "Hot layer cache test content"
 
-    # 存储更多记忆，缓存应累积
-    await store.store("agent", "a1", "第二条记忆")
+    # Store more memories; the cache should accumulate
+    await store.store("agent", "a1", "Second memory")
     assert len(store._hot_cache[key]) == 2
 
 
 async def test_memory_scope_isolation(db_repository: StorageRepository) -> None:
-    """不同 scope 的记忆应互相隔离."""
+    """Memories of different scopes should be isolated from each other."""
     store = MemoryStore(db_repository)
 
-    await store.store("agent", "a1", "Agent私有记忆关于Python")
-    await store.store("team", "t1", "Team共享记忆关于Python")
-    await store.store("global", "system", "全局记忆关于Python")
+    await store.store("agent", "a1", "Agent private memory about Python")
+    await store.store("team", "t1", "Team shared memory about Python")
+    await store.store("global", "system", "Global memory about Python")
 
     agent_results = await store.retrieve("agent", "a1", "Python", limit=10)
     team_results = await store.retrieve("team", "t1", "Python", limit=10)
     global_results = await store.retrieve("global", "system", "Python", limit=10)
 
-    # 每个 scope 只能检索到自己的记忆
+    # Each scope can only retrieve its own memories
     assert all(m.scope == MemoryScope.AGENT for m in agent_results)
     assert all(m.scope == MemoryScope.TEAM for m in team_results)
     assert all(m.scope == MemoryScope.GLOBAL for m in global_results)
 
-    # 各 scope 最多只有1条
+    # Each scope has at most 1 entry
     assert len(agent_results) <= 1
     assert len(team_results) <= 1
     assert len(global_results) <= 1
 
 
 async def test_delete_memory(db_repository: StorageRepository) -> None:
-    """删除记忆应同时清理 Hot 层和 Warm 层."""
+    """Deleting a memory should clean both the Hot and Warm layers."""
     store = MemoryStore(db_repository)
 
-    mid = await store.store("agent", "a1", "待删除的记忆")
+    mid = await store.store("agent", "a1", "Memory to be deleted")
 
-    # 删除前: Hot 层和 Warm 层都有
+    # Before deletion: present in both the Hot and Warm layers
     key = store._cache_key("agent", "a1")
     assert len(store._hot_cache[key]) == 1
     warm = await store.list_all("agent", "a1")
     assert len(warm) == 1
 
-    # 执行删除
+    # Perform the deletion
     result = await store.delete(mid)
     assert result is True
 
-    # 删除后: Hot 层和 Warm 层都清空
+    # After deletion: both the Hot and Warm layers are cleared
     assert len(store._hot_cache[key]) == 0
     warm_after = await store.list_all("agent", "a1")
     assert len(warm_after) == 0
 
 
 async def test_get_context(db_repository: StorageRepository) -> None:
-    """构建 Agent 上下文字符串."""
+    """Build an Agent context string."""
     store = MemoryStore(db_repository)
 
-    # 存储 agent 级别记忆
-    await store.store("agent", "agent-001", "该Agent擅长数据分析和Python编程")
-    # 存储 global 级别记忆
-    await store.store("global", "system", "项目使用Python和FastAPI技术栈")
+    # Store an agent-level memory
+    await store.store("agent", "agent-001", "This Agent is good at data analysis and Python programming")
+    # Store a global-level memory
+    await store.store("global", "system", "The project uses the Python and FastAPI stack")
 
-    ctx = await store.get_context("agent-001", "用Python分析数据")
+    ctx = await store.get_context("agent-001", "Analyze data with Python")
 
-    # 上下文应包含相关记忆
-    assert "相关记忆" in ctx
-    assert "数据分析" in ctx or "Python" in ctx
+    # The context should contain relevant memories
+    assert "Relevant memories" in ctx
+    assert "data analysis" in ctx or "Python" in ctx
 
 
 async def test_list_all(db_repository: StorageRepository) -> None:
-    """列出指定作用域的所有记忆."""
+    """List all memories in the specified scope."""
     store = MemoryStore(db_repository)
 
-    await store.store("team", "t1", "记忆1")
-    await store.store("team", "t1", "记忆2")
-    await store.store("team", "t1", "记忆3")
-    await store.store("team", "t2", "其他团队记忆")
+    await store.store("team", "t1", "Memory 1")
+    await store.store("team", "t1", "Memory 2")
+    await store.store("team", "t1", "Memory 3")
+    await store.store("team", "t2", "Another team's memory")
 
     t1_mems = await store.list_all("team", "t1")
     assert len(t1_mems) == 3
@@ -131,12 +131,12 @@ async def test_list_all(db_repository: StorageRepository) -> None:
 
 
 async def test_archive(db_repository: StorageRepository, tmp_path: Path) -> None:
-    """归档记忆到 Cold 层 JSON 文件."""
+    """Archive memories to a Cold layer JSON file."""
     archive_dir = tmp_path / "archive"
     store = MemoryStore(db_repository, archive_dir=archive_dir)
 
-    await store.store("team", "t1", "归档记忆1")
-    await store.store("team", "t1", "归档记忆2")
+    await store.store("team", "t1", "Archived memory 1")
+    await store.store("team", "t1", "Archived memory 2")
 
     file_path = await store.archive("team", "t1")
 
@@ -157,59 +157,59 @@ async def test_archive(db_repository: StorageRepository, tmp_path: Path) -> None
 
 
 async def test_keyword_search() -> None:
-    """关键词搜索匹配测试."""
-    m1 = Memory(scope=MemoryScope.AGENT, scope_id="a1", content="Python编程语言很流行")
-    m2 = Memory(scope=MemoryScope.AGENT, scope_id="a1", content="LangGraph构建状态图")
-    m3 = Memory(scope=MemoryScope.AGENT, scope_id="a1", content="Python和LangChain集成")
+    """Keyword search matching test."""
+    m1 = Memory(scope=MemoryScope.AGENT, scope_id="a1", content="The Python programming language is popular")
+    m2 = Memory(scope=MemoryScope.AGENT, scope_id="a1", content="LangGraph builds state graphs")
+    m3 = Memory(scope=MemoryScope.AGENT, scope_id="a1", content="Python and LangChain integration")
 
-    # 搜索 Python: 应命中 m1 和 m3
+    # Search Python: should hit m1 and m3
     results = keyword_search([m1, m2, m3], "Python")
     assert len(results) == 2
     contents = [m.content for m in results]
-    assert any("Python编程" in c for c in contents)
+    assert any("Python programming" in c for c in contents)
     assert any("LangChain" in c for c in contents)
 
-    # 搜索 LangGraph: 只命中 m2
+    # Search LangGraph: only hits m2
     results = keyword_search([m1, m2, m3], "LangGraph")
     assert len(results) == 1
     assert "LangGraph" in results[0].content
 
-    # 搜索不存在的词: 空结果
+    # Search a nonexistent word: empty result
     results = keyword_search([m1, m2, m3], "Java")
     assert len(results) == 0
 
 
 async def test_rank_by_relevance() -> None:
-    """按相关性排序测试."""
-    m1 = Memory(scope=MemoryScope.AGENT, scope_id="a1", content="Python web开发")
-    m2 = Memory(scope=MemoryScope.AGENT, scope_id="a1", content="数据库设计")
-    m3 = Memory(scope=MemoryScope.AGENT, scope_id="a1", content="Python数据分析和web爬虫")
+    """Relevance ranking test."""
+    m1 = Memory(scope=MemoryScope.AGENT, scope_id="a1", content="Python web development")
+    m2 = Memory(scope=MemoryScope.AGENT, scope_id="a1", content="Database design")
+    m3 = Memory(scope=MemoryScope.AGENT, scope_id="a1", content="Python data analysis and web scraping")
 
-    # m3 命中 "Python" + "web" 两个词，m1 也命中两个，m2 命中0个
+    # m3 hits both "Python" and "web", m1 also hits both, m2 hits 0
     ranked = rank_by_relevance([m1, m2, m3], "Python web")
-    # m2 应排在最后（命中数为0）
-    assert ranked[-1].content == "数据库设计"
+    # m2 should rank last (0 hits)
+    assert ranked[-1].content == "Database design"
 
 
 async def test_build_context_string() -> None:
-    """构建上下文字符串测试."""
-    m1 = Memory(scope=MemoryScope.AGENT, scope_id="a1", content="记忆内容一")
-    m2 = Memory(scope=MemoryScope.GLOBAL, scope_id="sys", content="记忆内容二")
+    """Context string building test."""
+    m1 = Memory(scope=MemoryScope.AGENT, scope_id="a1", content="Memory content one")
+    m2 = Memory(scope=MemoryScope.GLOBAL, scope_id="sys", content="Memory content two")
 
     ctx = build_context_string([m1, m2])
-    assert "相关记忆" in ctx
-    assert "记忆内容一" in ctx
-    assert "记忆内容二" in ctx
+    assert "Relevant memories" in ctx
+    assert "Memory content one" in ctx
+    assert "Memory content two" in ctx
     assert "(agent/a1)" in ctx
     assert "(global/sys)" in ctx
 
-    # 空列表返回空字符串
+    # An empty list returns an empty string
     assert build_context_string([]) == ""
 
-    # max_tokens 限制
+    # max_tokens limit
     short_ctx = build_context_string([m1, m2], max_tokens=30)
-    # header 本身就占了不少字符，可能只包含部分内容
-    assert len(short_ctx) <= 50  # 给一些余量，因为 header 可能刚好卡边界
+    # The header itself takes many characters, so it may contain only part of the content
+    assert len(short_ctx) <= 50  # Allow some margin, since the header may sit exactly on the boundary
 
 
 # ================================================================
@@ -218,80 +218,80 @@ async def test_build_context_string() -> None:
 
 
 async def test_checkpoint_create_restore(tmp_path: Path) -> None:
-    """创建检查点并恢复状态."""
+    """Create a checkpoint and restore state."""
     recovery = ContextRecovery(checkpoint_dir=tmp_path / "checkpoints")
 
     state = {
-        "task": "分析数据",
+        "task": "Analyze data",
         "progress": 50,
         "messages": ["hello", "world"],
     }
     cp_id = await recovery.create_checkpoint("agent-001", state)
     assert isinstance(cp_id, str) and len(cp_id) > 0
 
-    # 恢复检查点
+    # Restore the checkpoint
     restored = await recovery.restore_checkpoint(cp_id)
     assert restored["agent_id"] == "agent-001"
-    assert restored["state"]["task"] == "分析数据"
+    assert restored["state"]["task"] == "Analyze data"
     assert restored["state"]["progress"] == 50
     assert restored["state"]["messages"] == ["hello", "world"]
     assert "timestamp" in restored
 
-    # 恢复不存在的检查点应抛出 FileNotFoundError
+    # Restoring a nonexistent checkpoint should raise FileNotFoundError
     with pytest.raises(FileNotFoundError):
         await recovery.restore_checkpoint("nonexistent-id")
 
 
 async def test_checkpoint_list(tmp_path: Path) -> None:
-    """列出 Agent 的所有检查点."""
+    """List all checkpoints of an Agent."""
     recovery = ContextRecovery(checkpoint_dir=tmp_path / "checkpoints")
 
-    # 空列表
+    # Empty list
     assert await recovery.list_checkpoints("agent-001") == []
 
-    # 创建多个检查点
+    # Create multiple checkpoints
     cp1 = await recovery.create_checkpoint("agent-001", {"step": 1})
     cp2 = await recovery.create_checkpoint("agent-001", {"step": 2})
     cp3 = await recovery.create_checkpoint("agent-001", {"step": 3})
 
-    # 其他 Agent 的检查点不应出现
+    # Other Agents' checkpoints should not appear
     await recovery.create_checkpoint("agent-002", {"step": 99})
 
     cps = await recovery.list_checkpoints("agent-001")
     assert len(cps) == 3
 
-    # 验证按时间升序排列
+    # Verify ascending time order
     ids = [cp["checkpoint_id"] for cp in cps]
     assert cp1 in ids
     assert cp2 in ids
     assert cp3 in ids
 
-    # agent-002 只有1个
+    # agent-002 has only 1
     cps2 = await recovery.list_checkpoints("agent-002")
     assert len(cps2) == 1
 
 
 async def test_checkpoint_cleanup(tmp_path: Path) -> None:
-    """清理旧检查点，只保留最新N个."""
+    """Clean up old checkpoints, keeping only the newest N."""
     recovery = ContextRecovery(checkpoint_dir=tmp_path / "checkpoints")
 
-    # 创建7个检查点
+    # Create 7 checkpoints
     for i in range(7):
         await recovery.create_checkpoint("agent-001", {"step": i})
 
     cps_before = await recovery.list_checkpoints("agent-001")
     assert len(cps_before) == 7
 
-    # 清理: 只保留最新3个
+    # Cleanup: keep only the newest 3
     deleted = await recovery.cleanup_old_checkpoints("agent-001", keep_latest=3)
     assert deleted == 4
 
     cps_after = await recovery.list_checkpoints("agent-001")
     assert len(cps_after) == 3
 
-    # 保留的应该是最新的3个（时间最大的）
+    # The ones kept should be the newest 3 (largest timestamps)
     timestamps = [cp["timestamp"] for cp in cps_after]
     assert timestamps == sorted(timestamps)
 
-    # 不存在的 Agent 清理返回0
+    # Cleaning a nonexistent Agent returns 0
     assert await recovery.cleanup_old_checkpoints("nonexistent") == 0

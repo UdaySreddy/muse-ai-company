@@ -258,7 +258,7 @@ def test_restart_reports_health_timeout():
 
 
 def test_pid_alive_true_via_psutil():
-    """僵尸判定改造后：psutil 路径按 Process(pid).status() != ZOMBIE 判活。"""
+    """After the zombie-judgment rework: the psutil path judges liveness by Process(pid).status() != ZOMBIE."""
     fake_psutil = MagicMock()
     fake_psutil.STATUS_ZOMBIE = "zombie"
     fake_psutil.Process.return_value.status.return_value = "running"
@@ -338,8 +338,8 @@ def test_shutdown_endpoint_returns_pid_and_schedules_exit():
 
 
 def test_restart_pid_alive_zombie_is_dead(monkeypatch):
-    """defunct 僵尸必须视为已死——优雅停机成功后子进程滞留僵尸时，
-    旧实现 pid_exists 判活导致 shutdown_timeout 误报（2026-07-06 巡检实录）。"""
+    """A defunct zombie must count as dead — when a child process lingers as a zombie after a successful graceful shutdown,
+    the old implementation's pid_exists judged it alive and falsely reported shutdown_timeout (2026-07-06 inspection record)."""
     import sys as _sys
     import types as _types
 

@@ -1,4 +1,4 @@
-"""AI Team OS — CLI命令单元测试."""
+"""AI Team OS — CLI command unit tests."""
 
 from __future__ import annotations
 
@@ -15,44 +15,44 @@ runner = CliRunner()
 
 
 class TestVersion:
-    """测试版本号输出."""
+    """Test the version number output."""
 
     def test_version_flag(self) -> None:
-        """`aiteam --version` 输出版本号（跟随真实包版本，不许硬编码）."""
+        """`aiteam --version` outputs the version number (following the real package version; hard-coding is not allowed)."""
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
         assert "AI Team OS" in result.output
         assert __version__ in result.output
 
     def test_version_short_flag(self) -> None:
-        """`aiteam -v` 同样输出版本号."""
+        """`aiteam -v` likewise outputs the version number."""
         result = runner.invoke(app, ["-v"])
         assert result.exit_code == 0
         assert "AI Team OS" in result.output
 
 
 class TestHelp:
-    """测试帮助信息."""
+    """Test help information."""
 
     def test_main_help(self) -> None:
-        """`aiteam --help` 显示帮助信息."""
+        """`aiteam --help` displays help information."""
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "AI Team OS" in result.output
 
     def test_no_args_shows_help(self) -> None:
-        """`aiteam` 无参数显示帮助（Typer返回exit code 2）."""
+        """`aiteam` with no arguments displays help (Typer returns exit code 2)."""
         result = runner.invoke(app, [])
-        # Typer的no_args_is_help返回exit code 2
+        # Typer's no_args_is_help returns exit code 2
         assert result.exit_code in (0, 2)
         assert "AI Team OS" in result.output
 
 
 class TestInitCommand:
-    """测试 init 命令."""
+    """Test the init command."""
 
     def test_init_creates_yaml(self, tmp_path: Path) -> None:
-        """`aiteam init` 生成 aiteam.yaml 文件."""
+        """`aiteam init` generates an aiteam.yaml file."""
         os.chdir(tmp_path)
         result = runner.invoke(app, ["init"])
         assert result.exit_code == 0
@@ -63,14 +63,14 @@ class TestInitCommand:
         assert "sqlite" in content
 
     def test_init_creates_aiteam_dir(self, tmp_path: Path) -> None:
-        """`aiteam init` 创建 .aiteam/ 目录."""
+        """`aiteam init` creates a .aiteam/ directory."""
         os.chdir(tmp_path)
         result = runner.invoke(app, ["init"])
         assert result.exit_code == 0
         assert (tmp_path / ".aiteam").is_dir()
 
     def test_init_with_template_research(self, tmp_path: Path) -> None:
-        """`aiteam init --template research` 包含研究团队配置."""
+        """`aiteam init --template research` includes the research team configuration."""
         os.chdir(tmp_path)
         result = runner.invoke(app, ["init", "--template", "research"])
         assert result.exit_code == 0
@@ -82,7 +82,7 @@ class TestInitCommand:
         assert "data-analyst" in content
 
     def test_init_with_template_development(self, tmp_path: Path) -> None:
-        """`aiteam init --template development` 包含开发团队配置."""
+        """`aiteam init --template development` includes the development team configuration."""
         os.chdir(tmp_path)
         result = runner.invoke(app, ["init", "--template", "development"])
         assert result.exit_code == 0
@@ -93,7 +93,7 @@ class TestInitCommand:
         assert "backend-dev" in content
 
     def test_init_with_template_analysis(self, tmp_path: Path) -> None:
-        """`aiteam init --template analysis` 包含分析团队配置."""
+        """`aiteam init --template analysis` includes the analysis team configuration."""
         os.chdir(tmp_path)
         result = runner.invoke(app, ["init", "--template", "analysis"])
         assert result.exit_code == 0
@@ -103,18 +103,18 @@ class TestInitCommand:
         assert "lead-analyst" in content
 
     def test_init_invalid_template(self, tmp_path: Path) -> None:
-        """`aiteam init --template invalid` 报错退出."""
+        """`aiteam init --template invalid` errors and exits."""
         os.chdir(tmp_path)
         result = runner.invoke(app, ["init", "--template", "invalid"])
         assert result.exit_code != 0
 
     def test_init_force_overwrite(self, tmp_path: Path) -> None:
-        """`aiteam init --force` 强制覆盖已有配置."""
+        """`aiteam init --force` forcibly overwrites an existing configuration."""
         os.chdir(tmp_path)
-        # 先创建一个配置文件
+        # Create a configuration file first
         config_file = tmp_path / CONFIG_FILENAME
         config_file.write_text("old content", encoding="utf-8")
-        # 强制覆盖
+        # Force the overwrite
         result = runner.invoke(app, ["init", "--force"])
         assert result.exit_code == 0
         content = config_file.read_text(encoding="utf-8")
@@ -122,20 +122,20 @@ class TestInitCommand:
         assert "old content" not in content
 
     def test_init_existing_config_cancel(self, tmp_path: Path) -> None:
-        """`aiteam init` 已有配置时用户取消."""
+        """`aiteam init` with an existing configuration, the user cancels."""
         os.chdir(tmp_path)
         config_file = tmp_path / CONFIG_FILENAME
         config_file.write_text("old content", encoding="utf-8")
-        # 输入 "n" 取消覆盖
+        # Enter "n" to cancel the overwrite
         result = runner.invoke(app, ["init"], input="n\n")
         assert result.exit_code == 0
-        # 内容未改变
+        # The content is unchanged
         content = config_file.read_text(encoding="utf-8")
         assert content == "old content"
 
 
 class TestSubcommandHelp:
-    """测试子命令帮助信息."""
+    """Test subcommand help information."""
 
     def test_team_help(self) -> None:
         result = runner.invoke(app, ["team", "--help"])

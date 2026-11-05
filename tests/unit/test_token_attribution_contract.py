@@ -1,15 +1,15 @@
-"""TokenAttribution 契约测试 —— 归因 v1 §2.5 的三条，属于验收条件不是可选项。
+"""TokenAttribution contract tests — the three rules of attribution v1 §2.5; they are acceptance conditions, not options.
 
-设计把这三条**刻意钉在类型层而不是视图层**，理由已在会议上确认：页面标注是软
-约束，三个月后的自己会忽略它。所以这里测的不是"页面上有没有写覆盖率"，而是
-"页面物理上能不能拿到一个孤立总量"——答案必须是不能。
+The design deliberately pins these three rules **at the type layer rather than the view layer**, for a reason confirmed in the meeting: page annotations are soft
+constraints that oneself three months later will ignore. So what is tested here is not "does the page show the coverage", but
+"can the page physically obtain an isolated total" — the answer must be no.
 
-三条原文（§2.5）：
+The three rules verbatim (§2.5):
 
-1. ``TokenAttribution`` **不存在** ``total`` / ``total_tokens`` 字段或属性；
-2. 任何 API 响应体中，token 数值字段必与 ``dispatches_total``、``metric`` 同层
-   出现，缺一即测试失败；
-3. ``metric`` 无默认值——不标注口径就构造不出对象。
+1. ``TokenAttribution`` **has no** ``total`` / ``total_tokens`` field or property;
+2. In any API response body, token numeric fields must appear at the same level as ``dispatches_total`` and ``metric``,
+   missing any one fails the test;
+3. ``metric`` has no default — without labeling the metric, the object cannot be constructed.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def _sample(**overrides) -> TokenAttribution:
 
 
 class TestNoBareTotal:
-    """契约 ①：拿不到孤立总量 —— 不是"页面不显示"，是结构上没有。"""
+    """Contract ①: no isolated total is obtainable — not "the page does not show it", but structurally absent."""
 
     @pytest.mark.parametrize("banned", ["total", "total_tokens"])
     def test_no_total_field(self, banned):
@@ -54,24 +54,24 @@ class TestNoBareTotal:
 
     @pytest.mark.parametrize("banned", ["total", "total_tokens"])
     def test_no_total_attribute_or_property(self, banned):
-        # 字段没有还不够：加一个 @property 就能绕过第一条断言，而那正是"补个合计
-        # 方便前端"最自然的写法。
+        # Fields being absent is not enough: adding an @property bypasses the first assertion, and that is exactly the most natural way to write
+        # "add a total for the frontend's convenience".
         assert not hasattr(TokenAttribution, banned)
         assert not hasattr(_sample(), banned)
 
     def test_no_attribute_sums_the_four_layers(self):
-        """任何可访问成员都不得恰好等于四层之和 —— 换个名字叫 sum/aggregate 也不行。"""
+        """No accessible member may exactly equal the sum of the four layers — renaming it sum/aggregate does not help."""
         att = _sample()
         four_sum = sum(getattr(att, layer) for layer in TOKEN_LAYERS)
         for name in dir(att):
-            # model_* 是 Pydantic 自己的内省接口，从实例上取会告警且与本条无关
+            # model_* are Pydantic's own introspection interfaces; taking them from an instance warns and is irrelevant here
             if name.startswith(("_", "model_")) or name in TOKEN_LAYERS:
                 continue
             value = getattr(att, name, None)
             if isinstance(value, int) and not isinstance(value, bool):
                 assert value != four_sum, (
-                    f"{name} 恰好等于四层之和 —— 这就是一个改了名字的 total。"
-                    f"实测四层里 95.6% 是 cache_read，只报合计等于只报缓存读取量（§1.2）"
+                    f"{name} exactly equals the sum of the four layers — that is just a renamed total."
+                    f"Measured: 95.6% of the four layers is cache_read, so reporting only the total equals reporting only the cache read volume (§1.2)"
                 )
 
     def test_dump_carries_no_total(self):
@@ -82,7 +82,7 @@ class TestNoBareTotal:
 
 
 class TestMetricHasNoDefault:
-    """契约 ③：不标注口径就构造不出对象。"""
+    """Contract ③: without labeling the metric, the object cannot be constructed."""
 
     def test_metric_is_required(self):
         assert TokenAttribution.model_fields["metric"].is_required()
@@ -105,22 +105,22 @@ class TestMetricHasNoDefault:
         assert "metric" in str(exc.value)
 
     def test_denominator_is_required_too(self):
-        """分母与口径同级：两者缺一，数值就能被单独渲染。"""
+        """Denominator and metric are peers: if either is missing, the number can be rendered alone."""
         for field in ("dispatches_total", "dispatches_attributed", "unattributed_reasons"):
             assert TokenAttribution.model_fields[field].is_required()
 
     def test_frozen(self):
-        """构造后不可改 —— 否则可以先合法构造再把分母改成 0。"""
+        """Immutable after construction — otherwise one could construct legally first and then change the denominator to 0."""
         att = _sample()
         with pytest.raises(ValidationError):
             att.dispatches_total = 0
 
 
 class TestNumeratorPlusUnattributedEqualsDenominator:
-    """分子 + 未归因 == 分母。这条是 R2 的机检形态。
+    """Numerator + unattributed == denominator. This is the machine-checkable form of R2.
 
-    覆盖率被"优化"成 100% 的做法是把没数据的行移出分母；这条不变量让那种做法
-    立刻失衡 —— 移走的行既不在分子里也不在未归因里，等式当场不成立。
+    The way to "optimize" coverage to 100% is to move rows without data out of the denominator; this invariant makes that approach
+    immediately unbalanced — the moved rows are in neither the numerator nor the unattributed, and the equation fails on the spot.
     """
 
     def test_holds_for_a_well_formed_value(self):
@@ -134,10 +134,10 @@ class TestNumeratorPlusUnattributedEqualsDenominator:
         )
 
     def test_by_design_never_enters_the_reason_dict(self):
-        """``by_design`` 说的是工具调用级（52,119 条活动），与派工不是同一个单位。
+        """``by_design`` speaks of the tool-call level (52,119 activities), not the same unit as dispatches.
 
-        它是 §3.4 的第四码、是呈现面上的一行正式标签，但混进这个 dict 就会破坏
-        上面那条等式，而且是混量纲 —— 本设计最反对的那件事。
+        It is the fourth code of §3.4, a formal label on the presentation surface, but mixing it into this dict would break
+        the equation above, and would mix dimensions — the thing this design most opposes.
         """
         from aiteam.types import UnattributedReason
 
@@ -151,7 +151,7 @@ class TestNumeratorPlusUnattributedEqualsDenominator:
 
 
 class TestRegisteredAsAggregateSurface:
-    """阶段 0 的交接项：不登记为 aggregate 面，I13 就该红。"""
+    """A phase-0 handover item: not registered as an aggregate surface, I13 should go red."""
 
     def test_registered_in_usage_surface(self):
         import sys
@@ -162,8 +162,8 @@ class TestRegisteredAsAggregateSurface:
         from usage_surface import AGGREGATE_REQUIRED_FIELDS, PY_SURFACES
 
         surface = next((s for s in PY_SURFACES if s.model == "TokenAttribution"), None)
-        assert surface is not None, "TokenAttribution 未登记 —— I13 会红（阶段 0 交接项）"
+        assert surface is not None, "TokenAttribution is not registered — I13 will go red (phase 0 handover item)"
         assert surface.kind == "aggregate"
         for field in AGGREGATE_REQUIRED_FIELDS:
             assert field in TokenAttribution.model_fields
-        assert not surface.coverage_gap, "usage_sum 聚合面不接受 coverage_gap 申报"
+        assert not surface.coverage_gap, "The usage_sum aggregate surface does not accept coverage_gap declarations"
