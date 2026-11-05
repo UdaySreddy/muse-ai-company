@@ -1,8 +1,8 @@
--- AI Team OS — PostgreSQL 初始化脚本
--- 由 docker-entrypoint-initdb.d 自动执行
+-- AI Team OS — PostgreSQL initialization script
+-- Automatically executed by docker-entrypoint-initdb.d
 
--- 向量搜索扩展 (pgvector)
+-- Vector search extension (pgvector)
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- 三字组模糊搜索扩展
+-- Trigram fuzzy search extension
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
