@@ -52,7 +52,8 @@ def _tokenize_bm25(text: str) -> list[str]:
     - Chinese: bigrams (consecutive pairs) + individual characters
 
     Bigrams improve recall for Chinese phrases where word boundaries are
-    absent — e.g. "人工智能" produces ["人", "工", "智", "能", "人工", "工智", "智能"].
+    absent — e.g. a four-character Chinese phrase produces its four single
+    characters plus the three adjacent character bigrams.
     """
     tokens: list[str] = []
 
@@ -223,7 +224,7 @@ def build_context_string(memories: list[Memory], max_tokens: int = 2000) -> str:
 
     parts: list[str] = []
     current_length = 0
-    header = "=== 相关记忆 ===\n"
+    header = "=== Relevant memories ===\n"
     current_length += len(header)
     parts.append(header)
 

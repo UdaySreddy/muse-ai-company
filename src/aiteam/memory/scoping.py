@@ -1,18 +1,24 @@
 """Directory-fingerprint memory bucketing for unregistered project directories.
 
-未注册目录（cwd 不匹配任何 OS 项目）的方向层记忆隔离。
+Direction-layer memory isolation for unregistered directories (a cwd matching no OS project).
 
-背景（2026-07-21 爱维高串线事故根因之一）：memory.py 的 _resolve_scope_id 在
-scope=project 且解析不到注册项目时静默回落到全局 "system" 桶，等于把「本目录的项目
-记忆」广播成对所有会话生效的全局记忆。修法是给每个未注册目录一个由规范化 cwd 指纹
-派生的临时桶 scope_id，做到「项目内继承，记忆隔离是目录的默认权利，不是注册的特权」。
+Background (one of the root causes of the 2026-07-21 cross-talk incident): memory.py's _resolve_scope_id, when
+scope=project and no registered project resolves, silently fell back to the global "system" bucket — equal to
+broadcasting "this directory's project
+memories" into global memories effective for every session. The fix gives each unregistered directory a temporary bucket
+scope_id derived from its normalized cwd fingerprint,
+achieving "inherit within the project; memory isolation is a directory's default right, not a registration privilege".
 
-设计要点：
-- 桶前缀 "dir:" 便于人肉辨识（区别于真项目 id 与全局 "system"/"user"），也为将来
-  注册转正时把临时桶记忆收编进项目桶留出识别锚点。
-- 指纹权威唯一在服务端：写路径（POST /api/memories）、读路径（GET /api/memories）
-  都从 X-Project-Dir 头经本函数推导，避免把公式复制进 hook 各副本造成静默漂移
-  （静默漂移正是本次事故要根治的类别）。hook 只负责把 cwd 传到 API。
+Design points:
+- The bucket prefix "dir:" is easy for humans to recognize (distinct from real project ids and the global
+"system"/"user"), and also reserves an identification anchor for a future
+  regularization at registration time, when the temporary bucket's memories are absorbed into the project bucket.
+- The fingerprint's sole authority is the server side: the write path (POST /api/memories) and the read path (GET
+/api/memories)
+  both derive it from the X-Project-Dir header via this function, avoiding copying the formula into each hook copy and
+  causing silent drift
+  (silent drift is exactly the category this incident must eradicate). A hook is responsible only for passing the cwd to
+  the API.
 """
 
 from __future__ import annotations
@@ -20,23 +26,24 @@ from __future__ import annotations
 import hashlib
 import os
 
-# 临时桶前缀——scope=project 但目录未注册时的 scope_id 命名空间。
+# Temporary bucket prefix — the scope_id namespace when scope=project but the directory is unregistered.
 DIR_BUCKET_PREFIX = "dir:"
 
 
 def dir_bucket_scope_id(cwd: str) -> str:
     """Derive the direction-memory temp-bucket scope_id for an unregistered dir.
 
-    规范化 = os.path.realpath 后的绝对路径（解符号链接 + 去相对段，且幂等：
-    realpath(realpath(p)) == realpath(p)，所以传原始 cwd 或已规范化路径结果一致）。
-    指纹 = sha1(规范化路径 UTF-8).hexdigest()[:16]，冠以 "dir:" 前缀。
+    Normalization = the absolute path after os.path.realpath (symlinks resolved + relative segments removed, and
+    idempotent:
+    realpath(realpath(p)) == realpath(p), so passing the raw cwd or an already-normalized path gives the same result).
+    Fingerprint = sha1(normalized path UTF-8).hexdigest()[:16], prefixed with "dir:".
 
     Args:
-        cwd: 目录路径（通常来自 X-Project-Dir 头，或 hook 的当前工作目录）。
+        cwd: the directory path (usually from the X-Project-Dir header, or the hook's current working directory).
 
     Returns:
-        形如 "dir:1a2b3c4d5e6f7a8b" 的桶 scope_id；cwd 为空/纯空白时返回 ""
-        （调用方据此拒绝写入或回退为仅 global+user 读取）。
+        A bucket scope_id of the form "dir:1a2b3c4d5e6f7a8b"; returns "" when cwd is empty/pure whitespace
+        (the caller accordingly refuses the write or falls back to global+user reads only).
     """
     if not cwd or not cwd.strip():
         return ""

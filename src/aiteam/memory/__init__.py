@@ -1,7 +1,7 @@
-"""AI Team OS — 记忆管理模块.
+"""AI Team OS — memory management module.
 
-提供三温度记忆管理（MemoryStore）、上下文恢复（ContextRecovery）
-和可插拔的记忆后端（MemoryBackend Protocol）。
+Provides three-temperature memory management (MemoryStore), context recovery (ContextRecovery),
+and a pluggable memory backend (the MemoryBackend Protocol).
 """
 
 from aiteam.memory.backends import MemoryBackend

@@ -46,7 +46,7 @@ class MemoryStore:
         elif repository is not None:
             self._backend = SqliteMemoryBackend(repository)
         else:
-            raise ValueError("必须提供 backend 或 repository")
+            raise ValueError("backend or repository must be provided")
 
         self._archive_dir = archive_dir or Path(".aiteam/archive")
         # Hot tier cache: key = "scope:scope_id", value = list of Memory

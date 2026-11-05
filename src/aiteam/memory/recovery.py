@@ -68,7 +68,7 @@ class ContextRecovery:
         """
         # Iterate all agent directories to find the checkpoint file
         if not self._checkpoint_dir.exists():
-            msg = f"检查点 {checkpoint_id} 不存在"
+            msg = f"Checkpoint {checkpoint_id} not found"
             raise FileNotFoundError(msg)
 
         for agent_dir in self._checkpoint_dir.iterdir():
@@ -79,7 +79,7 @@ class ContextRecovery:
                 data = json.loads(file_path.read_text(encoding="utf-8"))
                 return data
 
-        msg = f"检查点 {checkpoint_id} 不存在"
+        msg = f"Checkpoint {checkpoint_id} not found"
         raise FileNotFoundError(msg)
 
     async def list_checkpoints(self, agent_id: str) -> list[dict]:

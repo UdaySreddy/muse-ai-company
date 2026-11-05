@@ -1,12 +1,14 @@
-"""AI Team OS — Memory reconcile 粗筛（记忆系统 v2 P2）.
+"""AI Team OS — Memory reconcile coarse screening (memory system v2 P2).
 
-设计 §4 的第一步「粗筛（零 LLM）」：把有效 task_memos 按 scope_path/task 聚簇，
-簇内用内建 BM25 计两两相似度，超阈的配成候选组交给调用工具的 CC 会话内 agent
-做 LLM 精判（KEEP/MERGE/INVALIDATE/NOOP）。
+Step one of design §4, "coarse screening (zero LLM)": cluster valid task_memos by scope_path/task,
+compute pairwise similarity within each cluster with the built-in BM25, and pair those above the threshold into
+candidate groups for the in-CC-session agent calling the tool
+to make the LLM fine judgment (KEEP/MERGE/INVALIDATE/NOOP).
 
-核心架构约束——OS 无独立 LLM 凭据：本模块只做确定性的候选粗筛，判定由 agent 完成
-（参照 ecosystem apply_shallow_summary 的"agent 算、工具存"模式）。纯 Python，
-复用 retriever 的 BM25，无第三方依赖。
+Core architecture constraint — the OS has no independent LLM credentials: this module performs only deterministic
+candidate coarse screening, and the judgment is completed by the agent
+(following ecosystem apply_shallow_summary's "the agent computes, the tool stores" pattern). Pure Python,
+reusing the retriever's BM25, with no third-party dependencies.
 """
 
 from __future__ import annotations
@@ -16,18 +18,21 @@ from typing import Any
 from aiteam.memory.retriever import _bm25_scores, _tokenize_bm25
 from aiteam.types import TaskMemo
 
-# 两两相似度阈值：sim = 对称归一化 BM25（0..1），≥ 阈值即配对成候选边。
+# Pairwise similarity threshold: sim = symmetrically normalized BM25 (0..1); ≥ the threshold pairs into a candidate
+# edge.
 DEFAULT_SIM_THRESHOLD = 0.45
-# promotion（蒸馏提升）候选门槛：成员数或跨任务数达标即标记为方向层提升素材。
+# Promotion (distillation) candidate bar: when the member count or cross-task count reaches the bar, it is marked as
+# direction-layer promotion material.
 _PROMOTION_MIN_MEMBERS = 3
 _PROMOTION_MIN_TASKS = 2
 
 
 def _cluster_key(memo: TaskMemo) -> str:
-    """聚簇键：优先 scope_path（②路径作用域），为空回退到同任务。
+    """Cluster key: scope_path first (item 2 path scope), falling back to the same task when empty.
 
-    scope_path 非空的 memo 按路径作用域跨任务聚簇；无 scope_path 的只在同一
-    任务内聚簇，避免把全项目无标注 memo 塞进一个巨簇。
+    Memos with a non-empty scope_path cluster across tasks by path scope; those without a scope_path cluster only within
+    the same
+    task, avoiding stuffing the whole project's unlabeled memos into one giant cluster.
     """
     sp = (memo.scope_path or "").strip()
     return f"scope:{sp}" if sp else f"task:{memo.task_id}"
@@ -36,15 +41,16 @@ def _cluster_key(memo: TaskMemo) -> str:
 def _pairwise_edges(
     tokenized: list[list[str]], threshold: float
 ) -> list[tuple[int, int, float]]:
-    """簇内两两 BM25 相似度，返回超阈的对称边 (i, j, sim)。
+    """Pairwise BM25 similarity within a cluster, returning the above-threshold symmetric edges (i, j, sim).
 
-    BM25 本身非对称（query vs doc）。以每条 memo 为 query 对全簇打分，用
-    self-score 归一化得 sim(i→j)=score[j]/score[i]，再取双向 min 保守对称化。
+    BM25 itself is asymmetric (query vs doc). Score the whole cluster with each memo as the query,
+    normalize by self-score to get sim(i→j)=score[j]/score[i], then take the two-direction min for a conservative
+    symmetrization.
     """
     n = len(tokenized)
     if n < 2:
         return []
-    # 逐条作 query 打分：rows[i][j] = i 作 query 时 j 的原始 BM25 分
+    # Score with each entry as the query: rows[i][j] = j's raw BM25 score when i is the query
     rows: list[list[float]] = []
     for i in range(n):
         q = tokenized[i]
@@ -57,14 +63,15 @@ def _pairwise_edges(
             self_j = rows[j][j]
             sim_ij = rows[i][j] / self_i if self_i > 0 else 0.0
             sim_ji = rows[j][i] / self_j if self_j > 0 else 0.0
-            sim = min(sim_ij, sim_ji)  # 保守：双向都相似才算相似
+            sim = min(sim_ij, sim_ji)  # conservative: only similar when both directions are similar
             if sim >= threshold:
                 edges.append((i, j, sim))
     return edges
 
 
 def _connected_components(n: int, edges: list[tuple[int, int, float]]) -> list[list[int]]:
-    """并查集：把候选边并成连通分量（候选组），只保留 size ≥ 2 的组。"""
+    """Union-find: merge candidate edges into connected components (candidate groups), keeping only groups of size ≥
+    2."""
     parent = list(range(n))
 
     def find(x: int) -> int:
@@ -83,7 +90,8 @@ def _connected_components(n: int, edges: list[tuple[int, int, float]]) -> list[l
 
 
 def _memo_brief(memo: TaskMemo) -> dict[str, Any]:
-    """候选组内单条 memo 的对外视图（供 agent 精判，含全文）。"""
+    """The external view of a single memo within a candidate group (for the agent's fine judgment, including the full
+    text)."""
     return {
         "id": memo.id,
         "task_id": memo.task_id,
@@ -99,17 +107,18 @@ def build_candidate_groups(
     memos: list[TaskMemo],
     threshold: float = DEFAULT_SIM_THRESHOLD,
 ) -> list[dict[str, Any]]:
-    """情景层候选粗筛：聚簇 → 簇内 BM25 两两配对 → 连通分量成候选组。
+    """Episodic-layer candidate coarse screening: cluster → in-cluster BM25 pairwise pairing → connected components form
+    candidate groups.
 
     Args:
-        memos: 有效 task_memos（调用方已过滤 invalid_at IS NULL）。
-        threshold: 对称归一化 BM25 相似度阈值。
+        memos: valid task_memos (the caller has already filtered invalid_at IS NULL).
+        threshold: the symmetrically normalized BM25 similarity threshold.
 
     Returns:
-        候选组列表，每组含 cluster_key/scope_path/成员全文/平均相似度/
-        跨任务数/promotion_candidate 标记。空簇或无配对不产出。
+        The candidate group list; each group contains cluster_key/scope_path/member full texts/average similarity/
+        cross-task count/promotion_candidate flag. Empty clusters or no pairings produce nothing.
     """
-    # 1) 按 cluster_key 聚簇
+    # 1) Cluster by cluster_key
     clusters: dict[str, list[TaskMemo]] = {}
     for m in memos:
         clusters.setdefault(_cluster_key(m), []).append(m)
@@ -122,7 +131,7 @@ def build_candidate_groups(
         edges = _pairwise_edges(tokenized, threshold)
         if not edges:
             continue
-        # 每对相似度用于组内平均相似度展示
+        # Each pair's similarity is used for the in-group average-similarity display
         sim_lookup = {(i, j): s for i, j, s in edges}
         for comp in _connected_components(len(members), edges):
             comp_set = set(comp)
@@ -151,34 +160,40 @@ def build_candidate_groups(
                 }
             )
 
-    # 高相似 + 跨任务的组排前，便于 agent 优先处理
+    # High-similarity + cross-task groups sort first, so the agent handles them with priority
     groups.sort(
         key=lambda g: (g["promotion_candidate"], g["avg_similarity"]), reverse=True
     )
     return groups
 
 
-# 操作说明常量（响应附带，告知调用 agent 四操作语义 + 三守则）。
+# Operation-guide constant (attached to the response, telling the calling agent the four operations' semantics + the
+# three principles).
 OPERATION_GUIDE: dict[str, Any] = {
     "operations": {
-        "KEEP": "两条都保留（无冗余/各有信息）——无需在 apply 提交任何操作。",
-        "MERGE": "合并：提交 {op:'merge', content:合并后新内容, memo_ids:[被并各条]}；"
-        "工具建新 memo 并把被并各条置 invalid + invalidated_by 指向新条（Zep 失效语义）。",
-        "INVALIDATE": "矛盾/被推翻：提交 {op:'invalidate', memo_ids:[...]} 置其失效（不删除）。",
-        "NOOP": "本组不动——无需提交操作。",
+        "KEEP": "Keep both (no redundancy / each carries information) — no operation needs to be submitted in apply.",
+        "MERGE": "Merge: submit {op:'merge', content: the new merged content, memo_ids:[the entries being merged]}; "
+        "the tool creates a new memo and sets each merged entry invalid + invalidated_by pointing at the new entry "
+        "(Zep invalidation semantics).",
+        "INVALIDATE": "Contradicted/overturned: submit {op:'invalidate', memo_ids:[...]} to invalidate it (no "
+                      "deletion).",
+        "NOOP": "Leave this group untouched — no operation needs to be submitted.",
     },
     "reconcile_principles": [
-        "只保留对几乎每个未来任务都有用的条目（低价值的整理时失效）。",
-        "指向权威文件/工具而非复述其内容（超长内容降级为指针条目）。",
-        "优先重写精简而非追加（MERGE 出更短更准的新条，别堆叠）。",
+        "Keep only entries useful to almost every future task (invalidate low-value ones during organization).",
+        "Point to the authoritative file/tool rather than restating its content (over-long content is degraded to a "
+        "pointer entry).",
+        "Prefer concise rewrites over appending (MERGE into a shorter, more precise new entry; do not stack).",
     ],
     "distill_and_score": {
-        "promote": "跨 memo 反复出现的结论/用户纠正 → 提升为方向层条目："
+        "promote": "Conclusions/user corrections recurring across memos → promote into a direction-layer entry: "
         "{op:'promote', content, kind:constraint/design/directive/preference, "
-        "source_refs:[源 memo id]}（红线照常生效：单条 ≤400 字，且须放得进桶字符"
-        "配额 global 1200 / project 1500 / user 300——存储上限就是注入预算）。",
-        "score": "为 summary/decision 型 memo 补质量分："
-        "{op:'score', memo_id, quality_score:1-10, reason}。",
+        "source_refs:[source memo ids]} (the red lines apply as usual: a single entry ≤400 characters, and it must fit "
+        "the bucket character"
+        "quotas global 1200 / project 1500 / user 300 — the storage cap is the injection budget).",
+        "score": "Add a quality score to a summary/decision-type memo: "
+        "{op:'score', memo_id, quality_score:1-10, reason}.",
     },
-    "ultracode_hint": "候选组数量大时，开 ultracode 用 Workflow 并发精判各组，回收后统一 apply。",
+    "ultracode_hint": "When the candidate-group count is large, open ultracode and use a Workflow to fine-judge the "
+                      "groups concurrently, then apply uniformly after collecting the results.",
 }

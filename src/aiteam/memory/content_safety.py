@@ -63,14 +63,14 @@ _INJECTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "instruction override (zh)",
         re.compile(
-            r"(?:忽略|无视|忘掉|忘记|抛开"
-            r"|覆盖|不要理会|不用理会)"
-            r"[^。；\n]{0,8}"
-            r"(?:上面|以上|上述|之前|先前"
-            r"|前面|原有|所有|全部)"
-            r"[^。；\n]{0,8}"
-            r"(?:指令|指示|提示词|系统提示"
-            r"|规则|命令|约束|设定)"
+            r"(?:\u5ffd\u7565|\u65e0\u89c6|\u5fd8\u6389|\u5fd8\u8bb0|\u629b\u5f00"
+            r"|\u8986\u76d6|\u4e0d\u8981\u7406\u4f1a|\u4e0d\u7528\u7406\u4f1a)"
+            r"[^\u3002\uff1b\n]{0,8}"
+            r"(?:\u4e0a\u9762|\u4ee5\u4e0a|\u4e0a\u8ff0|\u4e4b\u524d|\u5148\u524d"
+            r"|\u524d\u9762|\u539f\u6709|\u6240\u6709|\u5168\u90e8)"
+            r"[^\u3002\uff1b\n]{0,8}"
+            r"(?:\u6307\u4ee4|\u6307\u793a|\u63d0\u793a\u8bcd|\u7cfb\u7edf\u63d0\u793a"
+            r"|\u89c4\u5219|\u547d\u4ee4|\u7ea6\u675f|\u8bbe\u5b9a)"
         ),
     ),
     (
@@ -86,10 +86,10 @@ _INJECTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "system prompt exfiltration (zh)",
         re.compile(
-            r"(?:输出|打印|复述|泄露|展示"
-            r"|告诉我|贴出)[^。；\n]{0,8}"
-            r"(?:系统提示|系统指令|初始指令"
-            r"|隐藏指令|完整提示词)"
+            r"(?:\u8f93\u51fa|\u6253\u5370|\u590d\u8ff0|\u6cc4\u9732|\u5c55\u793a"
+            r"|\u544a\u8bc9\u6211|\u8d34\u51fa)[^\u3002\uff1b\n]{0,8}"
+            r"(?:\u7cfb\u7edf\u63d0\u793a|\u7cfb\u7edf\u6307\u4ee4|\u521d\u59cb\u6307\u4ee4"
+            r"|\u9690\u85cf\u6307\u4ee4|\u5b8c\u6574\u63d0\u793a\u8bcd)"
         ),
     ),
     (
@@ -100,8 +100,8 @@ _INJECTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "persona takeover",
         re.compile(
             r"\bfrom\s+now\s+on[, ]+you\s+are\b|\byou\s+are\s+now\s+(?:a|an|in)\b"
-            r"|(?:从现在起|从此以后|接下来)"
-            r"[，,]?\s*你(?:就)?是",
+            r"|(?:\u4ece\u73b0\u5728\u8d77|\u4ece\u6b64\u4ee5\u540e|\u63a5\u4e0b\u6765)"
+            r"[\uff0c,]?\s*\u4f60(?:\u5c31)?\u662f",
             re.IGNORECASE,
         ),
     ),
@@ -109,7 +109,7 @@ _INJECTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "jailbreak marker",
         re.compile(
             r"\bDAN\s+mode\b|\bjailbreak\b|\bdeveloper\s+mode\s+enabled\b"
-            r"|越狱模式|开发者模式已启用",
+            r"|\u8d8a\u72f1\u6a21\u5f0f|\u5f00\u53d1\u8005\u6a21\u5f0f\u5df2\u542f\u7528",
             re.IGNORECASE,
         ),
     ),
@@ -137,16 +137,20 @@ _CREDENTIAL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 _CATEGORY_ADVICE = {
     "invisible_unicode": (
-        "请去掉不可见字符后重写（多为从网页/终端复制带入）——肉眼不可见的内容不"
-        "允许入库：审阅的人看不见它，读到记忆的模型却照单全收。"
+        "Please remove the invisible characters and rewrite (usually carried in by copying from a web page/terminal) — "
+        "content invisible to the naked eye is not"
+        "allowed into storage: the reviewing human cannot see it, while a model reading the memory accepts it "
+        "wholesale."
     ),
     "prompt_injection": (
-        "方向层条目是所有派出 agent 的常驻指令，不接受「覆盖既有指令 / 套取系统提示 / "
-        "伪造对话角色」形态的内容。如确为正常表述，请换一种不含该句式的写法。"
+        "Direction-layer entries are standing instructions for every dispatched agent and do not accept content in the "
+        "shape of 'override existing instructions / extract the system prompt / "
+        "forge dialogue roles'. If it really is a normal phrasing, please rewrite it without that sentence pattern."
     ),
     "credential": (
-        "凭据不进记忆层。请改写成「指针条目」——只写触发条件与凭据所在文件路径，"
-        "密钥本体留在该文件里。"
+        "Credentials do not enter the memory layer. Please rewrite it as a 'pointer entry' — write only the trigger "
+        "condition and the file path where the credential lives,"
+        "and keep the secret itself in that file."
     ),
 }
 
@@ -162,11 +166,11 @@ class SafetyFinding:
 
     @property
     def message(self) -> str:
-        """Rejection text handed back to the caller (agent-readable, Chinese)."""
-        head = f"内容安全扫描拒绝写入：命中 {self.pattern}（第 {self.position + 1} 字处）"
+        """Rejection text handed back to the caller (agent-readable)."""
+        head = f"Content-safety scan refused the write: matched {self.pattern} (at character {self.position + 1})"
         if self.excerpt:
-            head += f"：{self.excerpt}"
-        return f"{head}。{_CATEGORY_ADVICE.get(self.category, '')}"
+            head += f": {self.excerpt}"
+        return f"{head}. {_CATEGORY_ADVICE.get(self.category, '')}"
 
 
 def _describe_char(ch: str) -> str:
@@ -185,7 +189,7 @@ def scan_invisible(text: str) -> SafetyFinding | None:
         if any(low <= code_point <= high for low, high in _INVISIBLE_RANGES):
             return SafetyFinding(
                 category="invisible_unicode",
-                pattern=f"不可见字符 {_describe_char(ch)}",
+                pattern=f"invisible character {_describe_char(ch)}",
                 position=index,
             )
     return None
@@ -207,9 +211,9 @@ def scan_direction_content(text: str) -> SafetyFinding | None:
         if match is not None:
             return SafetyFinding(
                 category="prompt_injection",
-                pattern=f"提示注入模式「{name}」",
+                pattern=f"prompt-injection pattern '{name}'",
                 position=match.start(),
-                excerpt=f"「{match.group()[:40]}」",
+                excerpt=f"'{match.group()[:40]}'",
             )
 
     for name, pattern in _CREDENTIAL_PATTERNS:
@@ -218,7 +222,7 @@ def scan_direction_content(text: str) -> SafetyFinding | None:
             # No excerpt: echoing the match would duplicate the secret into the log.
             return SafetyFinding(
                 category="credential",
-                pattern=f"凭据形态「{name}」",
+                pattern=f"credential shape '{name}'",
                 position=match.start(),
             )
 
