@@ -1,11 +1,14 @@
-"""会话启动期给命中工具挂 alwaysLoad meta（工具渐进式加载 P1，MCP server 侧）。
+"""At session start, attach the alwaysLoad meta to hit tools (tool progressive loading P1, MCP server side).
 
-register_all(mcp) 注册完全部工具后调用 ``apply_always_load_meta(mcp)``：向本地 API
-查询 GET /api/tools/always-load 拿到近期高频白名单，给对应已注册工具的组件挂
-``meta["anthropic/alwaysLoad"] = True``。FastMCP 的 ``Tool.to_mcp_tool()`` 会把该
-组件的 ``meta`` 经 ``get_meta()`` 序列化进 tools/list 的 ``_meta`` 字段，CC 据此豁免 defer。
+After register_all(mcp) has registered all tools, it calls ``apply_always_load_meta(mcp)``: query the local API's
+GET /api/tools/always-load for the recent high-frequency whitelist, and attach to the corresponding registered tool
+components
+``meta["anthropic/alwaysLoad"] = True``. FastMCP's ``Tool.to_mcp_tool()`` serializes the component's ``meta`` via
+``get_meta()``
+into the ``_meta`` field of tools/list, and CC exempts them from defer accordingly.
 
-全程 best-effort：API 不在 / 超时 / 解析失败一律静默，所有工具照旧走 ToolSearch。
+Best-effort throughout: API absent / timeout / parse failure are all silent, and every tool still goes through
+ToolSearch as before.
 """
 
 from __future__ import annotations
@@ -20,44 +23,45 @@ from aiteam.mcp._base import _get_api_url
 
 logger = logging.getLogger(__name__)
 
-# CC 识别的常驻豁免键；值为 True 即免检索直达。
+# The resident exemption key CC recognizes; a True value means direct access with no search.
 ALWAYSLOAD_META_KEY = "anthropic/alwaysLoad"
-# 启动路径上严禁久等——2 秒拿不到就当没有，全 defer。
+# Never wait long on the startup path — if it is not obtained within 2 seconds, treat it as absent, all defer.
 _TIMEOUT_S = 2.0
 
 
 def _tool_components(mcp) -> list[object]:
-    """当前已注册的工具组件列表；任何失败返回空列表。
+    """The list of currently registered tool components; any failure returns an empty list.
 
-    走公开的 ``mcp.list_tools()``。它是协程，但本函数只在 stdio 启动路径上
-    （``mcp.run()`` 之前、尚无运行中的事件循环）被调用，所以 ``asyncio.run``
-    是安全的；万一在已有事件循环里被调用，静默降级为空（全 defer）。
+    Goes through the public ``mcp.list_tools()``. It is a coroutine, but this function is only called on the stdio
+    startup path
+    (before ``mcp.run()``, with no running event loop yet), so ``asyncio.run``
+    is safe; if it is ever called inside an existing event loop, it silently degrades to empty (all defer).
 
-    两个已实测的前提（fastmcp 3.4.3 / 3.4.5 均成立，升 4.0 时须重验）：
-      * ``list_tools()`` 返回的是组件对象本身而非副本，故对其 ``meta`` 原地
-        赋值会经 ``to_mcp_tool()`` 进入 ``tools/list`` 的 ``_meta``；
-      * 返回值只含工具，不含资源/提示词，无需再按类型过滤。
+    Two premises verified in practice (true for fastmcp 3.4.3 / 3.4.5; must be re-verified when upgrading to 4.0):
+      * ``list_tools()`` returns the component objects themselves, not copies, so assigning to their ``meta`` in place
+        reaches ``tools/list``'s ``_meta`` via ``to_mcp_tool()``;
+      * the return value contains only tools, no resources/prompts, so no type filtering is needed.
 
-    旧实现读 ``mcp.local_provider._components`` 私有组件表并从
-    ``fastmcp.tools.base`` 导入 Tool 做类型过滤——两者都是 fastmcp 4.0
-    移除 3.x 兼容 shim 时的必炸点，已换成公开面。
+    The old implementation read the private component table ``mcp.local_provider._components`` and imported Tool from
+    ``fastmcp.tools.base`` for type filtering — both are certain breakage points when fastmcp 4.0
+    removes the 3.x compatibility shims; they have been replaced with the public surface.
     """
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        pass  # 无运行中的事件循环，可以 asyncio.run
+        pass  # No running event loop, so asyncio.run is fine
     else:
-        logger.debug("alwaysLoad: 已在事件循环内，跳过工具枚举")
+        logger.debug("alwaysLoad: already inside an event loop, skipping tool enumeration")
         return []
     try:
         return list(asyncio.run(mcp.list_tools()))
     except Exception:
-        logger.debug("alwaysLoad: 工具枚举失败", exc_info=True)
+        logger.debug("alwaysLoad: tool enumeration failed", exc_info=True)
         return []
 
 
 def _registered_tool_names(mcp) -> list[str]:
-    """当前实际注册的裸工具名列表。"""
+    """The list of bare tool names actually registered."""
     names: list[str] = []
     for comp in _tool_components(mcp):
         name = getattr(comp, "name", None)
@@ -67,7 +71,7 @@ def _registered_tool_names(mcp) -> list[str]:
 
 
 def _fetch_always_load(registered: list[str]) -> list[str]:
-    """调 GET /api/tools/always-load，返回裸工具名列表；任何失败返回空列表。"""
+    """Call GET /api/tools/always-load and return the bare tool name list; any failure returns an empty list."""
     try:
         query = urllib.parse.urlencode({"registered": ",".join(registered)})
         url = f"{_get_api_url()}/api/tools/always-load?{query}"
@@ -81,7 +85,8 @@ def _fetch_always_load(registered: list[str]) -> list[str]:
 
 
 def apply_always_load_meta(mcp) -> list[str]:
-    """给命中的已注册工具挂 alwaysLoad meta。静默失败，返回实际挂上的工具名列表。"""
+    """Attach the alwaysLoad meta to the hit registered tools. Fails silently; returns the list of tool names
+    actually attached."""
     try:
         components = _tool_components(mcp)
         if not components:

@@ -14,17 +14,17 @@ here must actually exist.
 
 from __future__ import annotations
 
-INSTRUCTIONS = """AI Team OS —— 多 Agent 团队的持久化治理层。CC 会话是临时的，这里的任务、记忆、报告、观测记录跨会话长存。
+INSTRUCTIONS = """AI Team OS — persistent governance for multi-agent teams: cross-session task ledger, agent observability, attribution and failure analysis, memory governance, project isolation, report knowledge base. CC sessions are temporary; tasks, memories, reports and observations here persist across sessions.
 
-核心能力（按能力检索）:
-- 跨会话任务台账: 任务上墙、状态流转、逐条 memo 留痕，崩溃或换 session 后接着干 → task_create / task_status / task_update / task_list_project / task_memo_add / task_memo_read
-- Agent 观测与归因: 谁在干、干了多久、卡在哪一步、失败根因、哪种 prompt 有效 → agent_list / agent_activity_query / task_execution_trace / diagnose_task_failure / failure_analysis / prompt_effectiveness / event_list / verify_completion
-- 记忆治理: 情景层(任务 memo)+方向层(约束/偏好/决策)双层，检索、失效、合并蒸馏 → memory_search / memory_add / memory_list / memory_invalidate / memory_reconcile_candidates / memory_reconcile_apply
-- 项目隔离: 按工作目录自动归属，各项目的任务/记忆/报告互不串台 → context_resolve / project_list / project_summary
-- 报告知识库: 研究与设计产出落库可检索，不散落成 md 文件 → report_save / report_list / report_read
-- 团队协作: 建队派工、频道广播、多方会议与结构化辩论 → team_status / fleet_dispatch / channel_send / channel_read / meeting_create / meeting_send_message / debate_start
-- 溯源检索: 任务/报告/提交/工作流之间的引用网络与全局搜索 → link_trace / link_query / unified_search
-- 开源生态档案: Claude 生态仓库索引、能力标签、深扫与周报 → ecosystem_search / ecosystem_search_by_capability / ecosystem_repo_get 等 ecosystem_* 全套
-- 其余: workflow_* 追踪 CC Workflow 运行、briefing_* 待办简报、find_skill 查技能、os_health_check 自检。
+Core capabilities:
+- Cross-session task ledger: tasks on the wall, status flow, memos; resume after crashes/session switches → task_create / task_status / task_update / task_memo_add / task_memo_read
+- Agent observation and attribution: who works, how long, stuck where, failure causes, effective prompts → agent_list / agent_activity_query / task_execution_trace / diagnose_task_failure / failure_analysis / prompt_effectiveness / verify_completion
+- Memory governance: episodic layer (task memos) + direction layer (constraints/preferences/decisions); search, invalidate, merge-distill → memory_search / memory_add / memory_list / memory_invalidate / memory_reconcile_candidates / memory_reconcile_apply
+- Project isolation: auto-ownership by working directory; no cross-project mixing → context_resolve / project_list
+- Report knowledge base: research/design outputs stored, searchable, not scattered md files → report_save / report_list
+- Team collaboration: create/dispatch teams, channel broadcast, meetings, structured debates → team_status / fleet_dispatch / channel_send / channel_read / meeting_create / meeting_send_message
+- Provenance search: reference network over tasks/reports/commits/workflows; global search → link_trace / unified_search
+- Open-source ecosystem archive: Claude ecosystem repo index, capability tags, deep scans, weekly briefs → ecosystem_search / ecosystem_search_by_capability / ecosystem_repo_get, all ecosystem_*
+- The rest: workflow_* = CC Workflow runs, briefing_* = pending briefings, find_skill = skill lookup, os_health_check self-check.
 
-约定: 先 context_resolve 确认项目；研究产出用 report_save 而非直接写文件；要跨会话留住的结论用 memory_add。"""
+Conventions: confirm the project with context_resolve first; research outputs via report_save, not files; lasting conclusions via memory_add."""

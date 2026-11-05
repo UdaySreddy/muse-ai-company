@@ -143,12 +143,16 @@ def _write_pid_file(pid: int) -> None:
 
 
 def _cleanup_api() -> None:
-    """MCP 退出时的收尾——保留共享 API 守护进程，只清理已死子进程的残留。
+    """Cleanup at MCP exit — keep the shared API daemon, only clearing leftovers of dead subprocesses.
 
-    API 是跨会话共享守护进程（端口文件发现 + adopt 语义）：启动方会话先退出时
-    绝不能把其它活跃会话正在用的 API 拉闸（审计 M56 —— 旧实现无条件 terminate
-    并删 PID 文件，杀掉被 adopt 的实例还破坏其余会话的发现链）。健康的 API 刻意
-    留给后续会话；真正的停止入口是版本升级换新 / os_restart_api / 卸载脚本。
+    The API is a cross-session shared daemon (port-file discovery + adopt semantics): when the starting session exits
+    first,
+    it must never pull the plug on the API other active sessions are using (audit M56 — the old implementation
+    unconditionally terminated
+    and deleted the PID file; killing an adopted instance also breaks the remaining sessions' discovery chain). A
+    healthy API is deliberately
+    left for later sessions; the real stop entries are version-upgrade replacement / os_restart_api / the uninstall
+    script.
     """
     global _api_process
     proc = _api_process
@@ -156,7 +160,8 @@ def _cleanup_api() -> None:
     if proc is None:
         return
     if proc.poll() is not None:
-        # 子进程已死：清掉指向死 PID 的文件，避免下个会话对着尸体探活 15s。
+        # The subprocess is dead: remove the file pointing at the dead PID, so the next session does not spend 15s
+        # probing a corpse.
         try:
             os.unlink(_PID_FILE)
         except OSError:
@@ -169,11 +174,12 @@ def _cleanup_api() -> None:
 
 
 def _pid_is_aiteam_api(pid: int) -> bool:
-    """Kill 前验明正身：该 PID 是否真的是我们的 uvicorn/aiteam API 进程。
+    """Verify identity before killing: whether the PID really is our uvicorn/aiteam API process.
 
-    PID 文件残留 + 操作系统 PID 复用会让「按存 PID 杀」误伤无辜进程（审计
-    M55）；端口占用与健康检查之间也存在重绑竞态窗口。校验失败/不确定一律按
-    「不是我们的」处理——宁可不杀（后续流程会自选空闲端口或留给用户处置）。
+    A leftover PID file + OS PID reuse can make "kill by stored PID" injure an innocent process (audit
+    M55); a rebind race window also exists between port occupation and the health check. On validation
+    failure/uncertainty, always treat it
+    as "not ours" — rather not kill (later flows will pick a free port themselves or leave it to the user).
     """
     try:
         if sys.platform == "win32":
@@ -453,9 +459,10 @@ def _ensure_api_running_locked(current_version: str) -> None:
                 return
             time.sleep(1)
         # Process exists but is not healthy after 15s — kill it.
-        # D3 阶段B（审计 M55）：按存 PID 杀之前先验明正身——PID 文件残留 + 操作
-        # 系统 PID 复用会把无辜进程当"卡死的 API"杀掉（考古线亦点名此处按存 PID
-        # 盲杀最危险）。不是我们的进程就只清 PID 文件、绝不动手。
+        # D3 stage B (audit M55): verify identity before killing by stored PID — a leftover PID file + OS
+        # PID reuse would kill an innocent process as a "stuck API" (the archaeology line also named blind killing by
+        # stored PID here
+        # as the most dangerous). If it is not our process, only clear the PID file and never act.
         if not _pid_is_aiteam_api(existing_pid):
             logger.warning(
                 "Stale PID file points at PID=%d which is not an aiteam API (PID reuse?) — "

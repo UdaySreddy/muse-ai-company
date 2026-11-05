@@ -84,10 +84,14 @@ def _api_call(
     # so callers can still override (e.g. cross-project tools force a different id).
     if _session_project_id:
         headers.setdefault("X-Project-Id", _session_project_id)
-    # 归因 v1 §2.4：把当前 CC 会话 id 带给服务端，用来把记账动作里的 author 名解析
-    # 到**本会话域内**的那个 agent 行。没有它服务端只能全表按名字找 —— 而 name 在
-    # agents 表里不唯一（实测 "Leader" 一个名字 117 行、横跨 79 支队、时间跨度三周），
-    # 全表匹配必然跨时重名错绑。服务端拿不到这个头就直接不写边（宁可少一条）。
+    # Attribution v1 §2.4: pass the current CC session id to the server, to resolve the author name in a bookkeeping
+    # action
+    # to the agent row **within this session's domain**. Without it the server can only search the whole table by name
+    # — and name is
+    # not unique in the agents table (measured: the single name "Leader" has 117 rows, spanning 79 teams over three
+    # weeks), so
+    # whole-table matching inevitably mis-binds across time to a same-named row. When the server cannot get this
+    # header it simply writes no edge (rather one fewer).
     session_id = _cc_session_id()
     if session_id:
         headers.setdefault("X-CC-Session-Id", session_id)
@@ -125,8 +129,8 @@ def _api_call(
         recovery_info = get_connection_recovery(reason_str)
         return {
             "success": False,
-            "error": f"无法连接到 AI Team OS API ({_get_api_url()}): {e.reason}",
-            "hint": "请确保 FastAPI 服务已启动: aiteam serve",
+            "error": f"Unable to connect to the AI Team OS API ({_get_api_url()}): {e.reason}",
+            "hint": "Please make sure the FastAPI service is running: aiteam serve",
             "_error_category": recovery_info.get("category", "api_unavailable"),
             "_recovery": recovery_info.get("recovery", ""),
         }
@@ -134,7 +138,7 @@ def _api_call(
         recovery_info = get_connection_recovery(str(e))
         return {
             "success": False,
-            "error": f"请求失败: {e!s}",
+            "error": f"Request failed: {e!s}",
             "_error_category": recovery_info.get("category", "unknown"),
             "_recovery": recovery_info.get("recovery", ""),
         }
@@ -149,10 +153,10 @@ _SESSION_TEAM_NAME_RE = re.compile(r"^session-[0-9a-fA-F]{8}$")
 
 
 def _cc_session_id() -> str:
-    """当前 CC 会话 id —— CC 给每个 MCP server 子进程注入 CLAUDE_CODE_SESSION_ID。
+    """The current CC session id — CC injects CLAUDE_CODE_SESSION_ID into each MCP server subprocess.
 
-    (实测 CC v2.1.219：`ps eww <mcp-pid>` 可见该变量；每会话一个 MCP 子进程，
-    故它在本进程生命周期内恒定。)
+    (Measured on CC v2.1.219: `ps eww <mcp-pid>` shows the variable; one MCP subprocess per session,
+    so it is constant over this process's lifetime.)
     """
     return (
         os.environ.get("CLAUDE_CODE_SESSION_ID", "")
@@ -161,10 +165,11 @@ def _cc_session_id() -> str:
 
 
 def _team_owned_by_session(team: dict[str, Any], session_id: str) -> bool:
-    """该队是否属于本会话（判据同 hook_translator._team_owned_by_session）。
+    """Whether the team belongs to this session (same criterion as hook_translator._team_owned_by_session).
 
-    ① config.owner_session_id 命中（建队时盖的权威归属章）；
-    ② 老行兜底：容器队名编码了会话 id 前 8 位（``session-<sid8>``）。
+    ① config.owner_session_id hits (the authoritative ownership stamp applied at team creation);
+    ② legacy-row fallback: the container team name encodes the first 8 characters of the session id
+    (``session-<sid8>``).
     """
     if not session_id:
         return False
@@ -175,21 +180,21 @@ def _team_owned_by_session(team: dict[str, Any], session_id: str) -> bool:
 
 
 def _is_workflow_team(team: dict[str, Any]) -> bool:
-    """workflow per-run 队：一次 Workflow 运行建一支，绝不能当"当前团队"用。"""
+    """A workflow per-run team: one is created per Workflow run and must never be used as the "current team"."""
     if (team.get("config") or {}).get("kind") == "workflow":
         return True
     return str(team.get("name") or "").startswith("workflow-")
 
 
 def _is_foreign_session_container(team: dict[str, Any], session_id: str) -> bool:
-    """别的会话的 session-<sid8> 容器队（本会话的已在档①里挑走）。"""
+    """Another session's session-<sid8> container team (this session's was already picked in tier 1)."""
     if (team.get("config") or {}).get("kind") == "session":
         return not _team_owned_by_session(team, session_id)
     return bool(_SESSION_TEAM_NAME_RE.match(str(team.get("name") or "")))
 
 
 def _team_recency_key(team: dict[str, Any]) -> str:
-    """按最近活动排序用的键（ISO 串可直接字典序比较）。"""
+    """The key for sorting by most recent activity (ISO strings compare lexicographically directly)."""
     return str(team.get("updated_at") or team.get("created_at") or "")
 
 
@@ -198,17 +203,21 @@ def _newest(teams: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def pick_active_team(teams: list[dict[str, Any]], session_id: str, project_id: str) -> dict | None:
-    """从活跃队里挑"当前团队"，三档优先级；全落空返回 None。
+    """Pick the "current team" from the active teams, in three priority tiers; return None when all miss.
 
-    档①  本会话的 session 容器队（owner_session_id / session-<sid8> 命中）；
-    档②  本项目内既非 workflow-* per-run 队、也非他会话容器队的最新活跃队；
-    档③  本项目内最新活跃队（只剩 workflow 队时的兜底）。
+    Tier 1  this session's session container team (owner_session_id / session-<sid8> hit);
+    Tier 2  the most recently active team in this project that is neither a workflow-* per-run team nor another
+    session's container team;
+    Tier 3  the most recently active team in this project (the fallback when only workflow teams remain).
 
-    旧实现直接取 ``active_teams[0]``：teams 列表按 created_at 倒序，而活跃队里
-    最新的通常是刚起的 workflow-* per-run 队 —— 于是会议 / 团队知识 / 活动查询
-    等一切"空参自动用活跃队"的工具全绑到了 workflow 队上（拿错对象）。
+    The old implementation took ``active_teams[0]`` directly: the teams list is in created_at descending order, and
+    among the active teams
+    the newest is usually a just-started workflow-* per-run team — so meetings / team knowledge / activity queries
+    and every other "empty argument automatically uses the active team" tool all bound to the workflow team (the wrong
+    object).
 
-    跨项目队一律不入选：宁可返回 None 让调用方显式报错，也不借别项目的队。
+    Cross-project teams are never selected: rather return None and let the caller error explicitly than borrow another
+    project's team.
     """
     active = [
         t for t in teams
@@ -221,7 +230,8 @@ def pick_active_team(teams: list[dict[str, Any]], session_id: str, project_id: s
     if owned:
         return _newest(owned)
 
-    # 项目内（含 project_id 未标注的历史行）；项目未解析时不设限
+    # Within the project (including historical rows with no project_id annotation); no limit when the project is
+    # unresolved
     in_scope = [
         t for t in active
         if not project_id or not t.get("project_id") or t.get("project_id") == project_id
@@ -239,11 +249,12 @@ def pick_active_team(teams: list[dict[str, Any]], session_id: str, project_id: s
 
 
 def _resolve_team_id(team_id: str) -> str:
-    """空参时解析出"当前团队"id；解析不出返回空串。
+    """Resolve the "current team" id for an empty argument; return an empty string when it cannot be resolved.
 
-    优先级见 :func:`pick_active_team`。返回空串时调用方**必须**显式报错
-    （现有全部调用点都返回 ``{"success": False, "error": ...}``）——绝不允许
-    退回"随便挑一支活跃队"的静默猜测。
+    See :func:`pick_active_team` for the priority. When an empty string is returned, the caller **must** error
+    explicitly
+    (all current call sites return ``{"success": False, "error": ...}``) — never allow
+    falling back to the silent guess of "just pick any active team".
 
     NOTE: This calls _api_call to get context. The context_resolve MCP tool
     in tools/infra.py has the full implementation; this resolver uses a

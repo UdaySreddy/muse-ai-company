@@ -241,13 +241,15 @@ SKILLS: list[Skill] = [
             "Research rapid prototyping and validation",
         ],
     ),
-    # ── category "integration": 原 ecosystem_recipes 工具的四张配方 ──────────
-    # 2026-07-27 批 8a 并入：配方回答的是"OS 和外部 MCP server 怎么搭着用"，
-    # 与 find_skill 的"生态里有什么、怎么装"是同一件事，不值一个独立工具名。
-    # 场景文案已按 Workflow 口径重写（pipeline_* 系列工具早已随管道整域退役）。
+    # ── category "integration": the four recipes of the former ecosystem_recipes tool ──────────
+    # Merged in batch 8a on 2026-07-27: the recipes answer "how the OS and an external MCP server are used together",
+    # which is the same matter as find_skill's "what is in the ecosystem and how to install it" — not worth an
+    # independent tool name.
+    # The scenario copy has been rewritten to the Workflow caliber (the pipeline_* tool family retired along with the
+    # whole pipeline domain long ago).
     Skill(
         id="github-integration",
-        name="GitHub 集成配方",
+        name="GitHub Integration Recipe",
         oneliner="Code management, PR review, and Issue tracking wired into an OS-tracked Workflow",
         category="integration",
         install_cmd="npx -y @modelcontextprotocol/server-github  (env: GITHUB_PERSONAL_ACCESS_TOKEN)",
@@ -271,7 +273,7 @@ SKILLS: list[Skill] = [
     ),
     Skill(
         id="slack-integration",
-        name="Slack 集成配方",
+        name="Slack Integration Recipe",
         oneliner="Push team briefings, alerts, and standup summaries into Slack channels",
         category="integration",
         install_cmd="npx -y @modelcontextprotocol/server-slack  (env: SLACK_BOT_TOKEN, SLACK_TEAM_ID)",
@@ -295,7 +297,7 @@ SKILLS: list[Skill] = [
     ),
     Skill(
         id="linear-integration",
-        name="Linear 集成配方",
+        name="Linear Integration Recipe",
         oneliner="Sync Linear Issues with the OS task wall and map Sprints onto Workflow runs",
         category="integration",
         install_cmd="npx -y @modelcontextprotocol/server-linear  (env: LINEAR_API_KEY)",
@@ -318,7 +320,7 @@ SKILLS: list[Skill] = [
     ),
     Skill(
         id="fullstack-team",
-        name="全栈开发团队配方",
+        name="Full-Stack Development Team Recipe",
         oneliner="A ready-made fullstack lineup (frontend / backend / QA / DevOps) run as one OS-tracked Workflow",
         category="integration",
         install_cmd="See docs/ecosystem-recipes.md for the full .mcp.json",
@@ -352,15 +354,15 @@ for _s in SKILLS:
 
 # Category display names (Chinese)
 CATEGORY_LABELS: dict[str, str] = {
-    "memory": "Memory Enhancement (记忆增强)",
-    "learning": "Continuous Learning (持续学习)",
-    "code-quality": "Code Quality (代码质量)",
-    "dev-workflow": "Development Workflow (开发流程)",
-    "frontend": "Frontend Design (前端设计)",
-    "security": "Security (安全检测)",
-    "dev-tools": "Developer Tools (开发工具)",
-    "data-science": "Data Science (数据科学)",
-    "integration": "Integration Recipes (集成配方)",
+    "memory": "Memory Enhancement",
+    "learning": "Continuous Learning",
+    "code-quality": "Code Quality",
+    "dev-workflow": "Development Workflow",
+    "frontend": "Frontend Design",
+    "security": "Security",
+    "dev-tools": "Developer Tools",
+    "data-science": "Data Science",
+    "integration": "Integration Recipes",
 }
 
 

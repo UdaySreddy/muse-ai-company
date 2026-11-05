@@ -11,72 +11,80 @@ ERROR_RECOVERY_MAP: dict[int | str, dict[str, str]] = {
     # ---- Client errors ----
     400: {
         "category": "bad_request",
-        "recovery": "请求格式错误。检查参数名称和数据类型是否正确。",
+        "recovery": "Request format error. Check that the parameter names and data types are correct.",
     },
     401: {
         "category": "unauthorized",
-        "recovery": "认证失败。请检查是否提供了有效的认证凭证。",
+        "recovery": "Authentication failed. Please check that valid authentication credentials were provided.",
     },
     403: {
         "category": "forbidden",
-        "recovery": "权限不足。该操作需要更高权限，请联系管理员。",
+        "recovery": "Insufficient permission. This operation requires higher privileges; please contact an "
+                    "administrator.",
     },
     404: {
         "category": "resource_not_found",
-        "recovery": "确认资源ID是否正确。尝试先用list工具查询可用资源，再重新操作。",
+        "recovery": "Confirm the resource ID is correct. Try querying the available resources with a list tool "
+                    "first, then operate again.",
     },
     409: {
         "category": "conflict",
-        "recovery": "资源状态冲突。先查询当前状态(task_status/team_status)，再决定下一步。",
+        "recovery": "Resource state conflict. Query the current state first (task_status/team_status), then decide "
+                    "the next step.",
     },
     422: {
         "category": "validation_error",
-        "recovery": "参数验证失败。检查必填参数是否提供、格式是否正确。",
+        "recovery": "Parameter validation failed. Check that the required parameters are provided and correctly "
+                    "formatted.",
     },
     429: {
         "category": "rate_limited",
-        "recovery": "请求频率过高。稍等片刻后重试。",
+        "recovery": "Request rate too high. Wait a moment and retry.",
     },
     # ---- Server errors ----
     500: {
         "category": "server_error",
-        "recovery": "服务器内部错误。等待3秒后重试一次。如果仍失败，使用os_health_check检查系统状态。",
+        "recovery": "Internal server error. Wait 3 seconds and retry once. If it still fails, use os_health_check "
+                    "to check the system state.",
     },
     502: {
         "category": "bad_gateway",
-        "recovery": "上游服务不可用。使用os_health_check检查系统状态，稍后重试。",
+        "recovery": "Upstream service unavailable. Use os_health_check to check the system state and retry later.",
     },
     503: {
         "category": "service_unavailable",
-        "recovery": "服务暂时不可用。使用os_health_check检查系统状态，等待服务恢复后重试。",
+        "recovery": "Service temporarily unavailable. Use os_health_check to check the system state and retry after "
+                    "the service recovers.",
     },
     # ---- Connection-level errors ----
     "connection_refused": {
         "category": "api_unavailable",
-        "recovery": "API服务未运行。系统将自动启动，请稍后重试。",
+        "recovery": "The API service is not running. The system will start it automatically; please retry shortly.",
     },
     "timeout": {
         "category": "timeout",
-        "recovery": "请求超时。稍后重试，如果持续超时使用os_health_check诊断。",
+        "recovery": "Request timed out. Retry shortly; if the timeouts persist, use os_health_check to diagnose.",
     },
     "unknown": {
         "category": "unknown",
-        "recovery": "未知错误。使用os_health_check检查系统状态，查看日志获取详细信息。",
+        "recovery": "Unknown error. Use os_health_check to check the system state and view the logs for details.",
     },
 }
 
 # Business-level error keywords in response body → error category
 # Matched against lower-cased response body text (longest key wins on tie)
 BUSINESS_ERROR_MAP: dict[str, str] = {
-    "不存在": "resource_not_found",
+    "\u4e0d\u5b58\u5728": "resource_not_found",
     "not found": "resource_not_found",
+    "does not exist": "resource_not_found",
     "already exists": "conflict",
-    "已存在": "conflict",
-    "已结束": "state_conflict",
+    "\u5df2\u5b58\u5728": "conflict",
+    "\u5df2\u7ed3\u675f": "state_conflict",
+    "has ended": "state_conflict",
     "permission": "permission_denied",
-    "权限": "permission_denied",
+    "\u6743\u9650": "permission_denied",
     "invalid": "validation_error",
-    "无效": "validation_error",
+    "\u65e0\u6548": "validation_error",
 }
 
 
