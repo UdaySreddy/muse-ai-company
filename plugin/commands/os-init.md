@@ -1,47 +1,47 @@
 ---
 name: os-init
-description: 初始化AI Team OS系统 — 生成配置文件和目录结构
+description: Initialize the AI Team OS system — generate config files and directory structure
 ---
 
-# /os-init — 系统初始化
+# /os-init — System Initialization
 
-你需要帮助用户初始化 AI Team OS 项目配置。
+Help the user initialize the AI Team OS project configuration.
 
-## 操作步骤
+## Steps
 
-1. 检查当前目录是否已有 `aiteam.yaml` 配置文件
-2. 如果已存在，询问用户是否需要重新初始化
-3. 向用户展示可用模板并让其选择：
-   - **research** — 研究团队模板（首席研究员 + 文献分析师 + 数据分析师）
-   - **development** — 开发团队模板（技术总监 + 后端开发 + 前端开发 + 测试工程师）
-   - **analysis** — 分析团队模板（首席分析师 + 数据采集员 + 数据建模师）
-   - **默认** — 空白配置，手动编辑
-4. 使用 Bash 工具执行初始化命令：
+1. Check whether an `aiteam.yaml` config file already exists in the current directory
+2. If it exists, ask the user whether they want to reinitialize
+3. Show the available templates and let the user choose:
+   - **research** — Research team template (principal researcher + literature analyst + data analyst)
+   - **development** — Development team template (technical director + backend developer + frontend developer + test engineer)
+   - **analysis** — Analysis team template (principal analyst + data collector + data modeler)
+   - **Default** — Blank configuration, edited manually
+4. Run the initialization command with the Bash tool:
    ```bash
    python -m aiteam.cli.app init --template <template>
    ```
-   或不带模板参数生成默认配置
-5. 展示初始化结果和后续步骤
+   or omit the template argument to generate the default configuration
+5. Show the initialization result and next steps
 
-## 初始化后提示
+## Post-initialization message
 
-初始化完成后，告知用户后续步骤：
+When initialization completes, tell the user the next steps:
 
 ```
-## 初始化完成
+## Initialization Complete
 
-已生成配置文件: aiteam.yaml
-已创建工作目录: .aiteam/
+Config file generated: aiteam.yaml
+Working directory created: .aiteam/
 
-### 后续步骤
-1. 编辑 `aiteam.yaml` 自定义团队配置
-2. 运行 `/os-up` 启动 API 服务
-3. 运行 `/os-status` 查看系统状态
-4. 运行 `/os-help` 查看更多可用命令
+### Next Steps
+1. Edit `aiteam.yaml` to customize the team configuration
+2. Run `/os-up` to start the API service
+3. Run `/os-status` to view system status
+4. Run `/os-help` to see more available commands
 ```
 
-## 注意
+## Notes
 
-- 所有输出使用中文
-- 如果配置文件已存在，必须先征得用户同意才能覆盖
-- 初始化不会启动服务，仅创建配置文件
+- Use English for all output
+- If the config file already exists, you must get the user's consent before overwriting it
+- Initialization does not start the service; it only creates config files

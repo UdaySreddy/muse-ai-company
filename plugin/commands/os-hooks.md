@@ -1,66 +1,67 @@
 ---
 name: os-hooks
-description: 查看 AI Team OS 的 Claude Code Hooks 注册状态与修复方式
+description: View the registration status of AI Team OS's Claude Code Hooks and how to repair them
 ---
 
-# /os-hooks — Hook 注册面查看
+# /os-hooks — View the Hook Registration Surface
 
-你需要帮助用户查看 AI Team OS 的 Claude Code Hooks 注册状态。
+Help the user view the registration status of AI Team OS's Claude Code Hooks.
 
-## 只有一个注册面
+## There is only one registration surface
 
-AI Team OS 的 hook **全部注册在全局 `~/.claude/settings.json`**，由仓库根的
-`install.py` 写入，事件面以 `plugin/hooks/hooks.json` 为准（数量以该文件实测为准）。
-脚本运行期副本在 `~/.claude/hooks/ai-team-os/`。
+All AI Team OS hooks are **registered in the global `~/.claude/settings.json`**, written by
+`install.py` at the repository root; the event surface follows `plugin/hooks/hooks.json`
+(use the actual counts measured from that file). Runtime copies of the scripts live in
+`~/.claude/hooks/ai-team-os/`.
 
-**不要向项目级 `.claude/settings.local.json` 写 AI Team OS 的 hook**——与全局链并存会让每个事件双发。
+**Do not write AI Team OS hooks into the project-level `.claude/settings.local.json`** — coexisting with the global chain would fire every event twice.
 
-## 用法
+## Usage
 
-- `/os-hooks` — 查看当前注册状态
-- `/os-hooks repair` — 重装/修复注册面
+- `/os-hooks` — View the current registration status
+- `/os-hooks repair` — Reinstall/repair the registration surface
 
-## 操作流程
+## Workflow
 
-### 无参数：查看状态
+### No arguments: view status
 
-1. 读取 `~/.claude/settings.json` 的 `hooks` 段，列出事件与 matcher。
-2. 跑一次三方一致性机检（注册面是否与仓库定义对得上）：
+1. Read the `hooks` section of `~/.claude/settings.json` and list the events and matchers.
+2. Run the three-way consistency check (does the registration surface match the repository definition):
    ```bash
    python3 scripts/check_hook_surface.py
    ```
-3. 确认运行期脚本目录存在且非空：`~/.claude/hooks/ai-team-os/`。
-4. 如果用户项目里存在 `.claude/settings.local.json` 且其 `hooks` 段含
-   `send_event.py`，那是会造成事件双发的残留：先把内容展示给用户，
-   征得同意后再删掉该 `hooks` 段。
+3. Confirm the runtime script directory exists and is non-empty: `~/.claude/hooks/ai-team-os/`.
+4. If the user's project has a `.claude/settings.local.json` whose `hooks` section contains
+   `send_event.py`, that is a leftover that would double-fire events: show the content to the
+   user first, and only delete that `hooks` section after obtaining their consent.
 
-### repair 模式
+### repair mode
 
-1. 说明将要改动 `~/.claude/settings.json`（先备份）。
-2. 执行：
+1. Explain that `~/.claude/settings.json` is about to be modified (back it up first).
+2. Run:
    ```bash
    python3 install.py --update
    ```
-   该命令按脚本名白名单清理我方旧条目后按 `HOOK_SURFACE` 重建，
-   外来 hook（用户自己的守卫脚本等）会被原样保留。
-3. 复跑 `python3 scripts/check_hook_surface.py` 确认全绿。
+   This command cleans up our old entries by a script-name allowlist, then rebuilds from
+   `HOOK_SURFACE`; foreign hooks (such as the user's own guard scripts) are preserved as-is.
+3. Re-run `python3 scripts/check_hook_surface.py` to confirm everything is green.
 
-## 输出格式
+## Output format
 
-### 状态查看
+### Status view
 ```
-## Hooks 注册状态
+## Hooks Registration Status
 
-注册面: ~/.claude/settings.json（全局，唯一）
-已注册 <N> 个事件 / <M> 条（按实读列出事件名）
+Registration surface: ~/.claude/settings.json (global, the only one)
+Registered <N> events / <M> entries (list the event names as actually read)
 
-运行期脚本: ~/.claude/hooks/ai-team-os/（<K> 个）
-API 目标: http://localhost:<api_port.txt>/api/hooks/event
-三方一致性机检: ✅ install.py ↔ hooks.json ↔ README
+Runtime scripts: ~/.claude/hooks/ai-team-os/ (<K> scripts)
+API target: http://localhost:<api_port.txt>/api/hooks/event
+Three-way consistency check: ✅ install.py ↔ hooks.json ↔ README
 ```
 
-## 注意
+## Notes
 
-- 所有输出使用中文
-- 改动 `~/.claude/settings.json` 前必须备份，并保留外来 hook 条目
-- 确保 API 服务已启动：`/os-up`
+- Use English for all output
+- Back up `~/.claude/settings.json` before modifying it, and preserve foreign hook entries
+- Make sure the API service is running: `/os-up`

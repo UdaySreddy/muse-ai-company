@@ -1,63 +1,63 @@
 ---
 name: os-doctor
-description: 诊断AI Team OS系统健康状态 — 检查服务、配置、依赖
+description: Diagnose AI Team OS system health — check services, configuration, and dependencies
 ---
 
-# /os-doctor — 系统诊断
+# /os-doctor — System Diagnostics
 
-你需要对 AI Team OS 进行全面的健康检查，帮助用户排查问题。
+Perform a comprehensive health check of AI Team OS and help the user troubleshoot problems.
 
-## 检查项目
+## Checklist
 
-按顺序执行以下检查，每项标记为通过/失败/警告：
+Run the following checks in order, marking each as pass/fail/warning:
 
-### 1. Python 环境
-- 检查 Python 版本 >= 3.12
-- 检查 `aiteam` 包是否已安装: `python -c "import aiteam; print(aiteam.__version__)"`
+### 1. Python environment
+- Check the Python version is >= 3.12
+- Check that the `aiteam` package is installed: `python -c "import aiteam; print(aiteam.__version__)"`
 
-### 2. 配置文件
-- 检查 `aiteam.yaml` 是否存在
-- 检查 `.aiteam/` 目录是否存在
+### 2. Config files
+- Check that `aiteam.yaml` exists
+- Check that the `.aiteam/` directory exists
 
-### 3. API 服务
-- 检查 http://localhost:8000/api/teams 是否可达（timeout 2秒）
-- 如果可达，显示响应状态
+### 3. API service
+- Check that http://localhost:8000/api/teams is reachable (timeout 2 seconds)
+- If reachable, show the response status
 
-### 4. 数据库
-- 检查 `aiteam.db` 文件是否存在（SQLite模式）
-- 或检查 PostgreSQL 连接（如果配置了）
+### 4. Database
+- Check that the `aiteam.db` file exists (SQLite mode)
+- Or check the PostgreSQL connection (if configured)
 
-### 5. Hooks 配置
-- 检查 `.claude/settings.local.json` 中是否配置了 hooks
-- 检查 hook 脚本文件是否存在
+### 5. Hooks configuration
+- Check whether hooks are configured in `.claude/settings.local.json`
+- Check that the hook script files exist
 
 ### 6. Dashboard
-- 检查 `dashboard/` 目录是否存在
-- 检查 `dashboard/node_modules/` 是否已安装依赖
+- Check that the `dashboard/` directory exists
+- Check whether dependencies are installed in `dashboard/node_modules/`
 
-## 输出格式
+## Output format
 
 ```
-## AI Team OS 系统诊断
+## AI Team OS System Diagnostics
 
-| 检查项 | 状态 | 详情 |
+| Check | Status | Details |
 |--------|------|------|
-| Python 环境 | PASS | Python 3.12.x |
-| aiteam 包 | PASS | v0.3.0 |
-| 配置文件 | PASS | aiteam.yaml 存在 |
-| API 服务 | FAIL | http://localhost:8000 不可达 |
-| 数据库 | PASS | aiteam.db (SQLite) |
-| Hooks 配置 | WARN | 已注册 14/17 条 |
-| Dashboard | PASS | 依赖已安装 |
+| Python environment | PASS | Python 3.12.x |
+| aiteam package | PASS | v0.3.0 |
+| Config files | PASS | aiteam.yaml exists |
+| API service | FAIL | http://localhost:8000 unreachable |
+| Database | PASS | aiteam.db (SQLite) |
+| Hooks configuration | WARN | 14/17 entries registered |
+| Dashboard | PASS | Dependencies installed |
 
-### 建议
-- API 服务未运行，请执行 `/os-up` 启动
-- Hooks 注册面不完整，请执行 `python3 install.py --update` 重建
+### Recommendations
+- The API service is not running; run `/os-up` to start it
+- The hook registration surface is incomplete; run `python3 install.py --update` to rebuild it
 ```
 
-## 注意
+## Notes
 
-- 所有输出使用中文
-- 状态标记: PASS=通过, FAIL=失败, WARN=警告
-- 对每个失败项给出具体的修复建议
-- 使用 Bash 工具执行检查命令
+- Use English for all output
+- Status markers: PASS=pass, FAIL=fail, WARN=warning
+- Give a concrete fix suggestion for each failing item
+- Use the Bash tool to run the check commands

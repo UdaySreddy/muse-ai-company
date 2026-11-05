@@ -1,70 +1,70 @@
 ---
 name: os-meeting
-description: 快速创建和管理AI团队会议
+description: Quickly create and manage AI team meetings
 ---
 
-# /os-meeting — 会议管理
+# /os-meeting — Meeting Management
 
-你需要帮助用户创建或管理 AI Team OS 中的会议。
+Help the user create or manage meetings in AI Team OS.
 
-## 用法
+## Usage
 
-用户可以通过以下方式调用：
-- `/os-meeting` — 显示活跃会议列表
-- `/os-meeting create <主题>` — 创建新会议
-- `/os-meeting <meeting_id>` — 查看指定会议详情和消息
+The user can invoke it in the following ways:
+- `/os-meeting` — Show the list of active meetings
+- `/os-meeting create <topic>` — Create a new meeting
+- `/os-meeting <meeting_id>` — View the details and messages of a specific meeting
 
-## 操作流程
+## Workflow
 
-### 无参数：列出活跃会议
+### No arguments: list active meetings
 
-1. 调用 `team_list` 获取所有团队
-2. 对每个团队调用 `meeting_list`（status=active）
-3. 以表格形式展示活跃会议
+1. Call `team_list` to get all teams
+2. For each team, call `meeting_list` (status=active)
+3. Present the active meetings in a table
 
-### create 模式：创建新会议
+### create mode: create a new meeting
 
-1. 向用户确认：
-   - 会议主题（如果用户已提供则直接使用）
-   - 目标团队（如只有一个团队则自动选择）
-   - 参与者列表（调用 `agent_list` 展示可选 Agent）
-2. 调用 `meeting_create` 创建会议
-3. 显示会议操作指引：
-   - 发送消息的 API 调用方式
-   - 讨论规则: R1各自观点 → R2+引用回应 → 最后汇总共识
+1. Confirm with the user:
+   - Meeting topic (use it directly if the user already provided one)
+   - Target team (auto-select if there is only one team)
+   - Participant list (call `agent_list` to show the available agents)
+2. Call `meeting_create` to create the meeting
+3. Show meeting usage guidance:
+   - How to send messages via the API
+   - Discussion rules: R1 individual views → R2+ quoted responses → final consensus summary
 
-### 查看模式：查看会议详情
+### View mode: view meeting details
 
-1. 调用 `meeting_get` 获取会议信息
-2. 调用 `meeting_messages` 获取消息列表
-3. 按轮次分组展示消息
+1. Call `meeting_get` to get the meeting info
+2. Call `meeting_messages` to get the message list
+3. Present the messages grouped by round
 
-## 输出格式
+## Output format
 
-### 会议列表
+### Meeting list
 ```
-## 活跃会议
+## Active Meetings
 
-| 会议ID | 主题 | 参与者 | 消息数 | 团队 |
+| Meeting ID | Topic | Participants | Messages | Team |
 |--------|------|--------|--------|------|
-| abc123 | 架构讨论 | 3人 | 12条 | dev-team |
+| abc123 | Architecture discussion | 3 people | 12 messages | dev-team |
 ```
 
-### 会议详情
+### Meeting details
 ```
-## 会议: <主题>
-状态: 活跃 | 参与者: A, B, C
+## Meeting: <topic>
+Status: Active | Participants: A, B, C
 
 ### Round 1
-**AgentA**: 发言内容...
-**AgentB**: 发言内容...
+**AgentA**: Statement content...
+**AgentB**: Statement content...
 
 ### Round 2
-**AgentA**: 发言内容...
+**AgentA**: Statement content...
 ```
 
-## 注意
+## Notes
 
-- 所有输出使用中文
-- 创建会议前确认参与者列表
-- 显示会议消息时按 round_number 分组
+- Use English for all output
+- Confirm the participant list before creating a meeting
+- Group messages by round_number when displaying them

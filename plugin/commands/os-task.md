@@ -1,73 +1,70 @@
 ---
 name: os-task
-description: AI团队任务管理 — 查看任务墙、创建任务、看任务详情
+description: AI team task management — view the task wall, create tasks, view task details
 ---
 
-# /os-task — 任务管理
+# /os-task — Task Management
 
-帮助用户管理 AI Team OS 的任务墙。
+Help the user manage the AI Team OS task wall.
 
-## 用法
+## Usage
 
-- `/os-task` — 查看当前项目的任务墙
-- `/os-task <team_id|团队名>` — 只看某支队的任务墙
-- `/os-task new <描述>` — 把一件事放上任务墙
-- `/os-task <task_id>` — 查看单个任务详情与进展记录
+- `/os-task` — View the current project's task wall
+- `/os-task <team_id|team name>` — View only one team's task wall
+- `/os-task new <description>` — Put something on the task wall
+- `/os-task <task_id>` — View a single task's details and progress records
 
-## 操作流程
+## Workflow
 
-### 无参数：看任务墙
+### No arguments: view the task wall
 
-调用 `task_list_project()`（不传参即用当前活跃项目）。返回按 short/mid/long
-三档分组、组内按 score 排序的任务，直接照此顺序展示——这个排序就是"接下来该
-做什么"的答案，不要自行重排。
+Call `task_list_project()` (with no arguments it uses the current active project). It returns tasks grouped into short/mid/long tiers, sorted by score within each group; present them in exactly that order — that ordering is the answer to "what should be done next", so do not re-sort it yourself.
 
-只看一支队时传 `task_list_project(team_id="<队名或ID>")`。
+To view only one team, pass `task_list_project(team_id="<team name or ID>")`.
 
-### new 模式：把任务放上墙
+### new mode: put a task on the wall
 
-1. 确认两件事（用户已给出就不要再问）：任务描述、目标团队。
-   团队用 `team_list()` 取；只有一支活跃队就直接用它。
-2. 调用 `task_create(...)`；若要立刻挂到某支队名下并带优先级/时间档，
-   用 `task_run(team_id=..., description=..., priority=..., horizon=...)`。
-3. **任务上墙 ≠ 有人在做**：OS 不会自己执行任务。要推进就用 CC 的 `Agent(...)`
-   派人，并在 prompt 里写明 task_id，让其用 `task_memo_add` 回写进展。
+1. Confirm two things (do not ask again if the user already provided them): the task description and the target team.
+   Get teams with `team_list()`; if there is only one active team, use it directly.
+2. Call `task_create(...)`; to attach it to a team immediately with priority/time tier,
+   use `task_run(team_id=..., description=..., priority=..., horizon=...)`.
+3. **A task on the wall ≠ someone is working on it**: the OS does not execute tasks by itself. To move it forward, dispatch someone with CC's `Agent(...)`, and state the task_id in the prompt so they can write progress back with `task_memo_add`.
 
-### 查看模式：任务详情
+### View mode: task details
 
-1. `task_status(task_id)` — 状态、归属、依赖、结果。
-2. `task_memo_read(task_id)` — 历史进展记录（接手前必读）。
-3. 想看完整时间线：`task_execution_trace(task_id)`；要连带耗时/步数统计就
-   `task_execution_trace(task_id, include_stats=True)`。
+1. `task_status(task_id)` — status, ownership, dependencies, result.
+2. `task_memo_read(task_id)` — historical progress records (must-read before taking over).
+3. For the full timeline: `task_execution_trace(task_id)`; for duration/step statistics as well,
+   `task_execution_trace(task_id, include_stats=True)`.
 
-## 输出格式
+## Output format
 
-### 任务墙
+### Task wall
 ```
-## 项目任务墙（short / mid / long）
+## Project Task Wall (short / mid / long)
 
 ### short
-| 优先级 | 任务ID | 标题 | 状态 | 分配给 |
+| Priority | Task ID | Title | Status | Assigned to |
 |--------|--------|------|------|--------|
-| critical | 3f2a… | 修复登录 500 | running | backend-dev |
+| critical | 3f2a… | Fix login 500 | running | backend-dev |
 ```
 
-### 任务详情
+### Task details
 ```
-## 任务 3f2a…
+## Task 3f2a…
 
-状态: running   优先级: critical   归属: dev-team
-依赖: 无        分配给: backend-dev
+Status: running   Priority: critical   Owner: dev-team
+Dependencies: none        Assigned to: backend-dev
 
-### 进展记录
-- [progress] 已复现，定位到 session 中间件
-- [decision] 采用 A 方案，理由…
+### Progress Records
+- [progress] Reproduced; traced to the session middleware
+- [decision] Going with option A, because…
 ```
 
-## 注意
+## Notes
 
-- 所有输出使用中文
-- 状态用中文标记：pending=待处理, running=进行中, blocked=被阻塞,
-  completed=已完成, failed=失败
-- 任务墙默认是精简视图（`view: "compact"`）——那是有意裁剪，不是字段缺失；
-  要全字段传 `fields="all"`，要单个任务的完整信息用 `task_status`
+- Use English for all output
+- Mark statuses in English: pending=pending, running=in progress, blocked=blocked,
+  completed=completed, failed=failed
+- The task wall defaults to a compact view (`view: "compact"`) — that is deliberate trimming, not missing fields;
+  pass `fields="all"` for all fields, and use `task_status` for a single task's full information

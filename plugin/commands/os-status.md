@@ -1,47 +1,47 @@
 ---
 name: os-status
-description: 显示AI Team OS系统状态 — 团队、Agent、会议概览
+description: Show AI Team OS system status — teams, agents, and meetings overview
 ---
 
-# /os-status — 系统状态概览
+# /os-status — System Status Overview
 
-你需要查询 AI Team OS API 并向用户展示系统当前的运行状态。
+Query the AI Team OS API and present the current system status to the user.
 
-## 操作步骤
+## Steps
 
-1. 调用 MCP tool `team_list` 获取所有团队列表
-2. 对每个团队，调用 `agent_list` 获取其 Agent 列表
-3. 对每个团队，调用 `meeting_list` 获取活跃会议（status=active）
-4. 将结果整理为清晰的状态报告
+1. Call the MCP tool `team_list` to get the list of all teams
+2. For each team, call `agent_list` to get its agents
+3. For each team, call `meeting_list` to get active meetings (status=active)
+4. Organize the results into a clear status report
 
-## 输出格式
+## Output format
 
-按以下结构组织输出：
+Structure the output as follows:
 
 ```
-## AI Team OS 系统状态
+## AI Team OS System Status
 
-### 团队
-- 团队名称 | 编排模式 | Agent数量
+### Teams
+- Team name | Orchestration mode | Agent count
 
-### Agent一览
-- Agent名称 | 角色 | 状态(IDLE/BUSY/OFFLINE) | 所属团队
+### Agents
+- Agent name | Role | Status (IDLE/BUSY/OFFLINE) | Team
 
-### 活跃会议
-- 会议主题 | 参与者 | 消息数 | 所属团队
+### Active Meetings
+- Meeting topic | Participants | Message count | Team
 
-### 系统信息
-- API地址: http://localhost:8000
+### System Info
+- API address: http://localhost:8000
 - Dashboard: http://localhost:3000
 ```
 
-## 错误处理
+## Error handling
 
-如果 API 不可达，输出：
-> AI Team OS 服务未运行。请先执行 `/os-up` 启动服务。
+If the API is unreachable, output:
+> The AI Team OS service is not running. Run `/os-up` first to start the service.
 
-## 注意
+## Notes
 
-- 所有输出使用中文
-- Agent 状态用不同标记区分: IDLE=空闲, BUSY=忙碌, OFFLINE=离线
-- 如果没有任何团队，提示用户使用 `/os-init` 初始化项目
+- Use English for all output
+- Distinguish agent statuses with markers: IDLE=idle, BUSY=busy, OFFLINE=offline
+- If there are no teams, prompt the user to initialize the project with `/os-init`

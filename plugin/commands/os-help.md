@@ -1,62 +1,62 @@
 ---
 name: os-help
-description: 显示AI Team OS所有可用命令和使用帮助
+description: Show all available AI Team OS commands and usage help
 ---
 
-# /os-help — 帮助信息
+# /os-help — Help
 
-直接向用户展示 AI Team OS 的所有可用斜杠命令和使用说明。
+Show the user all of AI Team OS's available slash commands and usage instructions directly.
 
-## 输出内容
+## Output content
 
-展示以下帮助信息：
+Show the following help information:
 
 ```
-## AI Team OS — 命令帮助
+## AI Team OS — Command Help
 
-### 核心命令
-| 命令 | 说明 |
+### Core Commands
+| Command | Description |
 |------|------|
-| `/os-status` | 显示系统状态 — 团队、Agent、会议概览 |
-| `/os-up` | 启动 API 服务器 |
-| `/os-init` | 初始化项目 — 生成配置文件 |
-| `/os-doctor` | 诊断系统健康状态 |
+| `/os-status` | Show system status — teams, agents, meetings overview |
+| `/os-up` | Start the API server |
+| `/os-init` | Initialize the project — generate config files |
+| `/os-doctor` | Diagnose system health |
 
-### 协作命令
-| 命令 | 说明 |
+### Collaboration Commands
+| Command | Description |
 |------|------|
-| `/os-meeting` | 会议管理 — 创建、查看会议 |
-| `/os-meeting create <主题>` | 快速创建会议 |
-| `/os-task` | 任务管理 — 查看、执行任务 |
-| `/os-task run <描述>` | 创建并执行任务 |
+| `/os-meeting` | Meeting management — create and view meetings |
+| `/os-meeting create <topic>` | Quickly create a meeting |
+| `/os-task` | Task management — view and run tasks |
+| `/os-task run <description>` | Create and run a task |
 
-### 配置命令
-| 命令 | 说明 |
+### Configuration Commands
+| Command | Description |
 |------|------|
-| `/os-hooks` | 查看 Hooks 注册状态 |
-| `/os-hooks repair` | 重建 Hook 注册面 |
-| `/os-help` | 显示本帮助信息 |
+| `/os-hooks` | View hooks registration status |
+| `/os-hooks repair` | Rebuild the hook registration surface |
+| `/os-help` | Show this help information |
 
-### Skills (团队成员可用)
-| Skill | 说明 |
+### Skills (available to team members)
+| Skill | Description |
 |-------|------|
-| `/meeting-participate` | 作为参与者加入会议 |
-| `/meeting-facilitate` | 作为主持人管理会议 |
+| `/meeting-participate` | Join a meeting as a participant |
+| `/meeting-facilitate` | Manage a meeting as the facilitator |
 
-### 快速上手
-1. `/os-init` — 初始化项目配置
-2. `/os-up` — 启动服务
-3. `/os-status` — 确认系统就绪
-4. `/os-meeting create 架构讨论` — 开始第一次团队会议
+### Quick Start
+1. `/os-init` — Initialize the project configuration
+2. `/os-up` — Start the services
+3. `/os-status` — Confirm the system is ready
+4. `/os-meeting create Architecture discussion` — Start your first team meeting
 
-### 更多信息
-- API 文档: http://localhost:8000/docs
+### More Information
+- API docs: http://localhost:8000/docs
 - Dashboard: http://localhost:3000
-- 项目文档: docs/architecture.md
+- Project docs: docs/architecture.md
 ```
 
-## 注意
+## Notes
 
-- 所有输出使用中文
-- 直接输出帮助信息，无需调用任何 API
-- 保持格式简洁清晰
+- Use English for all output
+- Output the help information directly; no API calls are needed
+- Keep the format concise and clear

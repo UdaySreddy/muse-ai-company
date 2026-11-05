@@ -1,62 +1,62 @@
 ---
 name: os-up
-description: 一键启动AI Team OS服务 — API + Dashboard
+description: Start the AI Team OS services in one step — API + Dashboard
 ---
 
-# /os-up — 一键启动服务
+# /os-up — One-Step Service Startup
 
-启动 AI Team OS 的 API 服务器和 Dashboard 前端。
+Start the AI Team OS API server and Dashboard frontend.
 
-## 操作步骤
+## Steps
 
-### 1. 检测API服务
+### 1. Check the API service
 ```bash
 curl -s --max-time 2 http://localhost:8000/api/teams
 ```
-- 如果返回JSON → API已在运行，跳到步骤3
-- 如果超时/失败 → 执行步骤2
+- If it returns JSON → the API is already running; skip to step 3
+- If it times out/fails → go to step 2
 
-### 2. 启动API服务（后台）
+### 2. Start the API service (in the background)
 ```bash
-# 在项目根目录执行（即包含 pyproject.toml 的目录）
+# Run in the project root (the directory containing pyproject.toml)
 python -m uvicorn aiteam.api.app:create_app --host 0.0.0.0 --port 8000 --factory &
 ```
-等待3秒后验证：
+Wait 3 seconds, then verify:
 ```bash
 curl -s --max-time 3 http://localhost:8000/api/teams
 ```
 
-### 3. 检测Dashboard
+### 3. Check the Dashboard
 ```bash
 curl -s --max-time 2 http://localhost:5173
 ```
-- 如果返回HTML → Dashboard已在运行，跳到步骤5
-- 如果超时/失败 → 执行步骤4
+- If it returns HTML → the Dashboard is already running; skip to step 5
+- If it times out/fails → go to step 4
 
-### 4. 启动Dashboard（后台）
+### 4. Start the Dashboard (in the background)
 ```bash
-# 在项目的 dashboard 子目录执行
+# Run in the project's dashboard subdirectory
 cd dashboard
 npm run dev &
 ```
-等待5秒后验证：
+Wait 5 seconds, then verify:
 ```bash
 curl -s --max-time 3 http://localhost:5173
 ```
 
-### 5. 报告状态
+### 5. Report status
 
-显示：
+Show:
 ```
-AI Team OS 服务状态:
+AI Team OS service status:
 - API: http://localhost:8000 ✅/❌
 - Dashboard: http://localhost:5173 ✅/❌
-- API文档: http://localhost:8000/docs
+- API docs: http://localhost:8000/docs
 - WebSocket: ws://localhost:8000/ws
 ```
 
-## 注意
-- 使用后台方式启动（`&`），不阻塞当前会话
-- 启动前检测避免重复启动
-- Dashboard使用npm run dev（开发模式），关闭时用Ctrl+C或'q'
-- 如果启动失败，提示检查依赖：`pip install -e ".[all]"` 和 `cd dashboard && npm install`
+## Notes
+- Start services in the background (`&`) so the current session is not blocked
+- Check before starting to avoid duplicate instances
+- The Dashboard runs with npm run dev (development mode); stop it with Ctrl+C or 'q'
+- If startup fails, suggest checking dependencies: `pip install -e ".[all]"` and `cd dashboard && npm install`
