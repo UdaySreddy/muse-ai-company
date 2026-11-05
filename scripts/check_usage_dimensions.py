@@ -3,19 +3,29 @@
 
 Red line (token usage attribution v1 design §4.4 / P1):
 
-    Usage-related presentation surfaces (API schema field names + frontend display units) may only use four kinds of dimensions:
-    tokens (four layers, listed separately), counts, duration in milliseconds, percentages. The appearance of any dimension outside these kinds fails.
+    Usage-related presentation surfaces (API schema field names + frontend display units) may only use four kinds of
+    dimensions:
+    tokens (four layers, listed separately), counts, duration in milliseconds, percentages. The appearance of any
+    dimension outside these kinds fails.
 
-Why an allowlist rather than a banned-word list: a blacklist has to exhaustively enumerate every out-of-bounds phrasing (multiple languages, symbols, abbreviations, slang)
-to work, and missing one breaks the defense; an allowlist only has to confirm four legal values, and a new dimension must be explicitly reviewed.
+Why an allowlist rather than a banned-word list: a blacklist has to exhaustively enumerate every out-of-bounds phrasing
+(multiple languages, symbols, abbreviations, slang)
+to work, and missing one breaks the defense; an allowlist only has to confirm four legal values, and a new dimension
+must be explicitly reviewed.
 
-For the allowlist to hold, the precondition is "there are no undeclared presentation surfaces", so this check is three things rather than one:
+For the allowlist to hold, the precondition is "there are no undeclared presentation surfaces", so this check is three
+things rather than one:
 
-1. **Complete declaration**: every numeric field of every model in the registry must agree **bidirectionally** with the actual fields
-   introspected from Pydantic. A new field with no declaration = red; a declaration for a deleted field = also red (a rotting registry silently disables the allowlist).
-2. **Legal dimensions**: every declared dimension must be in the four-kind allowlist; anything declared a "non-usage field" must state its reason.
-3. **No unregistered presentation surfaces**: any model in ``aiteam.types`` carrying token fields must be in the registry;
-   the same goes for any file under frontend ``dashboard/src`` in which a token identifier appears. Plus a safety net: a presentation surface
+1. **Complete declaration**: every numeric field of every model in the registry must agree **bidirectionally** with the
+actual fields
+   introspected from Pydantic. A new field with no declaration = red; a declaration for a deleted field = also red (a
+   rotting registry silently disables the allowlist).
+2. **Legal dimensions**: every declared dimension must be in the four-kind allowlist; anything declared a "non-usage
+field" must state its reason.
+3. **No unregistered presentation surfaces**: any model in ``aiteam.types`` carrying token fields must be in the
+registry;
+   the same goes for any file under frontend ``dashboard/src`` in which a token identifier appears. Plus a safety net: a
+   presentation surface
    on which a fifth-kind dimension word stem such as money/person-hours appears is red.
 
 Usage: python3 scripts/check_usage_dimensions.py   (run from the repo root)
@@ -56,7 +66,8 @@ def _words(identifier: str) -> list[str]:
 def _forbidden_word(identifier: str) -> str:
     """Return the fifth-kind dimension word this identifier hits, or an empty string if it hits none.
 
-    Singular and plural judged the same (``costs`` = ``cost``); adjacent words are merged and judged again, catching ``manHour`` /
+    Singular and plural judged the same (``costs`` = ``cost``); adjacent words are merged and judged again, catching
+    ``manHour`` /
     ``man_hour`` style spellings that each look innocent when split apart.
     """
     words = _words(identifier)
@@ -86,7 +97,8 @@ def _numeric_fields(model: object) -> set[str]:
 
 
 def _code_lines(path: Path) -> list[tuple[int, str]]:
-    """Return the source by line, skipping whole-line comments (explanatory text in comments is not a presentation surface)."""
+    """Return the source by line, skipping whole-line comments (explanatory text in comments is not a presentation
+    surface)."""
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -101,29 +113,35 @@ def _code_lines(path: Path) -> list[tuple[int, str]]:
 
 
 def check_python_schema() -> list[str]:
-    """API schema side: bidirectional comparison of the registry against actual Pydantic fields + dimension allowlist."""
+    """API schema side: bidirectional comparison of the registry against actual Pydantic fields + dimension
+    allowlist."""
     import aiteam.types as t
 
     problems: list[str] = []
     for surface in PY_SURFACES:
         model = getattr(t, surface.model, None)
         if model is None:
-            problems.append(f"The model aiteam.types.{surface.model} declared in the registry does not exist — registry rot")
+            problems.append(f"The model aiteam.types.{surface.model} declared in the registry does not exist — "
+                f"registry rot")
             continue
         actual = _numeric_fields(model)
         declared = set(surface.fields)
         for name in sorted(actual - declared):
             problems.append(
-                f"{surface.model}.{name}: the usage presentation surface gained a numeric field with an undeclared dimension — "
-                f"declare its dimension in scripts/usage_surface.py ({'/'.join(ALLOWED_DIMENSIONS)}) or exempt it by name"
+                f"{surface.model}.{name}: the usage presentation surface gained a numeric field with an undeclared "
+                f"dimension — "
+                f"declare its dimension in scripts/usage_surface.py ({'/'.join(ALLOWED_DIMENSIONS)}) or exempt it by "
+                f"name"
             )
         for name in sorted(declared - actual):
-            problems.append(f"{surface.model}.{name}: the registry declares a field that does not exist — when deleting a field, sync the registry")
+            problems.append(f"{surface.model}.{name}: the registry declares a field that does not exist — when "
+                f"deleting a field, sync the registry")
         for name in sorted(declared & actual):
             spec = surface.fields[name]
             if spec.dimension == NON_USAGE:
                 if not spec.note:
-                    problems.append(f"{surface.model}.{name}: declared a non-usage field but gave no reason — exemptions must be named")
+                    problems.append(f"{surface.model}.{name}: declared a non-usage field but gave no reason — "
+                        f"exemptions must be named")
             elif spec.dimension not in ALLOWED_DIMENSIONS:
                 problems.append(
                     f"{surface.model}.{name}: dimension '{spec.dimension}' is not in the whitelist — "
@@ -161,13 +179,15 @@ def check_forbidden_units() -> list[str]:
                 if hit:
                     problems.append(
                         f"{rel}:{lineno}: identifier '{ident}' hits fifth-kind dimension word '{hit}' — "
-                        f"usage presentation may only be expressed in tokens, cross-dimension conversion is forbidden (P1)"
+                        f"usage presentation may only be expressed in tokens, cross-dimension conversion is forbidden "
+                        f"(P1)"
                     )
     return problems
 
 
 def check_frontend() -> tuple[list[str], list[str]]:
-    """Frontend: bidirectional registration of presentation-surface files + dimension allowlist for token identifiers."""
+    """Frontend: bidirectional registration of presentation-surface files + dimension allowlist for token
+    identifiers."""
     problems: list[str] = []
     warnings: list[str] = []
     dash = ROOT / "dashboard" / "src"
@@ -190,11 +210,13 @@ def check_frontend() -> tuple[list[str], list[str]]:
 
     for rel in sorted(set(found) - declared):
         problems.append(
-            f"{rel}: has token identifiers {sorted(found[rel])} but is not registered as a usage presentation surface — "
+            f"{rel}: has token identifiers {sorted(found[rel])} but is not registered as a usage presentation surface "
+            f"— "
             f"register it in FRONTEND_SURFACES in scripts/usage_surface.py"
         )
     for rel in sorted(declared - set(found)):
-        problems.append(f"{rel}: registered in the registry as a usage presentation surface, but the file no longer contains token identifiers (or the file does not exist) — please sync the registry")
+        problems.append(f"{rel}: registered in the registry as a usage presentation surface, but the file no longer "
+            f"contains token identifiers (or the file does not exist) — please sync the registry")
     for rel in sorted(set(found) & declared):
         for ident in sorted(found[rel]):
             dim = FRONTEND_IDENTIFIERS.get(ident)
@@ -218,7 +240,8 @@ def main() -> int:
     for w in warnings:
         print(f"⚠️  {w}")
     if problems:
-        print("❌ Dimension allowlist violations — usage presentation surfaces may only show tokens/counts/duration in milliseconds/percentages:")
+        print("❌ Dimension allowlist violations — usage presentation surfaces may only show tokens/counts/duration in "
+            "milliseconds/percentages:")
         for p in problems:
             print(f"  {p}")
         print(f"\nTotal {len(problems)} places. Spec in docs/token-attribution-v1-design.md §4.4")
@@ -226,7 +249,8 @@ def main() -> int:
 
     py_fields = sum(len(s.fields) for s in PY_SURFACES)
     print(
-        f"✅ Dimension allowlist passed: {len(PY_SURFACES)} API schema presentation surfaces / {py_fields} numeric fields · "
+        f"✅ Dimension allowlist passed: {len(PY_SURFACES)} API schema presentation surfaces / {py_fields} numeric "
+        f"fields · "
         f"{len(FRONTEND_SURFACES)} frontend presentation surfaces / {len(FRONTEND_IDENTIFIERS)} token identifiers,"
         f"zero fifth-kind dimensions"
     )

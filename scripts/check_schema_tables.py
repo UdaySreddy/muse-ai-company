@@ -56,11 +56,13 @@ def compare(declared: set[str], actual: set[str]) -> tuple[list[str], list[str]]
     database. Returns ``(failures, warnings)``.
     """
     failures = [
-        f"{name}: the ORM declares this table, but it does not exist in the database — table creation failed or the table was lost in a machine move"
+        f"{name}: the ORM declares this table, but it does not exist in the database — table creation failed or the "
+        f"table was lost in a machine move"
         for name in sorted(declared - actual)
     ]
     warnings = [
-        f"{name}: the database has this table, but the ORM does not declare it — a leftover table from a retired feature (frozen, not deleted, only registered)"
+        f"{name}: the database has this table, but the ORM does not declare it — a leftover table from a retired "
+        f"feature (frozen, not deleted, only registered)"
         for name in sorted(actual - declared)
         if not _is_bookkeeping(name)
     ]
@@ -130,7 +132,8 @@ def main() -> int:
 
     # Half 1 — always runs, including in CI where no live database exists.
     for name in sorted(declared - creatable):
-        failures.append(f"{name}: the ORM declares this table, but create_all will not create it (Base registry inconsistency)")
+        failures.append(f"{name}: the ORM declares this table, but create_all will not create it (Base registry "
+            f"inconsistency)")
 
     # Half 2 — the live database, when this machine has one.
     path = live_db_path()

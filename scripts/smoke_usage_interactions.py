@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Interaction verification for the stage 5 `/usage` page (not a unit test; the smoke_ prefix keeps pytest from collecting it).
+"""Interaction verification for the stage 5 `/usage` page (not a unit test; the smoke_ prefix keeps pytest from
+collecting it).
 
-Verifies four things that can really break: drill-down can enter the next level, the unattributed drawer can collapse and expand, the single-measurement card can produce numbers,
+Verifies four things that can really break: drill-down can enter the next level, the unattributed drawer can collapse
+and expand, the single-measurement card can produce numbers,
 and an unattributed number on the matrix can switch the drawer to that path. Read-only; writes nothing to the DB.
 
 Usage: python3 scripts/smoke_usage_interactions.py <agent_id> [base_url]
@@ -50,7 +52,8 @@ def main() -> int:
         page.wait_for_timeout(5000)
         body = page.locator("body").inner_text()
         if "Drill into workflow run" not in body:
-            failures.append("After drilling down one level, the next level's (workflow run) drill-down entry did not appear")
+            failures.append("After drilling down one level, the next level's (workflow run) drill-down entry did not "
+                "appear")
         page.get_by_role("button", name="Drill into workflow run").first.scroll_into_view_if_needed()
         page.wait_for_timeout(500)
         page.screenshot(path=str(SHOTS / "usage-zh-05-drill-session.png"))
@@ -63,12 +66,14 @@ def main() -> int:
             page.get_by_role("button", name="Drill into agent").first.click()
             page.wait_for_timeout(5000)
             has_probe = page.get_by_role("button", name="Measure this one").count() > 0
-            print(f"③ Drilled down to the agent level, \"Measure this one\" button present: {'OK' if has_probe else 'MISSING'}")
+            print(f"③ Drilled down to the agent level, \"Measure this one\" button present: "
+                f"{'OK' if has_probe else 'MISSING'}")
             if not has_probe:
                 failures.append("The agent level did not show the \"Measure this one\" button")
             page.screenshot(path=str(SHOTS / "usage-zh-06-drill-agent.png"), full_page=True)
         else:
-            print("③ This path has no workflow-run children (that is what the data says), skipping the agent-level drill-down")
+            print("③ This path has no workflow-run children (that is what the data says), skipping the agent-level "
+                "drill-down")
 
         # ④ Single-measurement card: type an agent id by hand and get numbers
         box = page.get_by_placeholder("Paste an agent id, or hit \"Measure this one\" in the detail section above")

@@ -1,21 +1,27 @@
 #!/usr/bin/env python3
 """Red-line machine check I11 — the whole database may have only one clock.
 
-Incident background (docs/utc-unification-design.md): this database once ran two wall clocks at the same time: the core domain wrote
+Incident background (docs/utc-unification-design.md): this database once ran two wall clocks at the same time: the core
+domain wrote
 ``datetime.now()`` (host-local), and the ecosystem domain wrote ``datetime.now(tz=UTC)``. When SQLite
-stores an aware datetime it silently strips the offset, so rows of the two conventions look exactly alike, and cross-domain comparisons
-return an answer off by 8 hours **without raising any exception**. It lived for several months before one audit caught three places.
+stores an aware datetime it silently strips the offset, so rows of the two conventions look exactly alike, and
+cross-domain comparisons
+return an answer off by 8 hours **without raising any exception**. It lived for several months before one audit caught
+three places.
 
-The dual wall clocks were not decided by anyone; they were written casually, one module at a time. So fixing it is not enough — without a machine check,
+The dual wall clocks were not decided by anyone; they were written casually, one module at a time. So fixing it is not
+enough — without a machine check,
 the same thing will happen again, and again nobody will see it.
 
 Three guards:
 
 1. The Python side may not use bare wall clocks: ``datetime.now()`` / ``datetime.now(UTC)`` /
    ``datetime.fromtimestamp()`` must all go through ``aiteam.clock``.
-2. The Python side may not strip offsets by hand: ``astimezone().replace(tzinfo=None)`` is the old action that moves a value back to the local
+2. The Python side may not strip offsets by hand: ``astimezone().replace(tzinfo=None)`` is the old action that moves a
+value back to the local
    clock; it has been replaced by ``to_naive_utc()``.
-3. The frontend may not bare-parse server time strings: ``new Date(<string>)`` reads a string without an offset in the browser's local
+3. The frontend may not bare-parse server time strings: ``new Date(<string>)`` reads a string without an offset in the
+browser's local
    timezone, which is exactly why ecosystem page times were 8 hours early. Always go through ``@/lib/datetime``.
 
 Exit codes: 0=all pass, 1=violations found.
@@ -29,7 +35,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Hook scripts are standalone processes running outside the aiteam package (and must be byte-for-byte identical to plugin/hooks, I1),
+# Hook scripts are standalone processes running outside the aiteam package (and must be byte-for-byte identical to
+# plugin/hooks, I1),
 # so they cannot import aiteam.clock; they only use UTC anyway.
 PY_EXEMPT_DIRS = ("src/aiteam/hooks",)
 PY_EXEMPT_FILES = (
@@ -39,8 +46,10 @@ PY_EXEMPT_FILES = (
 )
 SCRIPT_EXEMPT = (
     "scripts/hn_monitor.py",  # a standalone small tool unrelated to production data
-    # The shift script's job is precisely to convert local wall-clock values to UTC; comparing "local now" with "UTC now" is its
-    # very criterion. It also deliberately does not import aiteam — it must be able to run against a bare .db file without depending on the package.
+    # The shift script's job is precisely to convert local wall-clock values to UTC; comparing "local now" with "UTC
+    # now" is its
+    # very criterion. It also deliberately does not import aiteam — it must be able to run against a bare .db file
+    # without depending on the package.
     "scripts/migrate_timestamps_utc.py",
 )
 
@@ -125,7 +134,8 @@ def main() -> int:
     ts = sum(1 for _ in (ROOT / "dashboard" / "src").rglob("*.ts*")) if (
         ROOT / "dashboard" / "src"
     ).is_dir() else 0
-    print(f"✅ Clock convention unified: {py} Python modules / {ts} frontend modules, zero bare wall clocks, zero bare parsing")
+    print(f"✅ Clock convention unified: {py} Python modules / {ts} frontend modules, zero bare wall clocks, zero bare "
+        f"parsing")
     return 0
 
 

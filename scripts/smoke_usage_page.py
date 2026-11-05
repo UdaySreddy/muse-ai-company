@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Browser live-verification script for the stage 5 `/usage` page (not a unit test, hence the smoke_ prefix to keep pytest from collecting it).
+"""Browser live-verification script for the stage 5 `/usage` page (not a unit test, hence the smoke_ prefix to keep
+pytest from collecting it).
 
 Read-only: opens the page, clicks a few things, takes screenshots. Writes nothing to the DB and changes no state.
-Run it once per language — the page is fully i18n-driven, so verifying only one language is the same as not verifying the other.
+Run it once per language — the page is fully i18n-driven, so verifying only one language is the same as not verifying
+the other.
 
 Usage: python3 scripts/smoke_usage_page.py [base_url]
 """

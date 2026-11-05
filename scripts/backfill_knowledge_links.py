@@ -1,4 +1,5 @@
-"""Knowledge layer P1a — historical backfill: scan existing memos/reports and build reference edges (idempotent, can be run repeatedly).
+"""Knowledge layer P1a — historical backfill: scan existing memos/reports and build reference edges (idempotent, can be
+run repeatedly).
 
 Usage: python3 scripts/backfill_knowledge_links.py
 Connects directly to the production DB (~/.claude/data/ai-team-os/aiteam.db); UNIQUE conflicts are silently ignored.

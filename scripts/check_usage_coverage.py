@@ -1,28 +1,41 @@
 #!/usr/bin/env python3
-"""I13 — coverage same-screen red-line machine check (token values may not appear detached from their metric and denominator).
+"""I13 — coverage same-screen red-line machine check (token values may not appear detached from their metric and
+denominator).
 
 Red line (token usage attribution v1 design §4.4 / §2.5 / P2):
 
-    For any token value on any presentation surface, if the C_measure of its scope is < 100%, the unattributed portion must be shown
+    For any token value on any presentation surface, if the C_measure of its scope is < 100%, the unattributed portion
+    must be shown
     on the same screen at the same level. Its absence counts as a red-line violation.
 
-And its precondition — **any token value, detached from a metric label, is meaningless** (§0.2). This database simultaneously
-has two orthogonal metrics, measured to differ by 5-25x; putting them side by side or adding them up is the same class of accident as the one just suffered on timestamps.
+And its precondition — **any token value, detached from a metric label, is meaningless** (§0.2). This database
+simultaneously
+has two orthogonal metrics, measured to differ by 5-25x; putting them side by side or adding them up is the same class
+of accident as the one just suffered on timestamps.
 
 Four guards:
 
-1. **Metric must be labeled**: every token dimension field in the registry must carry a metric, and the metric must be in the closed set
-   recognized by ``aiteam.types`` (the two TokenMetric members + the context watermark that does not participate in attribution).
-2. **Metric on the same screen**: the metric label must **appear next to the field** (inside that model's source block in ``types.py``),
-   not only in this registry. A page comment is a soft constraint that your future self three months later will ignore; a metric written
+1. **Metric must be labeled**: every token dimension field in the registry must carry a metric, and the metric must be
+in the closed set
+   recognized by ``aiteam.types`` (the two TokenMetric members + the context watermark that does not participate in
+   attribution).
+2. **Metric on the same screen**: the metric label must **appear next to the field** (inside that model's source block
+in ``types.py``),
+   not only in this registry. A page comment is a soft constraint that your future self three months later will ignore;
+   a metric written
    next to the field is something the next person to change that line cannot dodge.
-3. **Aggregate surfaces must carry the denominator**: an aggregating presentation surface must return ``dispatches_total`` /
-   ``unattributed_reasons`` at the same level, and an aggregate surface of the ``usage_sum`` metric **may not** declare a gap
+3. **Aggregate surfaces must carry the denominator**: an aggregating presentation surface must return
+``dispatches_total`` /
+   ``unattributed_reasons`` at the same level, and an aggregate surface of the ``usage_sum`` metric **may not** declare
+   a gap
    — the denominator of attribution numbers admits no exceptions.
-4. **Row surfaces: no-data ≠ zero**: on a record surface with one fact per row, "not collected" must be distinguishable from "really 0"
-   (the column may be None); surfaces that cannot do this must declare the gap by name, and the machine check prints it out every time.
+4. **Row surfaces: no-data ≠ zero**: on a record surface with one fact per row, "not collected" must be distinguishable
+from "really 0"
+   (the column may be None); surfaces that cannot do this must declare the gap by name, and the machine check prints it
+   out every time.
 
-Guards 3 and 4 today are respectively in the "cocked but not fired" and "two gaps already declared" states — that is the honest picture:
+Guards 3 and 4 today are respectively in the "cocked but not fired" and "two gaps already declared" states — that is the
+honest picture:
 stage 0 only rectifies metric names, aggregate surfaces land in stage 2, and frontend badges land in stage 5.
 
 Usage: python3 scripts/check_usage_coverage.py   (run from the repo root)
@@ -90,7 +103,8 @@ def check_python() -> tuple[list[str], list[str]]:
             if not spec.metric:
                 problems.append(
                     f"{surface.model}.{name}: metric not labeled — "
-                    f"a token number detached from its metric is meaningless (usage_sum and ctx_last measured 5-25x apart)"
+                    f"a token number detached from its metric is meaningless (usage_sum and ctx_last measured 5-25x "
+                    f"apart)"
                 )
                 continue
             if spec.metric not in allowed_metrics:
@@ -105,7 +119,8 @@ def check_python() -> tuple[list[str], list[str]]:
             if spec.metric.lower() not in source.lower():
                 problems.append(
                     f"{surface.model}.{name}: metric '{spec.metric}' is only written in the registry,"
-                    f"and is not visible inside the {surface.model} definition block in types.py — the metric label must be on the same screen as the field"
+                    f"and is not visible inside the {surface.model} definition block in types.py — the metric label "
+                    f"must be on the same screen as the field"
                 )
 
         if surface.kind == "aggregate":
@@ -114,12 +129,14 @@ def check_python() -> tuple[list[str], list[str]]:
             if missing:
                 problems.append(
                     f"{surface.model}: aggregate presentation surface missing same-level coverage fields {missing} — "
-                    f"values, denominator and unattributed must live and die together, otherwise a part impersonates the whole"
+                    f"values, denominator and unattributed must live and die together, otherwise a part impersonates "
+                    f"the whole"
                 )
             if surface.coverage_gap and any(s.metric == "usage_sum" for s in token_fields.values()):
                 problems.append(
                     f"{surface.model}: a usage_sum aggregate surface does not accept gap declarations "
-                    f"(declared {sorted(surface.coverage_gap)}) — the denominator of attribution numbers has no exceptions"
+                    f"(declared {sorted(surface.coverage_gap)}) — the denominator of attribution numbers has no "
+                    f"exceptions"
                 )
             continue
 
@@ -137,7 +154,8 @@ def check_python() -> tuple[list[str], list[str]]:
                 )
             elif optional and declared:
                 problems.append(
-                    f"{surface.model}.{name}: the field is already nullable yet still carries a coverage_gap declaration — gap already closed, please clean the registry"
+                    f"{surface.model}.{name}: the field is already nullable yet still carries a coverage_gap "
+                    f"declaration — gap already closed, please clean the registry"
                 )
             elif declared:
                 warnings.append(f"declared coverage gap {surface.model}.{name}: {surface.coverage_gap[name]}")
@@ -147,8 +165,10 @@ def check_python() -> tuple[list[str], list[str]]:
 def check_frontend() -> tuple[list[str], list[str]]:
     """Frontend: once a usage_sum value reaches a page, it must carry an unattributed annotation on the same screen.
 
-    Today this one is cocked but not fired — the four usage layers have not yet appeared on any page. The moment stage 5's ``/usage``
-    page lands, it takes effect automatically, and that is exactly the moment when it is easiest to "put the numbers up first and do coverage next version".
+    Today this one is cocked but not fired — the four usage layers have not yet appeared on any page. The moment stage
+    5's ``/usage``
+    page lands, it takes effect automatically, and that is exactly the moment when it is easiest to "put the numbers up
+    first and do coverage next version".
     """
     import aiteam.types as t
 
@@ -185,7 +205,8 @@ def main() -> int:
     for w in py_warnings + fe_warnings:
         print(f"⚠️  {w}")
     if problems:
-        print("❌ Coverage same-screen red-line violations — token values may not appear detached from metric and denominator:")
+        print("❌ Coverage same-screen red-line violations — token values may not appear detached from metric and "
+            "denominator:")
         for p in problems:
             print(f"  {p}")
         print(f"\nTotal {len(problems)} places. Spec in docs/token-attribution-v1-design.md §4.4 / §2.5")
@@ -196,8 +217,10 @@ def main() -> int:
     )
     gaps = sum(len(s.coverage_gap) for s in PY_SURFACES)
     print(
-        f"✅ Coverage same-screen red line passed: {token_fields} token fields all carry a metric and the metric is on the same screen as the field · "
-        f"{len(FRONTEND_SURFACES)} frontend presentation surfaces with zero bare usage_sum · {gaps} declared gaps (see warnings above)"
+        f"✅ Coverage same-screen red line passed: {token_fields} token fields all carry a metric and the metric is on "
+        f"the same screen as the field · "
+        f"{len(FRONTEND_SURFACES)} frontend presentation surfaces with zero bare usage_sum · {gaps} declared gaps (see "
+        f"warnings above)"
     )
     return 0
 

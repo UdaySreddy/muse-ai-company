@@ -2,24 +2,35 @@
 """Shift existing timestamps: local wall clock → UTC. Dry-run by default.
 
 Spec in docs/utc-unification-design.md. In brief: this database used to run two wall clocks — the core domain wrote
-host-local time, the ecosystem domain wrote UTC — and SQLite storage silently strips the offset, so rows of the two conventions look
-exactly alike. The code side has been unified to UTC (``aiteam.clock``); this script converts the local wall-clock values
+host-local time, the ecosystem domain wrote UTC — and SQLite storage silently strips the offset, so rows of the two
+conventions look
+exactly alike. The code side has been unified to UTC (``aiteam.clock``); this script converts the local wall-clock
+values
 **already written** into UTC.
 
 Four things determine the shape of this script:
 
-1. **Shift per column + exclude row by row.** A column's writer kept one convention for most of the database's life (the core domain
-   always wrote local), but after the new code merged, **every newly started process writes UTC**, so a column will contain a minority of rows that are already
-   UTC. While shifting the whole column, those rows must be picked out and excluded one by one — they are already in the target state, and subtracting
-   another timezone would put them permanently 16 hours wrong. Detection is computed fresh against the whole database at execution time (see :func:`detect_contamination`)
+1. **Shift per column + exclude row by row.** A column's writer kept one convention for most of the database's life (the
+core domain
+   always wrote local), but after the new code merged, **every newly started process writes UTC**, so a column will
+   contain a minority of rows that are already
+   UTC. While shifting the whole column, those rows must be picked out and excluded one by one — they are already in the
+   target state, and subtracting
+   another timezone would put them permanently 16 hours wrong. Detection is computed fresh against the whole database at
+   execution time (see :func:`detect_contamination`)
    and consumes no fixed row-number list: the contamination grows with time, so yesterday's list is wrong today.
-2. **Rows that cannot be judged may not be silently shifted.** Rows the evidence can judge (convention certain) are handled automatically; rows it cannot
+2. **Rows that cannot be judged may not be silently shifted.** Rows the evidence can judge (convention certain) are
+handled automatically; rows it cannot
    go one by one into the journal's undecidable list, and only proceed after a human review plus ``--ack-undecidable``.
-3. **Shift only once.** After a successful ``--apply``, an idempotency marker is stamped on the database (``PRAGMA user_version``);
-   a second ``--apply`` hard-refuses. A ``--journal`` target file that already exists likewise hard-refuses — it is the only recovery credential, and
+3. **Shift only once.** After a successful ``--apply``, an idempotency marker is stamped on the database (``PRAGMA
+user_version``);
+   a second ``--apply`` hard-refuses. A ``--journal`` target file that already exists likewise hard-refuses — it is the
+   only recovery credential, and
    overwriting it is destroying it.
-4. **Reversible and lossless.** The shift is a pure value transformation; sub-second digits are preserved as-is (see :func:`shift_expr`);
-   ``--rollback`` moves values back by the shift amount and exclusion list recorded in the journal; excluded rows are untouched both times.
+4. **Reversible and lossless.** The shift is a pure value transformation; sub-second digits are preserved as-is (see
+:func:`shift_expr`);
+   ``--rollback`` moves values back by the shift amount and exclusion list recorded in the journal; excluded rows are
+   untouched both times.
 
 Usage::
 
@@ -47,9 +58,12 @@ DEFAULT_DB = Path.home() / ".claude" / "data" / "ai-team-os" / "aiteam.db"
 # ---------------------------------------------------------------------------
 # The list of columns to shift — corresponding item by item to docs/utc-unification-design.md §3.1.
 #
-# The basis for judging is the writer's code (the core domain uniformly uses host-local datetime.now()), verified against the production database:
-# each table's max(value) equals the **local** wall clock at forensics time, while the ecosystem domain's tables' max values fall on the UTC side,
-# and the two domains' distributions do not overlap. ecosystem_* and pipeline_stage_history already write UTC and are **not in this list**.
+# The basis for judging is the writer's code (the core domain uniformly uses host-local datetime.now()), verified
+# against the production database:
+# each table's max(value) equals the **local** wall clock at forensics time, while the ecosystem domain's tables' max
+# values fall on the UTC side,
+# and the two domains' distributions do not overlap. ecosystem_* and pipeline_stage_history already write UTC and are
+# **not in this list**.
 # ---------------------------------------------------------------------------
 LOCAL_COLUMNS: dict[str, tuple[str, ...]] = {
     "projects": ("created_at", "updated_at"),
@@ -86,10 +100,14 @@ LOCAL_COLUMNS: dict[str, tuple[str, ...]] = {
     "knowledge_links": ("created_at",),
 }
 
-# Each table's "birth column": written once at insert time and never updated afterwards. It is the **only** column that can use rowid (physical write
-# order) for monotonicity detection — an increasing rowid means an increasing write order, and a value that drops back by about one timezone relative to the prefix maximum is
-# the fingerprint of a UTC write. Every other column is rewritten in place by UPDATE, decoupling rowid from the value's timing; those can only be judged by the cross-column oracle.
-# Which class a column belongs to **is not a heuristic; it is a fact of the writer's code**; when the ORM changes, this must be synced.
+# Each table's "birth column": written once at insert time and never updated afterwards. It is the **only** column that
+# can use rowid (physical write
+# order) for monotonicity detection — an increasing rowid means an increasing write order, and a value that drops back
+# by about one timezone relative to the prefix maximum is
+# the fingerprint of a UTC write. Every other column is rewritten in place by UPDATE, decoupling rowid from the value's
+# timing; those can only be judged by the cross-column oracle.
+# Which class a column belongs to **is not a heuristic; it is a fact of the writer's code**; when the ORM changes, this
+# must be synced.
 ROW_BIRTH_COLUMN: dict[str, str] = {
     "projects": "created_at",
     "phases": "created_at",
@@ -113,12 +131,15 @@ ROW_BIRTH_COLUMN: dict[str, str] = {
     "knowledge_links": "created_at",
 }
 
-# Columns guaranteed "not earlier than the birth column" — they record "what happened to this row later", so ``birth column <= this column``
-# for the same row is a **structural invariant**, usable bidirectionally as an oracle (it constrains this column, and also gives the birth column
+# Columns guaranteed "not earlier than the birth column" — they record "what happened to this row later", so ``birth
+# column <= this column``
+# for the same row is a **structural invariant**, usable bidirectionally as an oracle (it constrains this column, and
+# also gives the birth column
 # an upper bound). The list is an allowlist, not a blacklist, because counterexamples really exist:
 #   · scheduled_tasks.next_run_at records a future instant;
 #   · workflow_runs/agents' started_at / queued_at / completed_at come from CC state files'
-#     epochs, measured as early as 2026-06-23, weeks earlier than the created_at (2026-07-06) of the row landing in the database.
+#     epochs, measured as early as 2026-06-23, weeks earlier than the created_at (2026-07-06) of the row landing in the
+# database.
 # Stuffing these columns in would make the oracle judge against a fake invariant.
 AFTER_BIRTH_COLUMNS: set[tuple[str, str]] = {
     ("projects", "updated_at"),
@@ -144,44 +165,62 @@ AFTER_BIRTH_COLUMNS: set[tuple[str, str]] = {
     ("workflow_agents", "last_activity_at"),
 }
 
-# Frozen/sensitive objects — shifted anyway (the column itself is not a frozen object), but archived separately and named in the report.
+# Frozen/sensitive objects — shifted anyway (the column itself is not a frozen object), but archived separately and
+# named in the report.
 # The old memo JSON in tasks.config is the frozen archive; this script does not touch one byte of it.
 FROZEN_NOTE = {
-    "tasks": "tasks.config.memo is a frozen archive (CLAUDE.md); this script only touches DATETIME columns, not the JSON",
-    "task_memos": "live data after the memory v2 table migration; the old JSON archive stays in tasks.config, untouched",
+    "tasks": "tasks.config.memo is a frozen archive (CLAUDE.md); this script only touches DATETIME columns, not the "
+        "JSON",
+    "task_memos": "live data after the memory v2 table migration; the old JSON archive stays in tasks.config, "
+        "untouched",
     "events": "append-only ledger (no modification surface); this is a value conversion, adding and removing no rows",
-    "memories": "direction-layer memories; invalid_at is the invalidation axis and is shifted along, lest invalidation judging go out of alignment",
+    "memories": "direction-layer memories; invalid_at is the invalidation axis and is shifted along, lest invalidation "
+        "judging go out of alignment",
 }
 
-# Objects explicitly not touched, with reasons — printed verbatim in the report, so the next person does not have to re-investigate.
+# Objects explicitly not touched, with reasons — printed verbatim in the report, so the next person does not have to
+# re-investigate.
 EXCLUDED = [
     ("ecosystem_* (15 tables / 36 columns)", "already written in UTC; already in the target state"),
     ("pipeline_stage_history.transitioned_at", "same as above, ecosystem-side UTC"),
-    ("ecosystem_repo_profiles.pushed_at / last_commit_at", "values come from the GitHub API and are true UTC to begin with"),
+    ("ecosystem_repo_profiles.pushed_at / last_commit_at", "values come from the GitHub API and are true UTC to begin "
+        "with"),
     ("governance_lease.expires_at / updated_at", "VARCHAR, storing isoformat with +00:00"),
     ("loop_states.updated_at", "a dead table left by the retired cron engine; zero writers in the whole repo"),
-    ("timestamps embedded in events.data", "an event payload is a verbatim record of what the hook reported at the time; changing it is tampering with testimony"),
-    ("timestamps embedded in tasks.config.memo", "frozen archive (CLAUDE.md explicitly forbids cleaning it or writing to it)"),
+    ("timestamps embedded in events.data", "an event payload is a verbatim record of what the hook reported at the "
+        "time; changing it is tampering with testimony"),
+    ("timestamps embedded in tasks.config.memo", "frozen archive (CLAUDE.md explicitly forbids cleaning it or writing "
+        "to it)"),
     ("times in the body text of reports.content / task_memos.content", "words written by a human, not data"),
-    ("rows detected as already UTC", "rows written by the new code are already in the target state and are excluded row by row (see the report's per-row convention verdicts section)"),
+    ("rows detected as already UTC", "rows written by the new code are already in the target state and are excluded "
+        "row by row (see the report's per-row convention verdicts section)"),
 ]
 
-# Tolerance for whole-database judging: in a living system, "the most recent write" is never further in the past than this. It is set looser than one
-# session interval but far smaller than a timezone offset, so that "hugging local now" and "hugging UTC now" can be told apart.
+# Tolerance for whole-database judging: in a living system, "the most recent write" is never further in the past than
+# this. It is set looser than one
+# session interval but far smaller than a timezone offset, so that "hugging local now" and "hugging UTC now" can be told
+# apart.
 GUARD_TOLERANCE = timedelta(hours=3)
 
-# Timezone fingerprint tolerance: for a value to be recognized as "another convention's expression of the same instant", its deviation from the expected position must
-# be smaller than this. Minute-level rather than hour-level has a measured basis — in the production database, task_memos.created_at contains
-# There exist 7.1-8.7 hours of **legitimate** disorder (the batch backfill during the memory v2 table migration); an hour-level tolerance would mistake them
+# Timezone fingerprint tolerance: for a value to be recognized as "another convention's expression of the same instant",
+# its deviation from the expected position must
+# be smaller than this. Minute-level rather than hour-level has a measured basis — in the production database,
+# task_memos.created_at contains
+# There exist 7.1-8.7 hours of **legitimate** disorder (the batch backfill during the memory v2 table migration); an
+# hour-level tolerance would mistake them
 # for timezone fingerprints.
 SIGNATURE_TOLERANCE = timedelta(minutes=5)
 
-# Convention witness sampling: only look at this many most recent rows. A median rather than max — max by nature only reflects the very few newest rows,
-# and a minority mixed in can never enter max, which is exactly why the old guardrail was structurally blind to "mixed conventions".
+# Convention witness sampling: only look at this many most recent rows. A median rather than max — max by nature only
+# reflects the very few newest rows,
+# and a minority mixed in can never enter max, which is exactly why the old guardrail was structurally blind to "mixed
+# conventions".
 WITNESS_TAIL = 200
 
-# Idempotency marker: written into PRAGMA user_version after a successful shift. It is chosen because it is the least intrusive — no table, no column,
-# no business-visible object, and SQLAlchemy / this repo's storage layer never reads or writes it (the production database measures 0).
+# Idempotency marker: written into PRAGMA user_version after a successful shift. It is chosen because it is the least
+# intrusive — no table, no column,
+# no business-visible object, and SQLAlchemy / this repo's storage layer never reads or writes it (the production
+# database measures 0).
 MIGRATION_MARKER = 20260728
 
 
@@ -189,8 +228,10 @@ MIGRATION_MARKER = 20260728
 def shift_for(naive_local: datetime) -> timedelta:
     """The shift needed to convert a naive local wall-clock value to UTC (−8h on UTC+8).
 
-    The offset is obtained from the system timezone database **for the date in question**, rather than hardcoding −8: hardcoding would move
-    half a year of data wrongly on a machine with daylight saving time. Asia/Shanghai has had no DST since 1991, so on this machine it is effectively a constant −8 — but
+    The offset is obtained from the system timezone database **for the date in question**, rather than hardcoding −8:
+    hardcoding would move
+    half a year of data wrongly on a machine with daylight saving time. Asia/Shanghai has had no DST since 1991, so on
+    this machine it is effectively a constant −8 — but
     that is something :func:`assert_shift_is_constant` must **prove**, not assume.
     """
     return naive_local.astimezone(UTC).replace(tzinfo=None) - naive_local
@@ -211,7 +252,8 @@ def parse_db_ts(raw: str | None) -> datetime | None:
 class Contamination:
     """The per-row convention verdict result for one column.
 
-    ``excluded`` are the rows that are **already UTC** (written by the new code); shifting and rollback must both go around them;
+    ``excluded`` are the rows that are **already UTC** (written by the new code); shifting and rollback must both go
+    around them;
     ``undecidable`` are rows whose evidence is insufficient to judge the convention; they go to a human for review.
     """
 
@@ -253,7 +295,8 @@ class ColumnReport:
         self.samples: list[str] = []
         self.guard: str = "n/a"
         self.guard_ok = True
-        # Only append-type columns (birth columns) have rowid monotonicity available, and only they qualify as convention witnesses.
+        # Only append-type columns (birth columns) have rowid monotonicity available, and only they qualify as
+        # convention witnesses.
         self.is_birth = ROW_BIRTH_COLUMN.get(table) == column
         self.tail_median: datetime | None = None
 
@@ -276,10 +319,12 @@ class ColumnReport:
 def shift_expr(column: str, hours: float) -> str:
     """Shift expression — **preserves sub-second precision**.
 
-    A direct ``datetime(col, '-8 hours')`` would truncate the result to whole seconds, casually erasing the microsecond digits of 320,000 rows.
+    A direct ``datetime(col, '-8 hours')`` would truncate the result to whole seconds, casually erasing the microsecond
+    digits of 320,000 rows.
     And the event ledger sorts by timestamp; within the same second, ordering depends on those very digits.
 
-    Because the shift amount is necessarily a whole number of minutes (every existing timezone offset is a whole number of minutes, including +05:30 / +05:45),
+    Because the shift amount is necessarily a whole number of minutes (every existing timezone offset is a whole number
+    of minutes, including +05:30 / +05:45),
     only the prefix "up to the minute" is moved, and the seconds and sub-second digits are spliced back as-is:
 
         "2026-07-28 17:01:25.068573"
@@ -301,9 +346,12 @@ def assert_uniform_width(
     Two checks, neither dispensable:
 
     * Width: a value shorter than ``YYYY-MM-DD HH:MM`` will certainly be destroyed by the prefix split;
-    * **The direct criterion**: run the very expression that will be executed; any row whose "original value is non-empty but whose result is NULL"
-      would be silently emptied. Sufficient width does not imply parseability (epoch float strings, illegal month/day, slash formats are all longer than 16
-      characters yet still collapse to NULL), so the width check is necessary but not sufficient; this is the one that really works.
+    * **The direct criterion**: run the very expression that will be executed; any row whose "original value is
+    non-empty but whose result is NULL"
+      would be silently emptied. Sufficient width does not imply parseability (epoch float strings, illegal month/day,
+      slash formats are all longer than 16
+      characters yet still collapse to NULL), so the width check is necessary but not sufficient; this is the one that
+      really works.
     """
     bad: list[str] = []
     for rep in reports:
@@ -323,7 +371,8 @@ def assert_uniform_width(
             bad.append(f"{rep.key}: {n} rows become NULL after the shift expression (illegal value shape)")
     if bad:
         raise SystemExit(
-            "❌ Cannot safely split: time values exist that cannot be safely split; refusing to execute (continuing would empty them into NULL):\n  "
+            "❌ Cannot safely split: time values exist that cannot be safely split; refusing to execute (continuing "
+            "would empty them into NULL):\n  "
             + "\n  ".join(bad)
         )
 
@@ -331,29 +380,40 @@ def assert_uniform_width(
 # ---------------------------------------------------------------------------
 # Mixed-convention detection
 #
-# Background (measured, not deduced): the UTC new code has merged into master and aiteam is an editable install, so any process started after
+# Background (measured, not deduced): the UTC new code has merged into master and aiteam is an editable install, so any
+# process started after
 # the merge (a new session's MCP server, a hook subprocess, the CLI, an API auto-revived) writes
-# UTC. So the same column can hold rows of both conventions at once, and the contamination grows monotonically with time — therefore detection
+# UTC. So the same column can hold rows of both conventions at once, and the contamination grows monotonically with time
+# — therefore detection
 # must be computed fresh at execution time.
 #
-# The skeleton of the criterion is one hard constraint: for a value v written in UTC, its real instant is v + offset, and that real
+# The skeleton of the criterion is one hard constraint: for a value v written in UTC, its real instant is v + offset,
+# and that real
 # instant must fall within [T0, now] (T0 = the earliest moment the new code could have run). Conversely,
 #
 #     only values falling in the **risk band** [T0 − offset, now − offset] could possibly have been written in UTC.
 #
-# Values outside the band are all **proven** local and are shifted as usual. Values inside the band are then judged row by row:
+# Values outside the band are all **proven** local and are shifted as usual. Values inside the band are then judged row
+# by row:
 #
-# * Append-type columns (birth columns): rowid is the write order. Take the maximum of all out-of-band rows before this row as the lower bound, and the value of the first
-#   out-of-band row after it as the upper bound, and fit both readings, v and v+offset, into them — when only one reading is self-consistent, the verdict
+# * Append-type columns (birth columns): rowid is the write order. Take the maximum of all out-of-band rows before this
+# row as the lower bound, and the value of the first
+#   out-of-band row after it as the upper bound, and fit both readings, v and v+offset, into them — when only one
+# reading is self-consistent, the verdict
 #   stands; when both are or neither is, it goes to undecidable.
-# * In-place update columns: take the same row's birth column as an anchor and judge by the invariant "an update cannot be earlier than the creation".
+# * In-place update columns: take the same row's birth column as an anchor and judge by the invariant "an update cannot
+# be earlier than the creation".
 # ---------------------------------------------------------------------------
 def risk_band(t0: datetime, now_local: datetime, forward_hours: float) -> tuple[datetime, datetime]:
-    """Risk band: only **raw values** falling here could have been written in UTC; everything outside the band is proven local.
+    """Risk band: only **raw values** falling here could have been written in UTC; everything outside the band is proven
+    local.
 
-    The upper edge hugs the **execution moment**, not the newest write in the database — a UTC write could perfectly well have happened after the last
-    local row, and closing the band at the in-database max would miss it. The cost is that running a dry-run against a long-stale snapshot lets the bandwidth
-    grow with the wall clock and the candidate rows grow with it; that is not a false positive, it is the truthful reflection of "the longer you drag it out, the harder it is to judge".
+    The upper edge hugs the **execution moment**, not the newest write in the database — a UTC write could perfectly
+    well have happened after the last
+    local row, and closing the band at the in-database max would miss it. The cost is that running a dry-run against a
+    long-stale snapshot lets the bandwidth
+    grow with the wall clock and the candidate rows grow with it; that is not a false positive, it is the truthful
+    reflection of "the longer you drag it out, the harder it is to judge".
     """
     offset = timedelta(hours=-forward_hours)
     edges = (t0 - offset, now_local - offset)
@@ -378,7 +438,8 @@ def detect_utc_writer_since(
     """Forensics: when did the earliest UTC write in the database happen (expressed in local wall clock).
 
     Only look for **timezone-fingerprint disorder** on append-type columns — a value dropping back by exactly one
-    offset relative to the prefix maximum of the write order (eastern hemisphere; in the western hemisphere it instead runs ahead of its successor rows). The tolerance is given in minutes; see :data:`SIGNATURE_TOLERANCE`.
+    offset relative to the prefix maximum of the write order (eastern hemisphere; in the western hemisphere it instead
+    runs ahead of its successor rows). The tolerance is given in minutes; see :data:`SIGNATURE_TOLERANCE`.
 
     Returns (T0, evidence rows). T0 being None means there is no trace of any UTC write anywhere in the database.
     """
@@ -388,7 +449,8 @@ def detect_utc_writer_since(
             continue
         rows = _scan(conn, rep.table, rep.column)
         if offset > timedelta(0):
-            # Eastern hemisphere: a UTC value is earlier than a local value of the same instant, appearing as a drop-back in rowid order.
+            # Eastern hemisphere: a UTC value is earlier than a local value of the same instant, appearing as a
+            # drop-back in rowid order.
             running: datetime | None = None
             for rid, v in rows:
                 if running is not None and abs((running - v) - offset) <= SIGNATURE_TOLERANCE:
@@ -404,7 +466,8 @@ def detect_utc_writer_since(
                 if running is None or v > running:
                     running = v
         else:
-            # Western hemisphere (UTC itself never gets here): a UTC value is later instead, appearing as running ahead of successor rows.
+            # Western hemisphere (UTC itself never gets here): a UTC value is later instead, appearing as running ahead
+            # of successor rows.
             following: datetime | None = None
             for rid, v in reversed(rows):
                 if following is not None and abs((v - following) + offset) <= SIGNATURE_TOLERANCE:
@@ -432,14 +495,18 @@ def _classify_birth_column(
     band: tuple[datetime, datetime],
     offset: timedelta,
 ) -> tuple[list[int], list[dict], int]:
-    """Per-row verdict for an append-type column: pin the two readings down to one with rowid neighbours + same-row successor columns.
+    """Per-row verdict for an append-type column: pin the two readings down to one with rowid neighbours + same-row
+    successor columns.
 
     Two evidence sources:
 
-    * **rowid neighbours** (the lower bound takes the maximum of all out-of-band rows before it; the upper bound takes the first out-of-band row after it) — rowid
+    * **rowid neighbours** (the lower bound takes the maximum of all out-of-band rows before it; the upper bound takes
+    the first out-of-band row after it) — rowid
       is the physical write order, and a row's real instant necessarily lies between the two.
-    * **Same-row successor columns** (:data:`AFTER_BIRTH_COLUMNS`) — a birth instant cannot be later than the instant this row was later
-      updated. Only successor-column values falling **outside** the risk band are trusted (those have been proven local),
+    * **Same-row successor columns** (:data:`AFTER_BIRTH_COLUMNS`) — a birth instant cannot be later than the instant
+    this row was later
+      updated. Only successor-column values falling **outside** the risk band are trusted (those have been proven
+      local),
       so there is no circular dependency.
     """
     lo, hi = band
@@ -515,7 +582,8 @@ def _classify_birth_column(
                 {
                     "rowid": rid,
                     "value": v.strftime("%Y-%m-%d %H:%M:%S.%f"),
-                    "reason": "both readings are self-consistent" if local_ok else "both readings conflict with the neighbours",
+                    "reason": "both readings are self-consistent" if local_ok else "both readings conflict with the "
+                        "neighbours",
                 }
             )
     return excluded, undecidable, suspects
@@ -533,9 +601,12 @@ def _classify_updated_column(
 ) -> tuple[list[int], list[dict], int]:
     """Per-row verdict for an in-place update column: the cross-column consistency oracle.
 
-    rowid is meaningless for this kind of column (values are rewritten in place by UPDATE, decoupling write order from value timing); the only usable thing
-    is the invariant that **the update instant of the same row cannot be earlier than its creation instant**: take the same row's birth column as the anchor and fit both
-    readings into it — if an update value is earlier than the creation instant by nearly one offset, it can only be in the UTC convention.
+    rowid is meaningless for this kind of column (values are rewritten in place by UPDATE, decoupling write order from
+    value timing); the only usable thing
+    is the invariant that **the update instant of the same row cannot be earlier than its creation instant**: take the
+    same row's birth column as the anchor and fit both
+    readings into it — if an update value is earlier than the creation instant by nearly one offset, it can only be in
+    the UTC convention.
 
     This invariant only holds for :data:`AFTER_BIRTH_COLUMNS`; the other columns (future instants, external epoch
     sources) have no usable oracle, and their in-band rows all go to a human for review.
@@ -559,13 +630,15 @@ def _classify_updated_column(
                 {
                     "rowid": rid,
                     "value": v.strftime("%Y-%m-%d %H:%M:%S.%f"),
-                    "reason": "this column may be earlier than the creation instant (a future instant or an external epoch source); no usable invariant",
+                    "reason": "this column may be earlier than the creation instant (a future instant or an external "
+                        "epoch source); no usable invariant",
                 }
             )
             continue
         anchor = parse_db_ts(birth_raw)
         if anchor is None:
-            undecidable.append({"rowid": rid, "value": str(raw), "reason": "the anchor column is empty; nothing to compare against"})
+            undecidable.append({"rowid": rid, "value": str(raw), "reason": "the anchor column is empty; nothing to "
+                "compare against"})
             continue
         if rid in birth_pending:
             undecidable.append(
@@ -573,7 +646,8 @@ def _classify_updated_column(
                     "rowid": rid,
                     "value": v.strftime("%Y-%m-%d %H:%M:%S.%f"),
                     "anchor": f"{birth_column}={anchor:%Y-%m-%d %H:%M:%S}",
-                    "reason": "the anchor column's own convention awaits human review and cannot be used to settle the case",
+                    "reason": "the anchor column's own convention awaits human review and cannot be used to settle the "
+                        "case",
                 }
             )
             continue
@@ -591,7 +665,8 @@ def _classify_updated_column(
                     "rowid": rid,
                     "value": v.strftime("%Y-%m-%d %H:%M:%S.%f"),
                     "anchor": f"{birth_column}={anchor:%Y-%m-%d %H:%M:%S}",
-                    "reason": "neither reading violates 'an update is not earlier than the creation'" if local_ok else "both readings conflict with the anchor",
+                    "reason": "neither reading violates 'an update is not earlier than the "
+                        "creation'" if local_ok else "both readings conflict with the anchor",
                 }
             )
     return excluded, undecidable, suspects
@@ -606,7 +681,8 @@ def detect_contamination(
 ) -> tuple[dict[str, Contamination], datetime | None, list[dict]]:
     """Whole-database per-row convention detection. Computed fresh at execution time; consumes no fixed row-number list.
 
-    Returns (per-column results, T0, evidence rows). When ``since`` is given it overrides the automatically forensically-derived T0 (the operations manual
+    Returns (per-column results, T0, evidence rows). When ``since`` is given it overrides the automatically
+    forensically-derived T0 (the operations manual
     should fill in the moment the new code merged — that is the earliest time a UTC writer could have appeared).
     """
     offset = timedelta(hours=-forward_hours)
@@ -654,7 +730,8 @@ def detect_contamination(
         entry.undecidable = undecidable
         entry.method = method
 
-    # An evidence row is certainly a UTC row; even if the neighbour verdict could not settle it due to sparse data, it must be merged into the exclusion set.
+    # An evidence row is certainly a UTC row; even if the neighbour verdict could not settle it due to sparse data, it
+    # must be merged into the exclusion set.
     for e in evidence:
         entry = found.get(f"{e['table']}.{e['column']}")
         if entry is None:
@@ -722,12 +799,14 @@ def collect(conn: sqlite3.Connection, now_local: datetime) -> list[ColumnReport]
             if newest is None:
                 rep.guard = "Empty column (no rows to judge)"
             elif newest > now_utc_naive:
-                # A UTC clock cannot write a future value, so this column **necessarily** contains rows written by the local wall clock.
+                # A UTC clock cannot write a future value, so this column **necessarily** contains rows written by the
+                # local wall clock.
                 # This is positive confirmation, not a heuristic.
                 rep.guard = f"Proven local (latest row {str(hi)[:19]} is later than UTC now {now_utc_naive:%H:%M:%S})"
             else:
                 age = now_local - newest
-                rep.guard = f"Cold data (latest row is {age.days} days {age.seconds // 3600} hours ago, cannot self-prove)"
+                rep.guard = (f"Cold data (latest row is {age.days} days {age.seconds // 3600} hours ago, cannot "
+                    f"self-prove)")
             reports.append(rep)
     return reports
 
@@ -738,23 +817,32 @@ def verdict(
     contamination: dict[str, Contamination] | None = None,
     ack_undecidable: bool = False,
 ) -> tuple[bool, list[str]]:
-    """Whole-database verdict: is this database still being written by the local wall clock, and have the UTC rows that mixed in been recognized.
+    """Whole-database verdict: is this database still being written by the local wall clock, and have the UTC rows that
+    mixed in been recognized.
 
-    The verdict sits at the **database level** rather than the column level: the real risk is a reversed deployment order, and deployment is global. A column that has been cold for
-    three days has no fresh rows to judge in the first place; guessing column by column would only manufacture false alarms against cold data.
+    The verdict sits at the **database level** rather than the column level: the real risk is a reversed deployment
+    order, and deployment is global. A column that has been cold for
+    three days has no fresh rows to judge in the first place; guessing column by column would only manufacture false
+    alarms against cold data.
 
     The convention witness uses the **median of the tail of the freshest append-type column**, with two points of care:
 
-    * Only append-type columns (birth columns) qualify as witnesses — their rowid is the write order, and the concept of "the most recent batch of writes"
+    * Only append-type columns (birth columns) qualify as witnesses — their rowid is the write order, and the concept of
+    "the most recent batch of writes"
       only holds for them; an in-place update column's max could come from any update of any row.
-    * A median rather than max. Max by nature only reflects the very few newest rows: when the database has been shifted wholesale to UTC and old code
-      writes one more local row, that single row suffices to make max hug local now — that is exactly how the old guardrail judged "an already-shifted
-      database" as "shiftable". The median requires **the majority** of recent writes to be of one convention; a minority cannot overturn it.
+    * A median rather than max. Max by nature only reflects the very few newest rows: when the database has been shifted
+    wholesale to UTC and old code
+      writes one more local row, that single row suffices to make max hug local now — that is exactly how the old
+      guardrail judged "an already-shifted
+      database" as "shiftable". The median requires **the majority** of recent writes to be of one convention; a
+      minority cannot overturn it.
 
-    Positive confirmation is still one-sided and unambiguous: a UTC clock cannot write a future value, so a witness median later than UTC
+    Positive confirmation is still one-sided and unambiguous: a UTC clock cannot write a future value, so a witness
+    median later than UTC
     now is **necessarily** written by the local wall clock.
 
-    The second layer of the verdict is mixed conventions: detected UTC rows must already have been recognized row by row and excluded; rows whose convention cannot be judged must
+    The second layer of the verdict is mixed conventions: detected UTC rows must already have been recognized row by row
+    and excluded; rows whose convention cannot be judged must
     pass human review (``--ack-undecidable``) before being let through — **never silently shifted**.
     """
     now_utc_naive = now_local.astimezone(UTC).replace(tzinfo=None)
@@ -767,7 +855,8 @@ def verdict(
     )
 
     if freshest is None:
-        notes.append("There are no non-empty time values in the database at all — no shift needed, and no verdict possible either.")
+        notes.append("There are no non-empty time values in the database at all — no shift needed, and no verdict "
+            "possible either.")
         return True, notes
 
     witness = None
@@ -789,7 +878,8 @@ def verdict(
 
     passed = True
     if witness is None:
-        notes.append("⚠️  No append-type column can serve as a convention witness (no rowid-trustworthy column in the database). Please confirm manually and add --force.")
+        notes.append("⚠️  No append-type column can serve as a convention witness (no rowid-trustworthy column in the "
+            "database). Please confirm manually and add --force.")
         passed = False
     else:
         median = witness.tail_median
@@ -797,21 +887,26 @@ def verdict(
         d_local = abs((now_local - median).total_seconds())
         d_utc = abs((now_utc_naive - median).total_seconds())
         notes.append(
-            f"Convention witness {witness.key}: median of the most recent {WITNESS_TAIL} rows {median:%Y-%m-%d %H:%M:%S}"
+            f"Convention witness {witness.key}: median of the most recent {WITNESS_TAIL} rows "
+            f"{median:%Y-%m-%d %H:%M:%S}"
             f"({d_local / 3600:.1f}h from local now, {d_utc / 3600:.1f}h from UTC now)"
         )
         if median > now_utc_naive + SIGNATURE_TOLERANCE:
             notes.append("✅ The writer is still the old code (local wall clock); shifting is OK.")
         elif d_utc <= GUARD_TOLERANCE.total_seconds() and d_utc < d_local:
             notes.append(
-                "❌ The majority of recent writes already hug UTC now — the new code is very likely already writing to the database,"
-                "or this database has already been shifted. Shifting again now would push these UTC rows one timezone early."
+                "❌ The majority of recent writes already hug UTC now — the new code is very likely already writing to "
+                "the database,"
+                "or this database has already been shifted. Shifting again now would push these UTC rows one timezone "
+                "early."
             )
             passed = False
         else:
             notes.append(
-                "⚠️  The witness column is earlier than UTC now and hugs neither side (the whole database is cold data); it cannot self-prove."
-                "Please confirm manually that this database really has not been written by the new code, then add --force to execute."
+                "⚠️  The witness column is earlier than UTC now and hugs neither side (the whole database is cold "
+                "data); it cannot self-prove."
+                "Please confirm manually that this database really has not been written by the new code, then add "
+                "--force to execute."
             )
             passed = False
 
@@ -820,7 +915,8 @@ def verdict(
         dirty = {k: c for k, c in contamination.items() if c.excluded}
         if dirty:
             notes.append(
-                f"Mixed-convention detection: {total_excluded} rows across {len(dirty)} columns have been judged to be in the UTC convention,"
+                f"Mixed-convention detection: {total_excluded} rows across {len(dirty)} columns have been judged to be "
+                f"in the UTC convention,"
                 "and will be excluded row by row, taking no part in the shift."
             )
             for key, entry in sorted(dirty.items()):
@@ -831,12 +927,14 @@ def verdict(
         if pending:
             if ack_undecidable:
                 notes.append(
-                    f"⚠️  The convention of {len(pending)} rows cannot be judged; they have been confirmed via --ack-undecidable to be shifted in the local convention"
+                    f"⚠️  The convention of {len(pending)} rows cannot be judged; they have been confirmed via "
+                    f"--ack-undecidable to be shifted in the local convention"
                     "(the row-by-row list is in the journal and in the per-row convention verdicts section above)."
                 )
             else:
                 notes.append(
-                    f"❌ The convention of {len(pending)} rows cannot be judged — never silently shift. Please review the list above row by row,"
+                    f"❌ The convention of {len(pending)} rows cannot be judged — never silently shift. Please review "
+                    f"the list above row by row,"
                     "confirm they really were written by the local wall clock, then add --ack-undecidable to execute."
                 )
                 passed = False
@@ -849,8 +947,10 @@ def verdict(
 def assert_shift_is_constant(reports: list[ColumnReport]) -> float:
     """Prove the shift is constant over the whole data range; if it is not constant, refuse to shift with constant SQL.
 
-    Check the endpoints of every column in full (not only the global min/max). Note this is endpoint sampling: if a column's head and tail are in the same
-    daylight-saving state but its **middle** crosses a switchover point, this cannot detect it. It has no practical effect on Asia/Shanghai (no DST
+    Check the endpoints of every column in full (not only the global min/max). Note this is endpoint sampling: if a
+    column's head and tail are in the same
+    daylight-saving state but its **middle** crosses a switchover point, this cannot detect it. It has no practical
+    effect on Asia/Shanghai (no DST
     since 1991); if the script is moved to a host with DST, it must be changed to per-row conversion.
     """
     stamps = [
@@ -865,7 +965,8 @@ def assert_shift_is_constant(reports: list[ColumnReport]) -> float:
     if len(shifts) != 1:
         raise SystemExit(
             f"❌ The local offset is not constant over the data range ({sorted(shifts)} hours observed) —"
-            "this machine's timezone has daylight saving time, so shifting by a constant number of hours is not possible. Per-row conversion is needed."
+            "this machine's timezone has daylight saving time, so shifting by a constant number of hours is not "
+            "possible. Per-row conversion is needed."
         )
     return shifts.pop()
 
@@ -936,15 +1037,18 @@ def render(
         print(f"  {rep.key:<46} {' | '.join(pairs)}")
 
     if contamination is not None:
-        print("\nPer-row convention verdicts (mixed-convention detection: which rows are already UTC and take no part in the shift)")
+        print("\nPer-row convention verdicts (mixed-convention detection: which rows are already UTC and take no part "
+            "in the shift)")
         print("-" * 108)
         print(
             "  Forensic baseline T0 (the earliest UTC write instant, local wall clock):"
-            + (f"{since:%Y-%m-%d %H:%M:%S}" if since else "no trace (risk band empty; the whole database is of a single convention)")
+            + (f"{since:%Y-%m-%d %H:%M:%S}" if since else "no trace (risk band empty; the whole database is of a "
+                "single convention)")
         )
         if band is not None:
             print(
-                f"  Risk band (only raw values falling in this interval could be UTC-written): {band[0]:%Y-%m-%d %H:%M:%S}"
+                f"  Risk band (only raw values falling in this interval could be UTC-written): "
+                f"{band[0]:%Y-%m-%d %H:%M:%S}"
                 f" … {band[1]:%Y-%m-%d %H:%M:%S}; everything outside the band is proven local"
             )
         dirty = False
@@ -964,7 +1068,8 @@ def render(
             for row in entry.undecidable[:20]:
                 print(f"      ⚠️ Awaiting human review rowid={row['rowid']} value={row['value']} — {row['reason']}")
             if len(entry.undecidable) > 20:
-                print(f"      ⚠️ …and {len(entry.undecidable) - 20} more rows awaiting human review (full list in the journal)")
+                print(f"      ⚠️ …and {len(entry.undecidable) - 20} more rows awaiting human review (full list in the "
+                    f"journal)")
         if not dirty:
             print("  All columns are of a single convention; no rows need excluding.")
 
@@ -994,8 +1099,10 @@ def execute(
 ) -> int:
     """Shift per column, going around the rows that are already UTC, row by row.
 
-    Immediately re-verify the non-empty row count after shifting: the shift expression returns NULL for malformed values (silently emptying them),
-    while ``cur.rowcount`` only counts matched rows and cannot see this. If it does not add up, raise — at that point the transaction has not
+    Immediately re-verify the non-empty row count after shifting: the shift expression returns NULL for malformed values
+    (silently emptying them),
+    while ``cur.rowcount`` only counts matched rows and cannot see this. If it does not add up, raise — at that point
+    the transaction has not
     been committed, and closing the connection rolls the whole batch back; there is no half-shifted state.
     """
     assert_uniform_width(conn, reports, hours)
@@ -1021,7 +1128,8 @@ def execute(
         if after != rep.non_null:
             raise SystemExit(
                 f"❌ {rep.key}: non-empty row count after shifting {after} ≠ before shifting {rep.non_null} — "
-                "the shift emptied values into NULL. The transaction was not committed; the database is in its original state."
+                "the shift emptied values into NULL. The transaction was not committed; the database is in its "
+                "original state."
             )
         touched += cur.rowcount
         note = f"(plus {len(skip)} rows already UTC, excluded)" if skip else ""
@@ -1032,7 +1140,8 @@ def execute(
 
 
 def verify_rollback(conn: sqlite3.Connection, journal: dict) -> int:
-    """After rollback, re-verify column by column: row counts and min/max must return to the pre-shift state recorded in the journal."""
+    """After rollback, re-verify column by column: row counts and min/max must return to the pre-shift state recorded
+    in the journal."""
     problems = 0
     for entry in journal["columns"]:
         table, column = entry["table"], entry["column"]
@@ -1056,7 +1165,8 @@ def verify_rollback(conn: sqlite3.Connection, journal: dict) -> int:
 
 
 def contamination_from_journal(journal: dict) -> dict[str, Contamination]:
-    """At rollback time the exclusion list **only recognizes the journal** — after the shift, the database itself no longer shows who is who."""
+    """At rollback time the exclusion list **only recognizes the journal** — after the shift, the database itself no
+    longer shows who is who."""
     out: dict[str, Contamination] = {}
     for key, entry in (journal.get("detection", {}).get("columns", {}) or {}).items():
         out[key] = Contamination(
@@ -1104,12 +1214,14 @@ def main() -> int:
     ap.add_argument(
         "--journal",
         default="",
-        help="archive JSON path (required for --apply / --rollback; with a dry-run, giving it writes the full list to disk for human review)",
+        help="archive JSON path (required for --apply / --rollback; with a dry-run, giving it writes the full list to "
+            "disk for human review)",
     )
     ap.add_argument(
         "--force",
         action="store_true",
-        help="execute anyway when a guardrail alarms — only usable after a human has confirmed the column's convention; it cannot override rows awaiting human review or the idempotency marker",
+        help="execute anyway when a guardrail alarms — only usable after a human has confirmed the column's "
+            "convention; it cannot override rows awaiting human review or the idempotency marker",
     )
     ap.add_argument(
         "--ack-undecidable",
@@ -1119,7 +1231,8 @@ def main() -> int:
     ap.add_argument(
         "--utc-writer-since",
         default="",
-        help="the earliest local instant at which the new code could have written to the database (YYYY-MM-DD HH:MM:SS); if not given, inferred automatically from in-database forensics",
+        help="the earliest local instant at which the new code could have written to the database (YYYY-MM-DD "
+            "HH:MM:SS); if not given, inferred automatically from in-database forensics",
     )
     args = ap.parse_args()
 
@@ -1132,14 +1245,17 @@ def main() -> int:
         return 2
     if (args.apply or args.rollback) and not args.journal:
         print(
-            "❌ --apply / --rollback require --journal — that is the only recovery credential (including the per-row exclusion list)",
+            "❌ --apply / --rollback require --journal — that is the only recovery credential (including the per-row "
+            "exclusion list)",
             file=sys.stderr,
         )
         return 2
 
     journal_path = Path(args.journal).expanduser() if args.journal else None
-    # ---- Journal overwrite protection: a second apply would overwrite the "pre-shift baseline" with the "post-shift state",
-    #      and a subsequent --rollback would then report "all re-verification passed" against the polluted baseline. The credential may only be written once.
+    # ---- Journal overwrite protection: a second apply would overwrite the "pre-shift baseline" with the "post-shift
+    # state",
+    #      and a subsequent --rollback would then report "all re-verification passed" against the polluted baseline. The
+    # credential may only be written once.
     if journal_path is not None and not args.rollback and journal_path.exists():
         print(
             f"❌ The journal target file already exists: {journal_path}\n"
@@ -1163,13 +1279,15 @@ def main() -> int:
     if args.apply and marker == MIGRATION_MARKER:
         print(
             f"❌ This database has already been shifted (PRAGMA user_version = {MIGRATION_MARKER}).\n"
-            "   Shifting once more would subtract another timezone from the whole database. To start over, --rollback first.",
+            "   Shifting once more would subtract another timezone from the whole database. To start over, --rollback "
+            "first.",
             file=sys.stderr,
         )
         return 3
     if args.apply and marker != 0:
         print(
-            f"❌ PRAGMA user_version = {marker} is occupied by another use — the idempotency marker has nowhere to live; refusing to execute.",
+            f"❌ PRAGMA user_version = {marker} is occupied by another use — the idempotency marker has nowhere to "
+            f"live; refusing to execute.",
             file=sys.stderr,
         )
         return 3
@@ -1201,17 +1319,20 @@ def main() -> int:
         journal = json.loads(journal_path.read_text())
         if journal.get("db") != str(db) and not args.force:
             print(
-                f"❌ The journal records {journal.get('db')}, while the current database is {db} — a mismatched rollback would move the wrong data.",
+                f"❌ The journal records {journal.get('db')}, while the current database is {db} — a mismatched "
+                f"rollback would move the wrong data.",
                 file=sys.stderr,
             )
             return 2
-        # The shift amount takes the value recorded in the journal rather than being recomputed from the current host timezone, so a rollback on another machine/timezone does not move things wrongly.
+        # The shift amount takes the value recorded in the journal rather than being recomputed from the current host
+        # timezone, so a rollback on another machine/timezone does not move things wrongly.
         hours = -float(journal.get("shift_hours", forward))
         skip = contamination_from_journal(journal)
         skipped_total = sum(len(c.excluded) for c in skip.values())
         print(f"Rollback: reverse-shifting {hours:+g} hours per journal {journal_path}")
         if skipped_total:
-            print(f"      The {skipped_total} rows excluded at shift time are likewise untouched (they were UTC to begin with)")
+            print(f"      The {skipped_total} rows excluded at shift time are likewise untouched (they were UTC to "
+                f"begin with)")
         touched = execute(conn, reports, hours, skip)
         print(f"\nRolled back {touched} cells in total. Per-column re-verification:")
         problems = verify_rollback(conn, journal)
@@ -1219,7 +1340,8 @@ def main() -> int:
             write_marker(conn, 0)
             conn.commit()
             print("\nShift marker cleared (PRAGMA user_version = 0)")
-        print("\n" + ("❌ The rollback re-verification has discrepancies; human intervention is needed" if problems else "✅ Rollback re-verification all passed"))
+        print("\n" + ("❌ The rollback re-verification has discrepancies; human intervention is "
+            "needed" if problems else "✅ Rollback re-verification all passed"))
         return 1 if problems else 0
 
     contamination, detected_since, evidence = detect_contamination(
@@ -1249,9 +1371,11 @@ def main() -> int:
         print(f"  {note}")
     if not passed:
         print(f"\n{'!' * 108}")
-        print("Guardrail block — the correct order is: 1) stop the writers as far as possible 2) back up 3) shift (rows written by the new code will be excluded row by row) 4) restart the API.")
+        print("Guardrail block — the correct order is: 1) stop the writers as far as possible 2) back up 3) shift "
+            "(rows written by the new code will be excluded row by row) 4) restart the API.")
         if hard_block:
-            print("Of these, the 'rows awaiting human review' item cannot be overridden by --force: please check row by row and then add --ack-undecidable.")
+            print("Of these, the 'rows awaiting human review' item cannot be overridden by --force: please check row "
+                "by row and then add --ack-undecidable.")
         else:
             print("If a human has confirmed the convention is correct, add --force to force execution.")
         print(f"{'!' * 108}")
@@ -1267,7 +1391,8 @@ def main() -> int:
         print(f"\nThe full per-row list has been written to {journal_path} (a dry-run archive, for human review)")
 
     if not args.apply:
-        print("\n(Dry-run; nothing was written. Once confirmed correct, the Founder executes --apply; back up before executing.)")
+        print("\n(Dry-run; nothing was written. Once confirmed correct, the Founder executes --apply; back up before "
+            "executing.)")
         return 0
 
     if hard_block or (not passed and not args.force):

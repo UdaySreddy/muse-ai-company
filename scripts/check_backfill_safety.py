@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
-"""I14 red-line machine check: the three hard constraints of the historical backfill script (design §6.4) must always hold.
+"""I14 red-line machine check: the three hard constraints of the historical backfill script (design §6.4) must always
+hold.
 
-``scripts/backfill_token_usage.py`` rewrites more than two thousand rows of production data in one pass. Of its three hard constraints,
-**if the first one goes wrong it is irrecoverable**: ``workflow_agents.tokens`` is in the ctx_last metric (last-turn context watermark),
-while what this script produces is usage_sum (accumulated usage), measured 5-25x apart. Writing the latter into the former would
-**permanently solidify the mixed metrics into the historical data, indistinguishable afterwards** — far worse than not backfilling at all (risk R3).
+``scripts/backfill_token_usage.py`` rewrites more than two thousand rows of production data in one pass. Of its three
+hard constraints,
+**if the first one goes wrong it is irrecoverable**: ``workflow_agents.tokens`` is in the ctx_last metric (last-turn
+context watermark),
+while what this script produces is usage_sum (accumulated usage), measured 5-25x apart. Writing the latter into the
+former would
+**permanently solidify the mixed metrics into the historical data, indistinguishable afterwards** — far worse than not
+backfilling at all (risk R3).
 
-So this check is **behavioral** rather than textual: it really builds a temporary database, really runs ``--apply`` once,
-and really compares per-row fingerprints of the forbidden column. A text scan cannot stop dynamically assembled SQL, while the criterion here is "after the run, did
+So this check is **behavioral** rather than textual: it really builds a temporary database, really runs ``--apply``
+once,
+and really compares per-row fingerprints of the forbidden column. A text scan cannot stop dynamically assembled SQL,
+while the criterion here is "after the run, did
 that column change" — any future change, whatever style it is written in, is caught as long as it touches that column.
 
 It uses tempfile throughout and does not touch one byte of the production database.
@@ -50,7 +57,8 @@ SENTINEL_TOKENS = 424242  # Put a conspicuous sentinel value in the forbidden co
 
 
 def seed(tmp: Path) -> Path:
-    """Build a minimal database that still covers every branch: with/without transcript, already measured, alias/full model names."""
+    """Build a minimal database that still covers every branch: with/without transcript, already measured, alias/full
+    model names."""
     transcript = tmp / "agent-cc1.jsonl"
     transcript.write_text(
         "\n".join(
@@ -136,12 +144,15 @@ def check() -> list[str]:
 
     # ── Hard constraint 1, static side: the forbidden column is not in the writable-column allowlist ──
     if bf.FORBIDDEN_COLUMN != ("workflow_agents", "tokens"):
-        bad.append(f"FORBIDDEN_COLUMN was changed to {bf.FORBIDDEN_COLUMN} — the definition of the forbidden column should not move")
+        bad.append(f"FORBIDDEN_COLUMN was changed to {bf.FORBIDDEN_COLUMN} — the definition of the forbidden column "
+            f"should not move")
     if bf.FORBIDDEN_COLUMN in bf.WRITABLE_COLUMNS:
-        bad.append("workflow_agents.tokens appears in the writable-column allowlist — usage_sum would pollute the ctx_last column")
+        bad.append("workflow_agents.tokens appears in the writable-column allowlist — usage_sum would pollute the "
+            "ctx_last column")
     wa_writable = {c for t, c in bf.WRITABLE_COLUMNS if t == "workflow_agents"}
     if wa_writable - {"model"}:
-        bad.append(f"workflow_agents gained writable columns {sorted(wa_writable - {'model'})} — only model should be writable")
+        bad.append(f"workflow_agents gained writable columns {sorted(wa_writable - {'model'})} — only model should be "
+            f"writable")
     agents_writable = {c for t, c in bf.WRITABLE_COLUMNS if t == "agents"}
     expected_agents = {
         "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens",
@@ -173,7 +184,8 @@ def check() -> list[str]:
         occupied = tmp / "taken.json"
         occupied.write_text("{}")
         if run_script(bf, db, "--apply", "--journal", str(occupied)) != 2:
-            bad.append("An existing journal was not rejected — a second apply would overwrite the pre-backfill baseline")
+            bad.append("An existing journal was not rejected — a second apply would overwrite the pre-backfill "
+                "baseline")
 
         # ── Hard constraint 1, behavioral side: really run it once, the forbidden column unchanged row by row ──
         journal = tmp / "j.json"
@@ -190,12 +202,14 @@ def check() -> list[str]:
         if con.execute("select tokens from workflow_agents where id='wa1'").fetchone()[0] \
                 != SENTINEL_TOKENS:
             bad.append("The sentinel row's tokens were touched")
-        # apply must actually have done work (otherwise "unchanged" is because nothing was done, and this check becomes an idle spin)
+        # apply must actually have done work (otherwise "unchanged" is because nothing was done, and this check becomes
+        # an idle spin)
         measured = con.execute(
             "select count(*) from agents where tokens_measured_at is not null"
         ).fetchone()[0]
         if measured != 2:
-            bad.append(f"Backfill did not take effect ({measured} rows measured, expected 2) — the machine check may be spinning idly")
+            bad.append(f"Backfill did not take effect ({measured} rows measured, expected 2) — the machine check may "
+                f"be spinning idly")
         if con.execute("select model from workflow_agents where id='wa1'").fetchone()[0] \
                 != "claude-opus-4-8":
             bad.append("Model observation backfill did not take effect — the machine check may be spinning idly")
@@ -207,7 +221,8 @@ def check() -> list[str]:
             if not data.get("forbidden_column", {}).get("unchanged"):
                 bad.append("The journal did not record the credential that the forbidden column is unchanged")
             if data.get("metric") != "usage_sum":
-                bad.append("The journal did not label the metric — a token value detached from its metric is meaningless")
+                bad.append("The journal did not label the metric — a token value detached from its metric is "
+                    "meaningless")
 
         # ── Hard constraint 3: idempotency, re-running changes nothing ───────
         saved_out = sys.stdout
@@ -247,12 +262,14 @@ def check() -> list[str]:
             )
         projected = bf.project_coverage(cov, 5)
         if projected.incremental != cov.incremental:
-            bad.append("The backfill changed the 'incremental collection' cell — one number masked another number (6.3-2)")
+            bad.append("The backfill changed the 'incremental collection' cell — one number masked another number "
+                "(6.3-2)")
         if projected.total != cov.total:
             bad.append("The backfill changed the denominator")
         line = cov.line()
         if not all(k in line for k in ("incremental collection", "historical backfill", "unattributed")):
-            bad.append("The coverage presentation is missing one of the three — unattributed must be on the same screen as attributed")
+            bad.append("The coverage presentation is missing one of the three — unattributed must be on the same "
+                "screen as attributed")
         if "Total" in line or "Grand total" in line:
             bad.append("The coverage row gives a total — adding numbers of two metrics together is meaningless")
 
@@ -262,7 +279,8 @@ def check() -> list[str]:
 def main() -> int:
     try:
         bad = check()
-    except Exception as exc:  # noqa: BLE001 — if the machine check itself blows up it must say so clearly, not silently pass
+    except Exception as exc:  # noqa: BLE001 — if the machine check itself blows up it must say so clearly, not silently
+    # pass
         print(f"❌ Machine check execution failed: {type(exc).__name__}: {exc}")
         return 1
     if bad:

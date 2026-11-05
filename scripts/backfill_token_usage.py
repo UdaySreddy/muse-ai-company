@@ -2,52 +2,78 @@
 """Historical backfill: the agents four token layers + tokens_measured_at + tokens_source. Dry-run by default.
 
 Spec in docs/token-attribution-v1-design.md §6 (whole section) / §7 stage 3. The problem to solve: billing-metric
-usage collection (``usage_sum``) only went live on 2026-07-28; before that, the tokens of nearly two thousand dispatches never landed in the database, while
-**their transcripts are all still on disk**. At forensics time, all 1,957 files of the 1,957 candidate rows were alive — but
-CC cleans up older local session history, and the ``transcript_gone`` class **only ever grows**. This is the one thing in all of v1
+usage collection (``usage_sum``) only went live on 2026-07-28; before that, the tokens of nearly two thousand dispatches
+never landed in the database, while
+**their transcripts are all still on disk**. At forensics time, all 1,957 files of the 1,957 candidate rows were alive —
+but
+CC cleans up older local session history, and the ``transcript_gone`` class **only ever grows**. This is the one thing
+in all of v1
 that "done late means doable never" (§6.2-2); everything else done late is just done late.
 
 The backfill has exactly one target: five columns of the ``agents`` table + ``tokens_source`` (plus the observational
 backfill of ``model``, see below). Four disciplines determine the shape of this script:
 
 1. **Never touch ``workflow_agents.tokens``** (§6.4-1, risk R3). That column is in the ``ctx_last``
-   metric — the last-turn context watermark, measured 5-25x apart from the ``usage_sum`` this script produces. Writing backfilled values
-   into it would **permanently solidify the mixed metrics into the historical data**, indistinguishable afterwards — far worse than not backfilling. So this is not
+   metric — the last-turn context watermark, measured 5-25x apart from the ``usage_sum`` this script produces. Writing
+   backfilled values
+   into it would **permanently solidify the mixed metrics into the historical data**, indistinguishable afterwards — far
+   worse than not backfilling. So this is not
    a matter of "being careful not to write": the writable-column allowlist :data:`WRITABLE_COLUMNS` is a closed set,
-   ``(workflow_agents, tokens)`` is not in it; the column's **per-row sha256 checksum** is computed once before and once after ``--apply``,
+   ``(workflow_agents, tokens)`` is not in it; the column's **per-row sha256 checksum** is computed once before and once
+   after ``--apply``,
    and any mismatch rolls back the whole transaction. The static side has the I14 machine check as well (see
    ``scripts/check_backfill_safety.py``）。
-2. **Coverage windowed by ``tokens_measured_at``** (§6.4-2, countermeasure 6.3-2). The backfill makes overall coverage jump
-   from 0.5% to 78%, while "are new dispatches being collected" is **a different question** — the latter is the indicator of whether the collection chain is healthy.
-   One number masks another, so these two numbers are **never presented merged** in the report. The windowing relies on this: the ``tokens_measured_at`` written by the live
+2. **Coverage windowed by ``tokens_measured_at``** (§6.4-2, countermeasure 6.3-2). The backfill makes overall coverage
+jump
+   from 0.5% to 78%, while "are new dispatches being collected" is **a different question** — the latter is the
+   indicator of whether the collection chain is healthy.
+   One number masks another, so these two numbers are **never presented merged** in the report. The windowing relies on
+   this: the ``tokens_measured_at`` written by the live
    chain is a **per-row, microsecond-unique** stop time, while one backfill stamps thousands of rows with
    **the same** batch time, so "the same timestamp shared by ≥ :data:`BATCH_COHORT_MIN` rows" is
    the natural signature of a backfill batch (the batch time is also recorded in the journal, for precise auditing).
-3. **Only write empty columns, idempotent, dry-run first** (§6.4-3). Idempotency is structural rather than marker-based: the first branch of
-   the verdict is "``tokens_measured_at`` non-empty → ``already_measured``"; after one run the target column is non-empty,
-   so re-running necessarily lands everything in that class with zero changes. The SQL layer also carries an ``IS NULL`` guard, defending against the race where
+3. **Only write empty columns, idempotent, dry-run first** (§6.4-3). Idempotency is structural rather than marker-based:
+the first branch of
+   the verdict is "``tokens_measured_at`` non-empty → ``already_measured``"; after one run the target column is
+   non-empty,
+   so re-running necessarily lands everything in that class with zero changes. The SQL layer also carries an ``IS NULL``
+   guard, defending against the race where
    the live system has already written the value between dry-run and apply.
-4. **Rows that cannot be written must be classified, never silently skipped** (Council discipline 1, no-data ≠ zero). The reason codes are in
-   :data:`REASONS`, sharing their source with the unattributed classification in design §3.4. ``transcript_gone`` rows are **listed one by one**
+4. **Rows that cannot be written must be classified, never silently skipped** (Council discipline 1, no-data ≠ zero).
+The reason codes are in
+   :data:`REASONS`, sharing their source with the unattributed classification in design §3.4. ``transcript_gone`` rows
+   are **listed one by one**
    — that is not noise; the report itself is the evidence that "the backfill window has closed on these rows".
 
-**The observational backfill of the model column** (§6.2-4): a transcript's ``message.model`` is always a full model name, never
+**The observational backfill of the model column** (§6.2-4): a transcript's ``message.model`` is always a full model
+name, never
 an alias. So rows in ``workflow_agents.model`` still carrying the alias ``opus`` (170 measured, of which
-138 can be joined via ``os_agent_id`` to a surviving transcript) can directly read out their real model name — this is **observational backfill**,
-exactly the shape the deliberate decision "model defaults stay empty, backfilled by observation" wants, and it does not conflict with "never hardcode model names". Two
-boundaries: **the resolution result of the alias ledger (``MODEL_ALIAS_LEDGER``) is never written into any row** (that is a read-side fallback, not
-an observation); **rows without a transcript are not guessed at and not touched**. The same holds for ``agents.model`` (1,913 of the candidate rows have that column
-empty), consistent with the behavior of the live ``SubagentStop`` path; if unwanted it can be turned off with ``--no-model``.
+138 can be joined via ``os_agent_id`` to a surviving transcript) can directly read out their real model name — this is
+**observational backfill**,
+exactly the shape the deliberate decision "model defaults stay empty, backfilled by observation" wants, and it does not
+conflict with "never hardcode model names". Two
+boundaries: **the resolution result of the alias ledger (``MODEL_ALIAS_LEDGER``) is never written into any row** (that
+is a read-side fallback, not
+an observation); **rows without a transcript are not guessed at and not touched**. The same holds for ``agents.model``
+(1,913 of the candidate rows have that column
+empty), consistent with the behavior of the live ``SubagentStop`` path; if unwanted it can be turned off with
+``--no-model``.
 
-**Leader main sessions are not collected by default** (only with ``--include-leader``), for two independent reasons, either of which suffices:
+**Leader main sessions are not collected by default** (only with ``--include-leader``), for two independent reasons,
+either of which suffices:
 
 * **One file shared by multiple rows.** Measured: 47 Leader rows with a path point to only **13** main-session
-  transcripts, the most-shared one being shared by 11 rows (for the origin of ghost rows see ``backfill_agent_session_ids.py``).
-  Taking everything as-is would count the same 850 million tokens of usage **repeatedly, 11 times**. So even when explicitly enabled, this script
-  only writes values for the **first row** of each file (earliest created_at, sharing its source with ``_find_leader``'s resolution rule); the
+  transcripts, the most-shared one being shared by 11 rows (for the origin of ghost rows see
+  ``backfill_agent_session_ids.py``).
+  Taking everything as-is would count the same 850 million tokens of usage **repeatedly, 11 times**. So even when
+  explicitly enabled, this script
+  only writes values for the **first row** of each file (earliest created_at, sharing its source with ``_find_leader``'s
+  resolution rule); the
   remaining rows are recorded as ``duplicate_main_transcript``.
-* **The semantics are the opposite of stage 4.** A main-session transcript is a **live, still-growing** file, and stage 4's semantics for it are
-  ``snapshot overwrite``; while this script is ``only write empty columns, never update after writing``. Touching the former with the latter would permanently freeze a mid-session
+* **The semantics are the opposite of stage 4.** A main-session transcript is a **live, still-growing** file, and stage
+4's semantics for it are
+  ``snapshot overwrite``; while this script is ``only write empty columns, never update after writing``. Touching the
+  former with the latter would permanently freeze a mid-session
   partial value as "measured". Main-session collection belongs to stage 4.
 
 Usage::
@@ -57,7 +83,8 @@ Usage::
     python3 scripts/backfill_token_usage.py --sample 30          # sample 30 rows for human checking
     python3 scripts/backfill_token_usage.py --apply --journal ~/token-backfill.json
 
-Back up before ``--apply`` (the journal is the only recovery credential; if the target file already exists, overwriting is hard-refused)::
+Back up before ``--apply`` (the journal is the only recovery credential; if the target file already exists, overwriting
+is hard-refused)::
 
     cp ~/.claude/data/ai-team-os/aiteam.db \\
        ~/aiteam.db.bak-tokenusage-$(date +%Y%m%d%H%M%S)
@@ -83,7 +110,8 @@ from aiteam.services.token_attribution import parse_transcript_usage  # noqa: E4
 
 DEFAULT_DB = Path.home() / ".claude" / "data" / "ai-team-os" / "aiteam.db"
 
-# The closed set of columns this script **may** write. Adding a column requires changing this and the I14 machine check's expected set at the same time,
+# The closed set of columns this script **may** write. Adding a column requires changing this and the I14 machine
+# check's expected set at the same time,
 # so "writing one more column while at it" is visible in review. (workflow_agents, tokens) is never in it.
 WRITABLE_COLUMNS: frozenset[tuple[str, str]] = frozenset(
     {
@@ -99,10 +127,12 @@ WRITABLE_COLUMNS: frozenset[tuple[str, str]] = frozenset(
 )
 
 # This column is a historical asset in the ctx_last metric; this script's output (usage_sum) differs from it by 5-25x.
-# Making it a standalone constant lets the machine check reference it directly, rather than relying on reading the comments.
+# Making it a standalone constant lets the machine check reference it directly, rather than relying on reading the
+# comments.
 FORBIDDEN_COLUMN: tuple[str, str] = ("workflow_agents", "tokens")
 
-# The column names of the four token layers, in fixed order (presentation surfaces always list them separately and never give a total).
+# The column names of the four token layers, in fixed order (presentation surfaces always list them separately and never
+# give a total).
 TOKEN_COLUMNS = (
     "input_tokens",
     "output_tokens",
@@ -110,28 +140,39 @@ TOKEN_COLUMNS = (
     "cache_read_tokens",
 )
 
-# One backfill stamps thousands of rows with the same instant; the live chain writes each row's own stop time (microsecond-unique).
-# So "the same timestamp shared by this many rows" = a backfill batch signature. The threshold is 50: the live chain cannot possibly stop
+# One backfill stamps thousands of rows with the same instant; the live chain writes each row's own stop time
+# (microsecond-unique).
+# So "the same timestamp shared by this many rows" = a backfill batch signature. The threshold is 50: the live chain
+# cannot possibly stop
 # 50 agents in the same microsecond, while any real backfill is far more than 50 rows.
 BATCH_COHORT_MIN = 50
 
 # Full model names always start with this (measured in transcripts: claude-opus-5 / claude-opus-4-8[1m] …);
-# aliases are things like opus / fable / ''. Judging by "is it a full model name" is more robust than enumerating aliases — a future new
+# aliases are things like opus / fable / ''. Judging by "is it a full model name" is more robust than enumerating
+# aliases — a future new
 # alias needs no change here.
 CONCRETE_MODEL_PREFIX = "claude-"
 
 REASONS: dict[str, str] = {
     "written": "writable (a candidate in a dry-run / actually written by --apply)",
-    "already_measured": "tokens_measured_at already has a value — an idempotent re-run necessarily lands entirely here; no re-measuring, no overwriting",
+    "already_measured": "tokens_measured_at already has a value — an idempotent re-run necessarily lands entirely "
+        "here; no re-measuring, no overwriting",
     "already_set": "the target column already has a value and it agrees with the observation",
-    "no_transcript_path": "this row never registered a transcript path, so there is nothing to backfill from (historical rows; new rows are covered)",
-    "transcript_gone": "the path exists but the file is no longer on disk — the backfill window has closed on these rows; this only ever grows",
-    "unreadable_transcript": "the file is there but no usage snapshot can be parsed out of it (empty file / all lines corrupt)",
-    "duplicate_main_transcript": "the same main-session transcript is already represented by an earlier row — writing again would double-count",
+    "no_transcript_path": "this row never registered a transcript path, so there is nothing to backfill from "
+        "(historical rows; new rows are covered)",
+    "transcript_gone": "the path exists but the file is no longer on disk — the backfill window has closed on these "
+        "rows; this only ever grows",
+    "unreadable_transcript": "the file is there but no usage snapshot can be parsed out of it (empty file / all lines "
+        "corrupt)",
+    "duplicate_main_transcript": "the same main-session transcript is already represented by an earlier row — writing "
+        "again would double-count",
     "no_observed_model": "no full model name was read from the transcript (only synthetic rows like <synthetic>)",
-    "already_concrete": "model is already a full model name, not an alias — an observation does not overwrite an observation",
-    "transcript_grew": "the recomputed values are all ≥ the database values — the transcript was still written after measurement (the agent is still alive); do not change",
-    "recompute_mismatch": "the recomputed values do not match the database values and it is not growth — a real anomaly; a human must look",
+    "already_concrete": "model is already a full model name, not an alias — an observation does not overwrite an "
+        "observation",
+    "transcript_grew": "the recomputed values are all ≥ the database values — the transcript was still written after "
+        "measurement (the agent is still alive); do not change",
+    "recompute_mismatch": "the recomputed values do not match the database values and it is not growth — a real "
+        "anomaly; a human must look",
 }
 
 # The report prints in this order (actionable first, then non-actionable).
@@ -184,7 +225,8 @@ class Job:
 # Read side
 # ---------------------------------------------------------------------------
 def open_db(path: Path, *, writable: bool) -> sqlite3.Connection:
-    """Only write mode uses a normal connection; reads always go through a ``mode=ro`` URI, physically incapable of writing."""
+    """Only write mode uses a normal connection; reads always go through a ``mode=ro`` URI, physically incapable of
+    writing."""
     if writable:
         con = sqlite3.connect(str(path))
     else:
@@ -206,7 +248,8 @@ def load_agents(con: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def load_workflow_agents(con: sqlite3.Connection) -> list[sqlite3.Row]:
-    """``workflow_agents`` has **no** transcript_path column — a file can only be reached via os_agent_id, borrowing the path through
+    """``workflow_agents`` has **no** transcript_path column — a file can only be reached via os_agent_id, borrowing the
+    path through
     the agents row. Measured: os_agent_id has no duplicates in the whole table, so this join does not fan out."""
     return con.execute(
         """
@@ -222,7 +265,8 @@ def load_workflow_agents(con: sqlite3.Connection) -> list[sqlite3.Row]:
 def workflow_tokens_fingerprint(con: sqlite3.Connection) -> dict[str, Any]:
     """The per-row fingerprint of ``workflow_agents.tokens`` — the acceptance credential of hard constraint 1.
 
-    Comparing only the total is not enough: one row up and another down can leave the sum unchanged. So take the sha256 of ``(id, tokens)`` sorted by id;
+    Comparing only the total is not enough: one row up and another down can leave the sum unchanged. So take the sha256
+    of ``(id, tokens)`` sorted by id;
     any row being touched changes it.
     """
     h = hashlib.sha256()
@@ -243,7 +287,8 @@ def workflow_tokens_fingerprint(con: sqlite3.Connection) -> dict[str, Any]:
 class Parser:
     """A transcript parser with cache and progress.
 
-    The cache is a necessity, not an optimization: 47 Leader rows point to only 13 files, and parsing the same 35 MB file
+    The cache is a necessity, not an optimization: 47 Leader rows point to only 13 files, and parsing the same 35 MB
+    file
     11 times would be pure waste. The cache key is the path; the value is the parse result (which may be None).
     """
 
@@ -286,7 +331,8 @@ def job_subagent_usage(
 ) -> Job:
     """The main backfill: rows with ``role != 'leader'`` and an empty ``tokens_measured_at``.
 
-    The branch order is the implementation of idempotency: ``already_measured`` comes first, so on a second run every written
+    The branch order is the implementation of idempotency: ``already_measured`` comes first, so on a second run every
+    written
     row is out **before any file is read** — a re-run changes nothing and does not re-parse 700 MB either.
     """
     job = Job("A. agents four token layers + tokens_measured_at + tokens_source (sub-agents)", "agents")
@@ -317,12 +363,15 @@ def job_subagent_usage(
         warn = ""
         observed = usage.get("model") or ""
         if with_model and observed and not (a["model"] or ""):
-            # Observational backfill: that column in the database is empty, and the transcript holds a full model name. The same behavior as
+            # Observational backfill: that column in the database is empty, and the transcript holds a full model name.
+            # The same behavior as
             # the live SubagentStop path (hook_translator also writes this column).
             values["model"] = observed
         elif observed and (a["model"] or "") and a["model"] != observed:
-            # An existing value disagrees with the observation: **do not touch it**, only report. Overwriting observed values is not this script's business.
-            warn = f"the database model={a['model']} is inconsistent with the transcript observation {observed} (unchanged)"
+            # An existing value disagrees with the observation: **do not touch it**, only report. Overwriting observed
+            # values is not this script's business.
+            warn = (f"the database model={a['model']} is inconsistent with the transcript observation {observed} "
+                f"(unchanged)")
         job.rows.append(
             Row(
                 "agents",
@@ -339,20 +388,28 @@ def job_subagent_usage(
 
 
 # ---------------------------------------------------------------------------
-# Job B — back-labeling tokens_source on already-measured rows (with an independent recomputation reconciliation on the side)
+# Job B — back-labeling tokens_source on already-measured rows (with an independent recomputation reconciliation on the
+# side)
 # ---------------------------------------------------------------------------
 def job_source_label(agents: list[sqlite3.Row], parser: Parser) -> Job:
     """Rows whose ``tokens_measured_at`` is non-empty but ``tokens_source`` is empty (13 measured).
 
-    These are rows the D1 live chain collected; the ``tokens_source`` column landed later than they did. Before back-labeling, do one
-    more valuable thing: **recompute with this script's parser and compare field by field against the four-layer values the live chain wrote at the time**.
-    Only label when they are equal — so the value in this column is not "I assume it came from the transcript" but "I recomputed it, and it really is".
-    This is also the zero-tolerance same-metric reconciliation design §4.4 gate 2-1 asks for (the parser is a pure function; the tolerance is zero).
+    These are rows the D1 live chain collected; the ``tokens_source`` column landed later than they did. Before
+    back-labeling, do one
+    more valuable thing: **recompute with this script's parser and compare field by field against the four-layer values
+    the live chain wrote at the time**.
+    Only label when they are equal — so the value in this column is not "I assume it came from the transcript" but "I
+    recomputed it, and it really is".
+    This is also the zero-tolerance same-metric reconciliation design §4.4 gate 2-1 asks for (the parser is a pure
+    function; the tolerance is zero).
 
-    Recomputed values all ≥ the database values mean the transcript grew after measurement (the agent is still alive, e.g. the one
-    running this script) — that is not an anomaly, and gets its own class; the rest of the mismatches are the real anomalies.
+    Recomputed values all ≥ the database values mean the transcript grew after measurement (the agent is still alive,
+    e.g. the one
+    running this script) — that is not an anomaly, and gets its own class; the rest of the mismatches are the real
+    anomalies.
     """
-    job = Job("B. agents.tokens_source back-labeling (already-measured rows; written only after recomputation matches)", "agents")
+    job = Job("B. agents.tokens_source back-labeling (already-measured rows; written only after recomputation "
+        "matches)", "agents")
     for a in agents:
         if not a["tokens_measured_at"]:
             continue
@@ -414,12 +471,17 @@ def job_source_label(agents: list[sqlite3.Row], parser: Parser) -> Job:
 def job_workflow_model(rows: list[sqlite3.Row], parser: Parser) -> Job:
     """Replace the **aliases** in ``workflow_agents.model`` with the full model names observed in transcripts.
 
-    This is the only place this script writes ``workflow_agents``, and it writes the ``model`` column. The ``tokens`` column is not in
-    the allowlist, not in this function, and would not pass the post-apply fingerprint comparison either — three independent gates.
+    This is the only place this script writes ``workflow_agents``, and it writes the ``model`` column. The ``tokens``
+    column is not in
+    the allowlist, not in this function, and would not pass the post-apply fingerprint comparison either — three
+    independent gates.
 
-    The correct form of "only write empty columns" here is not a literal copy: the alias ``opus`` is a **request specification** (which model is wanted),
-    not an observation result. Replacing a request specification with an observation is completing the truth, the opposite direction from "overwriting an observation with an inference". So the criterion is
-    **only touch it when it is not a full model name**, and the SQL guard pins "still equal to the alias I read" — if in the meantime someone wrote a full
+    The correct form of "only write empty columns" here is not a literal copy: the alias ``opus`` is a **request
+    specification** (which model is wanted),
+    not an observation result. Replacing a request specification with an observation is completing the truth, the
+    opposite direction from "overwriting an observation with an inference". So the criterion is
+    **only touch it when it is not a full model name**, and the SQL guard pins "still equal to the alias I read" — if in
+    the meantime someone wrote a full
     model name there, it yields automatically.
     """
     job = Job("C. workflow_agents.model ← transcript observation (aliases replaced by real names)", "workflow_agents")
@@ -468,19 +530,25 @@ def job_leader_usage(
 ) -> Job:
     """Leader rows' four token layers. **Not executed by default**; see the module docstring for the reasons.
 
-    Even when enabled, it **dedupes by file**: the same main-session transcript is represented only by the row with the earliest created_at
-    (sharing its source with ``_find_leader``'s resolution rule); the rest are recorded as ``duplicate_main_transcript``. Without dedup,
+    Even when enabled, it **dedupes by file**: the same main-session transcript is represented only by the row with the
+    earliest created_at
+    (sharing its source with ``_find_leader``'s resolution rule); the rest are recorded as
+    ``duplicate_main_transcript``. Without dedup,
     the measured transcript shared by 11 rows would count the same usage 11 times over.
     """
     job = Job(
         "D. agents four token layers (Leader main sessions, requires --include-leader)", "agents", enabled=enabled
     )
     seen: dict[str, str] = {}  # transcript_path -> the agent_id already representing it
-    # Two-pass scan: already-measured rows claim file representation rights first. Representation rights must follow "who already carries this file's account",
-    # not whoever happens to be scanned first in this round — otherwise, after one --apply round, the representative row lands in already_measured,
-    # continues early and no longer claims its place, and the ghost rows of the same file dodge the duplicate gate and are promoted to candidates; re-running
+    # Two-pass scan: already-measured rows claim file representation rights first. Representation rights must follow
+    # "who already carries this file's account",
+    # not whoever happens to be scanned first in this round — otherwise, after one --apply round, the representative row
+    # lands in already_measured,
+    # continues early and no longer claims its place, and the ghost rows of the same file dodge the duplicate gate and
+    # are promoted to candidates; re-running
     # --apply would then count the same main session's usage again (caught by a production re-run on 2026-08-03:
-    # after the first round wrote 10 rows, the re-run reported 5 rows "pending write", all ghost rows of already-measured files).
+    # after the first round wrote 10 rows, the re-run reported 5 rows "pending write", all ghost rows of
+    # already-measured files).
     for a in agents:
         if a["role"] == "leader" and a["tokens_measured_at"] and (a["transcript_path"] or ""):
             seen.setdefault(a["transcript_path"], a["id"])
@@ -515,7 +583,8 @@ def job_leader_usage(
             Row(
                 "agents", a["id"], a["name"], "written", values=values,
                 guard={"tokens_measured_at": None},
-                warn="the main session is a live file; this value is a snapshot at backfill time; continuous collection belongs to stage 4",
+                warn="the main session is a live file; this value is a snapshot at backfill time; continuous "
+                    "collection belongs to stage 4",
                 note=f"api_calls={usage.get('api_calls')}",
             )
         )
@@ -526,7 +595,8 @@ def job_leader_usage(
 # Coverage windowing (hard constraint 2)
 # ---------------------------------------------------------------------------
 def detect_backfill_cohorts(con: sqlite3.Connection) -> set[str]:
-    """The backfill batch times already present in the database — "the same timestamp shared by ≥ BATCH_COHORT_MIN rows"."""
+    """The backfill batch times already present in the database — "the same timestamp shared by ≥ BATCH_COHORT_MIN
+    rows"."""
     return {
         str(ts)
         for ts, n in con.execute(
@@ -541,8 +611,10 @@ def detect_backfill_cohorts(con: sqlite3.Connection) -> set[str]:
 class Coverage:
     """The coverage three-way split under one denominator: incremental collection / historical backfill / unattributed.
 
-    The three numbers are **never merged into one**. §6.3-2 is direct about it: after backfill, overall coverage jumps to 78%, but "the collection
-    rate of new dispatches" is a different matter — the latter is the indicator for judging whether the collection chain is healthy — one number would mask another.
+    The three numbers are **never merged into one**. §6.3-2 is direct about it: after backfill, overall coverage jumps
+    to 78%, but "the collection
+    rate of new dispatches" is a different matter — the latter is the indicator for judging whether the collection chain
+    is healthy — one number would mask another.
     """
 
     label: str
@@ -571,8 +643,10 @@ def measure_coverage(
 ) -> Coverage:
     """§4.1: the denominator is **all dispatch rows of that scope**, including rows without a transcript.
 
-    Rows may not be moved out of the denominator on the grounds of "no path, so it does not count" — that is exactly letting a part impersonate the whole (risk R2).
-    The denominator is counted by whether a row exists, **not by tokens_measured_at**; otherwise unmeasured rows would disappear from the denominator and
+    Rows may not be moved out of the denominator on the grounds of "no path, so it does not count" — that is exactly
+    letting a part impersonate the whole (risk R2).
+    The denominator is counted by whether a row exists, **not by tokens_measured_at**; otherwise unmeasured rows would
+    disappear from the denominator and
     coverage would be a constant 100%.
     """
     rows = [a for a in agents if (a["role"] == "leader") == leader]
@@ -591,7 +665,8 @@ def measure_coverage(
 
 
 def project_coverage(before: Coverage, newly_written: int) -> Coverage:
-    """The backfill **only adds to the historical-backfill cell**; the incremental-collection cell is untouched word for word — that is exactly what people need to see."""
+    """The backfill **only adds to the historical-backfill cell**; the incremental-collection cell is untouched word
+    for word — that is exactly what people need to see."""
     return Coverage(before.label, before.total, before.incremental, before.backfilled + newly_written)
 
 
@@ -620,7 +695,8 @@ def print_job(job: Job, sample_n: int, rng: random.Random) -> None:
             warn = f"  ⚠ {r.warn}" if r.warn else ""
             print(f"    {r.row_id[:8]}  {r.name[:26]:<26} {r.value_repr()}{note}{warn}")
 
-    # Rows with a warn are listed once more separately: sampling may miss them, and they are exactly what a human needs to see.
+    # Rows with a warn are listed once more separately: sampling may miss them, and they are exactly what a human needs
+    # to see.
     warned = [r for r in job.rows if r.warn and r.reason != "written"]
     warned += [r for r in written if r.warn]
     if warned:
@@ -635,16 +711,19 @@ def print_job(job: Job, sample_n: int, rng: random.Random) -> None:
 def print_transcript_gone(jobs: list[Job]) -> None:
     """List ``transcript_gone`` rows one by one — §3.4 requires it, and this class only ever grows.
 
-    This is not noise: the report itself is the evidence that "the backfill window has permanently closed on these rows". Every row listed today
+    This is not noise: the report itself is the evidence that "the backfill window has permanently closed on these
+    rows". Every row listed today
     is a row nobody will ever be able to backfill again.
     """
     print()
     print("=" * 88)
-    print("transcript_gone row-by-row list (§3.4: only ever grows; the report is the evidence that the window has closed)")
+    print("transcript_gone row-by-row list (§3.4: only ever grows; the report is the evidence that the window has "
+        "closed)")
     print("-" * 88)
     gone = [(j, r) for j in jobs for r in j.by_reason("transcript_gone")]
     if not gone:
-        print("  ✓ 0 rows — this backfill window is fully open: every registered transcript is still on disk, not one missing.")
+        print("  ✓ 0 rows — this backfill window is fully open: every registered transcript is still on disk, not one "
+            "missing.")
         return
     print(f"  The transcripts of {len(gone)} rows are no longer on disk; this usage can never be backfilled:")
     for job, r in gone:
@@ -656,7 +735,8 @@ def print_coverage(
 ) -> None:
     print()
     print("=" * 88)
-    print("Coverage windowing (hard constraint 2: historical backfill and incremental collection are always two numbers, never merged)")
+    print("Coverage windowing (hard constraint 2: historical backfill and incremental collection are always two "
+        "numbers, never merged)")
     print("-" * 88)
     sub_before = measure_coverage(agents, cohorts, leader=False)
     lead_before = measure_coverage(agents, cohorts, leader=True)
@@ -670,9 +750,12 @@ def print_coverage(
     print(sub_after.line())
     print(lead_after.line())
     print()
-    print("  How to read it: the 'incremental collection' cell is **word-for-word unchanged before and after backfill** — it is the indicator of whether the collection chain is healthy;")
-    print("        the backfill only raises the 'historical backfill' cell. Adding the two cells together is meaningless, and this report does not give that sum.")
-    print("  Denominator convention: all agents-table rows split by role, **including rows without a transcript** (§4.1).")
+    print("  How to read it: the 'incremental collection' cell is **word-for-word unchanged before and after "
+        "backfill** — it is the indicator of whether the collection chain is healthy;")
+    print("        the backfill only raises the 'historical backfill' cell. Adding the two cells together is "
+        "meaningless, and this report does not give that sum.")
+    print("  Denominator convention: all agents-table rows split by role, **including rows without a transcript** "
+        "(§4.1).")
 
 
 def print_fingerprint(fp: dict[str, Any], *, title: str) -> None:
@@ -685,9 +768,12 @@ def print_fingerprint(fp: dict[str, Any], *, title: str) -> None:
 def apply_job(con: sqlite3.Connection, job: Job) -> int:
     """Write row by row, with SQL-level guards.
 
-    The guards live in the SQL and not only in the verdict layer because the database may be rewritten by the live system at any moment between dry-run and apply:
-    ``tokens_measured_at IS NULL`` ensures that even concurrently it will not overwrite an observation someone just wrote;
-    ``model = <the alias I read>`` makes a row that in the meantime was written as a full model name yield automatically.
+    The guards live in the SQL and not only in the verdict layer because the database may be rewritten by the live
+    system at any moment between dry-run and apply:
+    ``tokens_measured_at IS NULL`` ensures that even concurrently it will not overwrite an observation someone just
+    wrote;
+    ``model = <the alias I read>`` makes a row that in the meantime was written as a full model name yield
+    automatically.
     """
     if not job.enabled:
         return 0
@@ -709,7 +795,8 @@ def apply_job(con: sqlite3.Connection, job: Job) -> int:
                 where.append(f"{col} = ?")
                 params.append(expected)
         cur = con.execute(
-            f"update {job.table} set {assign} where {' and '.join(where)}",  # noqa: S608 — table/column names all come from constants and the allowlist in this file, not external input
+            f"update {job.table} set {assign} where {' and '.join(where)}",  # noqa: S608 — table/column names all come
+            # from constants and the allowlist in this file, not external input
             params,
         )
         n += cur.rowcount
@@ -724,7 +811,8 @@ def build_journal(
     fp_after: dict[str, Any],
     written: int,
 ) -> dict[str, Any]:
-    """journal = the only recovery credential: the batch time + the per-row written content + the before/after fingerprints of the forbidden column."""
+    """journal = the only recovery credential: the batch time + the per-row written content + the before/after
+    fingerprints of the forbidden column."""
     return {
         "script": "backfill_token_usage.py",
         "db": str(args.db),
@@ -768,12 +856,14 @@ def main() -> int:
     )
     ap.add_argument("--db", type=Path, default=DEFAULT_DB, help="target database (default: the production database)")
     ap.add_argument("--apply", action="store_true", help="actually write (default: report only)")
-    ap.add_argument("--journal", type=Path, help="required with --apply: where the recovery credential lands (hard-refused if it already exists)")
+    ap.add_argument("--journal", type=Path, help="required with --apply: where the recovery credential lands "
+        "(hard-refused if it already exists)")
     ap.add_argument("--sample", type=int, default=30, help="number of rows sampled and printed per Job")
     ap.add_argument("--seed", type=int, default=0, help="sampling random seed (default 0, reproducible)")
     ap.add_argument(
         "--include-leader", action="store_true",
-        help="additionally run Job D (Leader main-session backfill) — its semantics are the opposite of stage 4's snapshot overwrite, so it is not done by default",
+        help="additionally run Job D (Leader main-session backfill) — its semantics are the opposite of stage 4's "
+            "snapshot overwrite, so it is not done by default",
     )
     ap.add_argument(
         "--no-model", action="store_true",
@@ -791,15 +881,19 @@ def main() -> int:
     if args.journal is not None and args.journal.exists():
         print(
             f"❌ The journal target file already exists: {args.journal}\n"
-            "   A second apply would overwrite it with the post-backfill state, and the recovery credential would be gone. Choose another filename.",
+            "   A second apply would overwrite it with the post-backfill state, and the recovery credential would be "
+            "gone. Choose another filename.",
             file=sys.stderr,
         )
         return 2
 
     rng = random.Random(args.seed)
-    # Batch time: all rows of one backfill share the same value — that is both the fact (they were measured at this very moment) and
-    # the windowing signature of hard constraint 2. It goes through aiteam.clock's single clock (I11 red line: no second clock may
-    # exist in the database); the persisted form of naive_utc_now agrees with UtcDateTime, so the two sides align naturally.
+    # Batch time: all rows of one backfill share the same value — that is both the fact (they were measured at this very
+    # moment) and
+    # the windowing signature of hard constraint 2. It goes through aiteam.clock's single clock (I11 red line: no second
+    # clock may
+    # exist in the database); the persisted form of naive_utc_now agrees with UtcDateTime, so the two sides align
+    # naturally.
     batch_ts = naive_utc_now().isoformat(sep=" ")
 
     con = open_db(args.db, writable=args.apply)
@@ -811,7 +905,8 @@ def main() -> int:
 
         print(f"Database: {args.db}")
         print(f"Mode: {'APPLY (writing)' if args.apply else 'DRY-RUN (read-only, mode=ro)'}")
-        print("Metric: usage_sum (grouped by requestId, take the last snapshot, then accumulate across groups) — it differs from"
+        print("Metric: usage_sum (grouped by requestId, take the last snapshot, then accumulate across groups) — it "
+            "differs from"
               "the ctx_last metric of workflow_agents.tokens by a measured 5-25x, and the two are never added together")
         print(f"Batch time: {batch_ts} (all rows written this time share this value; that is the windowing signature)")
         print(f"agents {len(agents)} rows; workflow_agents {len(wa_rows)} rows;"
@@ -834,17 +929,22 @@ def main() -> int:
             print_job(job, args.sample, rng)
         if not args.include_leader:
             print()
-            print("  Job D is not executed by default (it requires --include-leader). The above is only a preview of its verdicts.")
-            print("  Two independent reasons: 1) 47 Leader rows point to only 13 transcripts, and taking everything as-is would")
-            print("  repeatedly count the same usage up to 11 times; 2) a main session is a live file, and continuous collection belongs to stage 4 (snapshot")
-            print("  overwrite semantics), while this script's 'only write empty columns, never update after writing' would permanently freeze a mid-way value as 'measured'.")
+            print("  Job D is not executed by default (it requires --include-leader). The above is only a preview of "
+                "its verdicts.")
+            print("  Two independent reasons: 1) 47 Leader rows point to only 13 transcripts, and taking everything "
+                "as-is would")
+            print("  repeatedly count the same usage up to 11 times; 2) a main session is a live file, and continuous "
+                "collection belongs to stage 4 (snapshot")
+            print("  overwrite semantics), while this script's 'only write empty columns, never update after writing' "
+                "would permanently freeze a mid-way value as 'measured'.")
 
         print_transcript_gone(jobs)
         print_coverage(agents, cohorts, job_a, job_d)
 
         print()
         print("=" * 88)
-        print("Hard constraint 1: workflow_agents.tokens unchanged row by row (the ctx_last metric must not be polluted by usage_sum)")
+        print("Hard constraint 1: workflow_agents.tokens unchanged row by row (the ctx_last metric must not be "
+            "polluted by usage_sum)")
         print("-" * 88)
         print(f"  Writable-column allowlist: {sorted(f'{t}.{c}' for t, c in WRITABLE_COLUMNS)}")
         print(f"  Forbidden column: {FORBIDDEN_COLUMN[0]}.{FORBIDDEN_COLUMN[1]} — not in the allowlist;"
@@ -874,7 +974,8 @@ def main() -> int:
             if fp_after["sha256"] != fp_before["sha256"]:
                 con.rollback()
                 print()
-                print("❌ Hard constraint 1 breached: the workflow_agents.tokens fingerprint changed; the whole transaction has been rolled back.",
+                print("❌ Hard constraint 1 breached: the workflow_agents.tokens fingerprint changed; the whole "
+                    "transaction has been rolled back.",
                       file=sys.stderr)
                 print_fingerprint(fp_before, title="Before backfill")
                 print_fingerprint(fp_after, title="After backfill")
@@ -887,7 +988,8 @@ def main() -> int:
         fp_final = workflow_tokens_fingerprint(con)
         print()
         print(f"Written: {written} rows (verdict candidates {planned} rows;"
-              f"the difference = rows the live system has written in the meantime; guards yielding is the expected behavior)")
+              f"the difference = rows the live system has written in the meantime; guards yielding is the expected "
+              f"behavior)")
         print_fingerprint(fp_before, title="Pre-backfill fingerprint")
         print_fingerprint(fp_final, title="Post-backfill fingerprint")
         print(f"  ✓ Hard constraint 1 passed: {FORBIDDEN_COLUMN[0]}.{FORBIDDEN_COLUMN[1]} unchanged row by row")

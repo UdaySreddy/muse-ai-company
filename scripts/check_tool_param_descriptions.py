@@ -84,9 +84,11 @@ def main() -> int:
     print(
         f"\nConclusion: ❌ of {tool_count} tools / {param_count} parameters,"
         f"{missing_count} parameters + {len(undocumented_tools)} tools have no description."
-        "\nFix: in the Args section of the function docstring, write one line for each parameter (make clear when to use it / what it means,"
+        "\nFix: in the Args section of the function docstring, write one line for each parameter (make clear when to "
+        "use it / what it means,"
         "do not just restate the parameter name), or use Field(description=...)."
-        "\nCommon pitfall: writing multiple parameters on one line (like `limit / offset: Pagination.`) cannot be split by the parser,"
+        "\nCommon pitfall: writing multiple parameters on one line (like `limit / offset: Pagination.`) cannot be "
+        "split by the parser,"
         "so it looks described but is actually all lost — one parameter per line is required."
     )
     return 1

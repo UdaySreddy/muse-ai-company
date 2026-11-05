@@ -2,7 +2,8 @@
 """Traffic report generator — generates a self-contained HTML report from the github-repo-stats data branch.
 
 Replaces ghrs's bundled report.html (misaligned images, poor layout). Zero external-link dependencies:
-CSS/JS/data are all embedded, so it opens offline, prints without breaking layout, and adapts to light/dark color schemes.
+CSS/JS/data are all embedded, so it opens offline, prints without breaking layout, and adapts to light/dark color
+schemes.
 
 Usage:
     python3 scripts/traffic_report.py [--out /tmp/traffic-report.html]
@@ -68,7 +69,8 @@ def _read_csv(text: str) -> list[dict[str, str]]:
 
 
 def load_data(data_dir: Path | None) -> dict[str, list[dict[str, str]]]:
-    """Read the five tables; the git branch takes priority, data_dir is the fallback. Snapshots take the newest-named pair."""
+    """Read the five tables; the git branch takes priority, data_dir is the fallback. Snapshots take the newest-named
+    pair."""
     def read(name: str) -> list[dict[str, str]]:
         if data_dir is not None:
             p = data_dir / name
@@ -201,7 +203,8 @@ def line_chart(
 
 
 def bar_chart(rows: list[tuple[str, int, int]]) -> str:
-    """Horizontal bar chart (magnitude → a single hue; 4px rounded data-end; 2px gaps; value labeled directly on the right)."""
+    """Horizontal bar chart (magnitude → a single hue; 4px rounded data-end; 2px gaps; value labeled directly on the
+    right)."""
     if not rows:
         return '<p class="empty">No referrer data yet</p>'
     vmax = max(r[1] for r in rows) or 1
