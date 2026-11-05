@@ -1,15 +1,15 @@
 import type { WorkflowAgentState } from '@/api/workflows';
 
 /**
- * workflow 队成员终态语义（任务 8306664f）：workflow-subagent 完成一个阶段后，
- * 后端 agents.status 落回 'offline'——这是数据层的真实状态（该 CC 子 agent 进程
- * 确实已退出），但对用户是误导："4个已完成+1个在跑"被呈现成"5个里4个掉线"。
+ * Terminal-state semantics for workflow team members (task 8306664f): after a workflow-subagent completes a phase,
+ * the backend agents.status falls back to 'offline' — that is the true state at the data layer (the CC sub-agent process
+ * really has exited), but it misleads users: "4 done + 1 running" gets presented as "4 of 5 offline".
  *
- * 优先信 workflow 观测层 state（design workflow-observability §2.2 的权威源）：
- * done→已完成、running→在忙、queued→等待；拿不到投影数据（未接 wf_id 或该
- * agent 未入观测表）时退化用角色兜底——workflow-subagent 角色只会出现在
- * workflow 队（hook_translator.WORKFLOW_AGENT_TYPE），session 队成员是自定义
- * 角色名，不会误触这条规则，offline 依旧如实呈现为掉线（用户 2026-07-14 拍板）。
+ * Trust the workflow observability layer's state first (the authoritative source in design workflow-observability §2.2):
+ * done -> completed, running -> busy, queued -> waiting; when no projection data is available (no wf_id attached, or the
+ * agent is not in the observability table), fall back to a role-based heuristic — the workflow-subagent role only ever appears in
+ * workflow teams (hook_translator.WORKFLOW_AGENT_TYPE); session team members use custom
+ * role names and never trigger this rule, so offline is still shown truthfully as offline (user decision, 2026-07-14).
  */
 export function resolveWorkflowAgentStatus(
   agent: { status: string; role: string },
