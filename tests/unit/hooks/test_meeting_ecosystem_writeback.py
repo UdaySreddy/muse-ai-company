@@ -31,10 +31,10 @@ from aiteam.hooks import meeting_ecosystem_writeback as hook
 @pytest.mark.parametrize(
     ("topic", "expected"),
     [
-        ("讨论生态库选型", ["生态", "生态库"]),
+        ("Discussing ecosystem library selection", ["ecosystem", "ecosystem library"]),
         ("Ecosystem candidate review", ["ecosystem"]),
-        ("深扫结果合议", ["深扫"]),
-        ("常规站会", []),
+        ("Deep-scan results deliberation", ["deep scan"]),
+        ("Regular standup", []),
         ("", []),
         ("Sprint planning for Q3", []),
         ("DEEP REVIEW: deep_review row update", ["deep review", "deep_review"]),
@@ -87,15 +87,15 @@ def test_extract_meeting_id_handles_short_alias() -> None:
 def test_build_reminder_with_linked_reviews() -> None:
     text = hook.build_reminder(
         meeting_id="m-1",
-        topic="生态库选型辩论",
-        matched_keywords=["生态", "生态库"],
+        topic="Ecosystem library selection debate",
+        matched_keywords=["ecosystem", "ecosystem library"],
         linked_reviews=[
             {"id": "rev-A"},
             {"id": "rev-B"},
         ],
     )
     assert "m-1" in text
-    assert "生态库选型辩论" in text
+    assert "Ecosystem library selection debate" in text
     assert "rev-A" in text and "rev-B" in text
     assert "ecosystem_apply_debate_result" in text
     assert "ecosystem_mark_as_reference" in text or "ecosystem_start_integration" in text
@@ -169,7 +169,7 @@ def test_main_emits_reminder_when_topic_matches(
     monkeypatch.setattr(
         hook,
         "fetch_meeting_topic",
-        lambda mid: "生态库选型辩论",
+        lambda mid: "Ecosystem library selection debate",
     )
     monkeypatch.setattr(hook, "fetch_linked_reviews", lambda mid: [])
 
@@ -187,7 +187,7 @@ def test_main_emits_reminder_when_topic_matches(
     assert rc == 0
     out = captured.getvalue()
     assert "m-99" in out
-    assert "生态库选型辩论" in out
+    assert "Ecosystem library selection debate" in out
 
 
 def test_main_silent_when_no_signal(monkeypatch: pytest.MonkeyPatch) -> None:

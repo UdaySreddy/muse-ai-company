@@ -56,10 +56,10 @@ def test_deep_review_report_triggers_link(monkeypatch: pytest.MonkeyPatch) -> No
         "tool_input": {
             "report_type": "deep-review",
             "content": (
-                "# fastmcp 深度审查报告\n\n"
+                "# fastmcp Deep Review Report\n\n"
                 "repo_id=11111111-aaaa-bbbb-cccc-222222222222\n"
                 "deep_review_id=33333333-dddd-eeee-ffff-444444444444\n\n"
-                "## 1. 真实定位与成熟度\n- 实际定位: test framework\n"
+                "## 1. Real positioning and maturity\n- Actual positioning: test framework\n"
             ),
         },
         "tool_response": {"id": "report-uuid-xyz"},
@@ -72,7 +72,7 @@ def test_deep_review_report_triggers_link(monkeypatch: pytest.MonkeyPatch) -> No
     )
     body = calls[0]["body"]
     assert body["report_id"] == "report-uuid-xyz"
-    assert "实际定位: test framework" in body.get("summary_md", "")
+    assert "Actual positioning: test framework" in body.get("summary_md", "")
 
 
 # ---------------------------------------------------------------------------
@@ -156,42 +156,42 @@ def test_aliased_tool_name_short_form(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 _FIVE_SECTION_REPORT = """\
-# org/repo 深度审查报告
+# org/repo Deep Review Report
 
 repo_id=11111111-aaaa-bbbb-cccc-222222222222
 deep_review_id=33333333-dddd-eeee-ffff-444444444444
 
-## 1. 真实定位与成熟度
-- 实际定位: 测试框架
+## 1. Real positioning and maturity
+- Actual positioning: test framework
 - README claim: ok
 
-## 2. 架构概览
+## 2. Architecture overview
 ```
 repo/
 ├── src/
 └── tests/
 ```
 
-## 3. 我们能借鉴的点
-- 设计点 A: 装饰器风格
+## 3. What we can learn from it
+- Design point A: decorator style
 
-## 4. 风险/不可取
-- License: 未指定
-- 重型依赖: torch
+## 4. Risks / not advisable
+- License: not specified
+- Heavy dependencies: torch
 
-## 5. 集成建议
-- **推荐动作**: **integrate**
-- **理由**: 价值高
+## 5. Integration recommendations
+- **Recommended action**: **integrate**
+- **Reason**: High value
 
 ---
 
-## 元数据
+## Metadata
 - demo_result: success
 - demo_log_excerpt: |
     GET https://api.github.com/repos/x/y
     => 200 OK
     stars=1234
-- 验证方式: GitHub API
+- Verification method: GitHub API
 """
 
 
@@ -205,17 +205,17 @@ def test_parser_splits_all_five_sections() -> None:
     m = _load_hook()
     secs = m._split_sections(_FIVE_SECTION_REPORT)
     assert set(secs.keys()) == {"1", "2", "3", "4", "5"}
-    assert "测试框架" in secs["1"]
+    assert "test framework" in secs["1"]
     assert "└── tests/" in secs["2"]
-    assert "装饰器风格" in secs["3"]
+    assert "decorator style" in secs["3"]
     assert "License" in secs["4"]
-    assert "推荐动作" in secs["5"]
-    # Section 5 must NOT bleed into 元数据 — demo_result must be absent.
+    assert "Recommended action" in secs["5"]
+    # Section 5 must NOT bleed into Metadata — demo_result must be absent.
     assert "demo_result" not in secs["5"]
 
 
 def test_parser_extracts_demo_metadata_and_recommendation() -> None:
-    """demo_result / demo_log / 推荐动作 must come out clean."""
+    """demo_result / demo_log / Recommended action must come out clean."""
     m = _load_hook()
     demo_result, demo_log = m._parse_demo_metadata(_FIVE_SECTION_REPORT)
     assert demo_result == "success"
@@ -246,11 +246,11 @@ def test_link_payload_carries_all_parsed_fields(
     body = calls[0]["body"]
 
     assert body["report_id"] == "rep-final"
-    assert "测试框架" in body["summary_md"]
+    assert "test framework" in body["summary_md"]
     assert "└── tests/" in body["architecture_md"]
-    assert "装饰器风格" in body["learnings_md"]
+    assert "decorator style" in body["learnings_md"]
     assert "License" in body["risks_md"]
-    assert "推荐动作" in body["integration_md"]
+    assert "Recommended action" in body["integration_md"]
     assert body["demo_result"] == "success"
     assert "stars=1234" in body["demo_log_excerpt"]
     assert body["integration_recommendation"] == "integrate"

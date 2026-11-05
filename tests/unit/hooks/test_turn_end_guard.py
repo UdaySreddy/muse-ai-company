@@ -1,7 +1,8 @@
-"""Unit tests for turn_end_guard Stop hook (唤醒体系 v2 §8).
+"""Unit tests for turn_end_guard Stop hook (wake system v2 §8).
 
-decide() 纯函数测 7 分支；main() 用 mock stdin + tmp 状态目录 + mock 端点查询
-测 Stop/user-prompt 两模式与 fail-open。对齐 batch0-contract-tests.md 测试④。
+decide() is precision-tested over 7 branches as a pure function; main() uses mock stdin + a tmp state directory + mock
+endpoint queries
+to test the Stop/user-prompt two modes and fail-open. Aligned with test (4) in batch0-contract-tests.md.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import pytest
 import aiteam.hooks.turn_end_guard as g
 
 
-# ---- decide() 7 分支（纯函数）--------------------------------------------
+# ---- decide() 7 branches (pure function) --------------------------------------------
 def test_decide_stop_hook_active_allows():
     a, b, _ = g.decide(stop_hook_active=True, manual_active=False,
                         stop_keyword_hit=False, work_in_flight=True,
@@ -66,7 +67,7 @@ def test_decide_danger_zone_blocks():
     assert "watcher" in reason
 
 
-# ---- 停止关键词正则 --------------------------------------------------------
+# ---- Stop-keyword regex --------------------------------------------------------
 @pytest.mark.parametrize("text", ["先停一下", "收工吧", "ok please stop", "hold on", "暂停"])
 def test_stop_keywords_match(text):
     assert g.STOP_KEYWORDS.search(text)
@@ -77,7 +78,7 @@ def test_stop_keywords_no_false_positive(text):
     assert not g.STOP_KEYWORDS.search(text)
 
 
-# ---- main() 集成 ----------------------------------------------------------
+# ---- main() integration ----------------------------------------------------------
 def _run_main(payload, monkeypatch, argv=None):
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
     monkeypatch.setattr("sys.argv", argv or ["turn_end_guard.py"])
@@ -103,7 +104,7 @@ def test_main_blocks_in_danger_zone(tmp_state, monkeypatch, capsys):
     assert code == 0
     decision = json.loads(out)
     assert decision["decision"] == "block"
-    # 计数已落盘
+    # The count has been persisted
     state = json.loads((tmp_state / "s1.json").read_text())
     assert state["block_count"] == 1
 
@@ -113,11 +114,11 @@ def test_main_allows_when_no_work(tmp_state, monkeypatch, capsys):
     monkeypatch.setattr(g, "_last_user_text", lambda p: "")
     code = _run_main({"session_id": "s1", "stop_hook_active": False}, monkeypatch)
     assert code == 0
-    assert capsys.readouterr().out.strip() == ""  # 无 block 输出
+    assert capsys.readouterr().out.strip() == ""  # No block output
 
 
 def test_main_stop_hook_active_short_circuits(tmp_state, monkeypatch, capsys):
-    # 若 stop_hook_active，绝不查端点也绝不 block
+    # If stop_hook_active, never query the endpoint and never block
     def _boom(sid, tid):
         raise AssertionError("endpoint must not be queried")
     monkeypatch.setattr(g, "_query_actionable", _boom)
@@ -137,7 +138,7 @@ def test_main_stop_keyword_allows_without_endpoint(tmp_state, monkeypatch, capsy
 
 
 def test_main_watcher_armed_allows(tmp_state, monkeypatch, capsys):
-    # 武装文件在有效期 → 即便有活也放行
+    # The arming file is within its validity period → even with work pending, let it through
     (tmp_state / "s1.armed").write_text(str(time.time() + 60))
     monkeypatch.setattr(g, "_query_actionable", lambda sid, tid: {"busy_agents": 5, "live_runs": 1})
     monkeypatch.setattr(g, "_last_user_text", lambda p: "继续")
@@ -152,7 +153,7 @@ def test_main_block_cap_releases(tmp_state, monkeypatch, capsys):
     monkeypatch.setattr(g, "_last_user_text", lambda p: "继续")
     code = _run_main({"session_id": "s1", "stop_hook_active": False, "transcript_path": ""}, monkeypatch)
     assert code == 0
-    assert capsys.readouterr().out.strip() == ""  # 达上限，放行不再 block
+    assert capsys.readouterr().out.strip() == ""  # The cap has been reached; let it through and block no more
 
 
 def test_main_user_prompt_writes_manual_marker(tmp_state, monkeypatch):
