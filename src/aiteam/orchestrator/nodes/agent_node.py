@@ -9,10 +9,10 @@ from __future__ import annotations
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
+from aiteam.orchestrator.llm_factory import resolve_llm
 from aiteam.types import Agent
 
 
@@ -50,7 +50,7 @@ def create_agent_node(
         leader_plan = state.get("leader_plan", "")
 
         # Build system prompt
-        base_prompt = agent_config.system_prompt or f"你是一位{agent_config.role}。"
+        base_prompt = agent_config.system_prompt or f"You are a {agent_config.role}."
         system_parts = [base_prompt]
 
         # Inject memory context (if memory_store is available)
@@ -61,7 +61,7 @@ def create_agent_node(
                     task=task,
                 )
                 if memory_context:
-                    system_parts.append(f"\n## 相关记忆\n{memory_context}")
+                    system_parts.append(f"\n## Relevant Memories\n{memory_context}")
             except Exception:
                 # Silently skip when memory is unavailable
                 pass
@@ -69,13 +69,14 @@ def create_agent_node(
         system_content = "\n".join(system_parts)
 
         user_content = (
-            f"## 团队任务\n{task}\n\n"
-            f"## Leader的执行计划\n{leader_plan}\n\n"
-            f"请根据计划中分配给你（{agent_config.name}，{agent_config.role}）的子任务，"
-            f"完成你负责的部分。直接Output工作成果。"
+            f"## Team Task\n{task}\n\n"
+            f"## The Leader's Execution Plan\n{leader_plan}\n\n"
+            f"Please complete your part according to the subtask assigned to you in the plan "
+            f"({agent_config.name}, {agent_config.role}). "
+            f"Output the work product directly."
         )
 
-        llm = ChatAnthropic(model=llm_model)
+        llm = resolve_llm(configurable, llm_model)
         messages = [
             SystemMessage(content=system_content),
             HumanMessage(content=user_content),

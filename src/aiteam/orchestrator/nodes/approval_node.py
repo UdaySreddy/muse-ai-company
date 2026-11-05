@@ -33,7 +33,7 @@ async def approval_node(state: dict, config: RunnableConfig) -> dict | Command:
         {
             "type": "approval_request",
             "plan": plan,
-            "message": "请审批以下执行计划",
+            "message": "Please approve the following execution plan",
         }
     )
 
@@ -45,6 +45,6 @@ async def approval_node(state: dict, config: RunnableConfig) -> dict | Command:
             goto="__end__",
             update={
                 "approval_status": "rejected",
-                "final_result": f"任务被人工拒绝: {decision.get('reason', '无原因')}",
+                "final_result": f"Task rejected by human: {decision.get('reason', 'No reason given')}",
             },
         )
