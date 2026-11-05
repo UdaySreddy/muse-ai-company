@@ -284,17 +284,20 @@ class AgentModel(Base):
     transcript_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     ctx_measured_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     reuse_domain: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    # 计费口径 token 归因（与上面的 ctx_* "上下文水位"是两回事：水位是"这个 agent
-    # 现在占了多少上下文"，这里是"这个 agent 一共烧了多少钱"）。由 SubagentStop
-    # 从子 agent transcript 按 requestId 分组解析回填。NULL 表示尚未采集到，
-    # **不等于 0**——no-data 与 zero 必须分得开。
+    # Billing-caliber token attribution (a different thing from the ctx_* "context watermark" above: the watermark is
+    # "how much context this agent
+    # currently occupies", while this is "how much this agent burned in total"). Backfilled by SubagentStop
+    # by parsing the sub-agent transcript grouped by requestId. NULL means not yet collected,
+    # **not equal to 0** — no-data and zero must be distinguishable.
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cache_creation_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cache_read_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tokens_measured_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
-    # 上面四层数的来源：transcript 定真 / 别名兜底（TokenSource）。NULL = 未采集。
-    # 纯审计列，不参与任何计算——"这个数是怎么来的"必须随行持久化，否则事后不可辨。
+    # The source of the four-layer numbers above: transcript-verified / alias fallback (TokenSource). NULL = not
+    # collected.
+    # A pure audit column that participates in no computation — "how this number came to be" must persist with the row,
+    # otherwise it is indistinguishable afterwards.
     tokens_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     def to_pydantic(self) -> Agent:
@@ -305,8 +308,9 @@ class AgentModel(Base):
             name=self.name,
             role=self.role,
             system_prompt=self.system_prompt or "",
-            # 读路径绝不注入具体型号：DB 为空就如实返回空（曾在此把清洗后的
-            # 空值又"读成"claude-opus-4-7，DB 干净而 API 说谎——2026-07-07 实录）。
+            # The read path never injects a specific model: when the DB is empty it honestly returns empty (this spot
+            # once took the cleaned
+            # empty value and "read it as" claude-opus-4-7 — the DB was clean while the API lied; record 2026-07-07).
             model=self.model or "",
             status=AgentStatus(self.status),
             config=self.config or {},
@@ -451,10 +455,12 @@ class TaskModel(Base):
 
 
 class TaskMemoModel(Base):
-    """Task memos table (记忆系统 v2 P0：情景层升表).
+    """Task memos table (memory system v2 P0: the episodic layer promoted to its own table).
 
-    从 tasks.config['memo'] JSON 数组升为独立行，带行级 ID + 失效轴 + 质量分。
-    表随 Base.metadata.create_all 自动建（含下方两个索引），无需列迁移。
+    Promoted from the tasks.config['memo'] JSON array to independent rows, with row-level IDs + an invalidation axis +
+    quality scores.
+    The table is created automatically with Base.metadata.create_all (including the two indexes below); no column
+    migration needed.
     """
 
     __tablename__ = "task_memos"
@@ -517,8 +523,9 @@ class TaskMemoModel(Base):
 class MemoryModel(Base):
     """Memories table.
 
-    记忆系统 v2 P1：方向层激活——加 kind/invalid_at/invalidated_by/source_refs 四列
-    （既有库经 connection.COLUMNS_TO_ENSURE 补列，新库/内存库由 create_all 直接建齐）。
+    Memory system v2 P1: direction-layer activation — adds the four columns kind/invalid_at/invalidated_by/source_refs
+    (existing DBs get the columns via connection.COLUMNS_TO_ENSURE; new/in-memory DBs are built completely by create_all
+    directly).
     """
 
     __tablename__ = "memories"
@@ -1042,7 +1049,7 @@ class ReportModel(Base):
 
 
 class PipelineStageHistoryModel(Base):
-    """Append-only stage transition log. Agent 不应有 UPDATE/DELETE 权限。"""
+    """Append-only stage transition log. Agents should not have UPDATE/DELETE permissions."""
 
     __tablename__ = "pipeline_stage_history"
 
@@ -1083,10 +1090,12 @@ class PipelineStageHistoryModel(Base):
 
 
 class EcosystemRepoProfileModel(Base):
-    """Claude 生态仓档案 — 支持广索引检索 + 周期更新。
+    """Claude ecosystem repo profile — supports broad index search + periodic updates.
 
-    项目隔离：每个 project_id 拥有独立的仓快照（同一仓在不同项目下是不同行）。
-    历史数据 project_id=NULL 视为"全局/未归属"，迁移时 backfill 至默认项目。
+    Project isolation: each project_id has its own repo snapshot (the same repo is a different row under different
+    projects).
+    Historical data with project_id=NULL is treated as "global/unowned" and backfilled to the default project at
+    migration time.
     """
 
     __tablename__ = "ecosystem_repo_profiles"
@@ -1163,12 +1172,12 @@ class EcosystemRepoProfileModel(Base):
     first_seen_at: Mapped[datetime] = mapped_column(
         UtcDateTime, default=utc_now
     )
-    # Stage B 扩展字段
+    # Stage B extension fields
     pushed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
     scan_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     description_excerpt: Mapped[str] = mapped_column(Text, default="")
-    # v1.5.0-A 扩展字段：浅扫 + 失败追踪 + 活跃集
+    # v1.5.0-A extension fields: shallow scan + failure tracking + active set
     shallow_summary: Mapped[str] = mapped_column(Text, default="")
     last_shallow_refreshed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -1319,15 +1328,15 @@ class EcosystemRepoProfileModel(Base):
 
 
 # ============================================================
-# Ecosystem Stage B — 5 个扩展表
+# Ecosystem Stage B — 5 extension tables
 # ============================================================
 
 
 class EcosystemDeepReviewModel(Base):
-    """生态仓深扫报告 ORM 模型。
+    """Ecosystem repo deep-scan report ORM model.
 
-    项目隔离：每个 project_id 拥有独立的深扫报告。
-    历史数据 project_id=NULL，迁移时 backfill 至默认项目。
+    Project isolation: each project_id has its own deep-scan reports.
+    Historical data has project_id=NULL and is backfilled to the default project at migration time.
     """
 
     __tablename__ = "ecosystem_deep_reviews"
@@ -1354,7 +1363,7 @@ class EcosystemDeepReviewModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         UtcDateTime, default=utc_now
     )
-    # v1.5.0-A 扩展字段：渐进式漏斗 stage + 关联会议/集成任务
+    # v1.5.0-A extension fields: progressive funnel stage + associated meeting/integration task
     stage_status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
     integration_md: Mapped[str] = mapped_column(Text, default="")
     shallow_completed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
@@ -1363,14 +1372,14 @@ class EcosystemDeepReviewModel(Base):
     stage3_completed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     debate_meeting_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     integration_task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    # v1.5.3: worker pool claim 字段
+    # v1.5.3: worker pool claim fields
     claimed_by: Mapped[str | None] = mapped_column(Text, nullable=True)
     claimed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     quality_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     quality_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewed_by: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
-    # v1.7.0: 关联浅扫批次
+    # v1.7.0: associated shallow-scan batch
     batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
 
     def to_pydantic(self) -> EcosystemDeepReview:
@@ -1458,7 +1467,7 @@ class EcosystemDeepReviewModel(Base):
 
 
 class EcosystemTagModel(Base):
-    """能力标签字典 ORM 模型。"""
+    """Capability tag dictionary ORM model."""
 
     __tablename__ = "ecosystem_tags"
 
@@ -1496,10 +1505,11 @@ class EcosystemTagModel(Base):
 
 
 class EcosystemRepoTagModel(Base):
-    """仓-标签多对多关联 ORM 模型。
+    """Repo-tag many-to-many association ORM model.
 
-    项目隔离：每个 project_id 内部 (repo_id, tag_id) 唯一；不同项目可独立持有同一关联。
-    实践中 repo 已经是 per-project，因此 (repo_id, tag_id) 全表唯一也成立。
+    Project isolation: (repo_id, tag_id) is unique within each project_id; different projects can independently hold the
+    same association.
+    In practice repos are already per-project, so (repo_id, tag_id) being unique across the whole table also holds.
     """
 
     __tablename__ = "ecosystem_repo_tags"
@@ -1550,10 +1560,10 @@ class EcosystemRepoTagModel(Base):
 
 
 class EcosystemRelationModel(Base):
-    """仓与仓的关联关系 ORM 模型。
+    """Repo-to-repo relation ORM model.
 
-    项目隔离：仓与仓的关系是项目内部的研究产出，不跨项目共享。
-    历史数据 project_id=NULL，迁移时 backfill 至默认项目。
+    Project isolation: repo-to-repo relations are research output internal to a project, not shared across projects.
+    Historical data has project_id=NULL and is backfilled to the default project at migration time.
     """
 
     __tablename__ = "ecosystem_relations"
@@ -1603,10 +1613,10 @@ class EcosystemRelationModel(Base):
 
 
 class EcosystemScanRunModel(Base):
-    """扫描批次记录 ORM 模型。
+    """Scan batch record ORM model.
 
-    项目隔离：每个 project_id 拥有独立的扫描历史。
-    历史数据 project_id=NULL，迁移时 backfill 至默认项目。
+    Project isolation: each project_id has its own scan history.
+    Historical data has project_id=NULL and is backfilled to the default project at migration time.
     """
 
     __tablename__ = "ecosystem_scan_runs"
@@ -1672,15 +1682,16 @@ class EcosystemScanRunModel(Base):
 
 
 # ============================================================
-# v1.5.0-A 新建表：状态快照 + 项目 ecosystem 配置
+# v1.5.0-A new tables: status snapshots + project ecosystem config
 # ============================================================
 
 
 class EcosystemRepoStatusSnapshotModel(Base):
-    """每次 scan 的仓状态快照 ORM 模型 (append-only，永不清理)。
+    """Per-scan repo state snapshot ORM model (append-only, never cleaned up).
 
-    项目隔离：每条快照属于发起 scan 的项目；同一仓在不同项目下有独立快照流。
-    用于历史时间线展示 (stars 涨跌、活跃集进出、archived 切换)。
+    Project isolation: each snapshot belongs to the project that initiated the scan; the same repo has independent
+    snapshot streams under different projects.
+    Used for historical timeline display (star rises/falls, active-set entry/exit, archived toggling).
     """
 
     __tablename__ = "ecosystem_repo_status_snapshots"
@@ -1747,9 +1758,10 @@ class EcosystemRepoStatusSnapshotModel(Base):
 
 
 class EcosystemProjectSettingsModel(Base):
-    """每个项目的 ecosystem 配置 ORM 模型。
+    """Per-project ecosystem config ORM model.
 
-    project_id 主键 = 一项目一行。包含活跃集阈值、刷新间隔、关注白名单、并发参数。
+    project_id primary key = one row per project. Contains the active-set threshold, refresh interval, follow
+    whitelists, and concurrency parameters.
     """
 
     __tablename__ = "ecosystem_project_settings"
@@ -2106,9 +2118,10 @@ class EcosystemRepoEventModel(Base):
 
 
 class EcosystemShallowBatchModel(Base):
-    """浅扫批次 — 聚合一次批量浅扫的元信息与候选仓快照。
+    """Shallow-scan batch — aggregates the meta information and candidate repo snapshot of one batch shallow scan.
 
-    一个批次对应一轮候选仓的发现与分发流程，支持人工审批门控。
+    One batch corresponds to one round of the candidate-repo discovery and distribution flow, supporting a human
+    approval gate.
     """
 
     __tablename__ = "ecosystem_shallow_batches"
@@ -2177,17 +2190,17 @@ class EcosystemShallowBatchModel(Base):
 
 
 # ============================================================
-# I3a: Workflow observability tables (可变投影 + append-only 审计分离)
+# I3a: Workflow observability tables (mutable projection + append-only audit separation)
 #
-# 两张表定位为「不可变文件 wf_<id>.json 的可重建缓存」：按自然键 UPSERT
-# 单调推进 running→completed、绝不 DELETE 行。零迁移落地——create_all 自动
-# 建缺失表（connection.py:539），不进 COLUMNS_TO_ENSURE。project_id 带
-# String(36)+index 即自动获得 _apply_project_filter 支持。
+# The two tables are positioned as "rebuildable caches of the immutable file wf_<id>.json": UPSERT by natural key,
+# advancing monotonically running→completed, never DELETE-ing rows. Zero-migration landing — create_all automatically
+# creates missing tables (connection.py:539); they do not enter COLUMNS_TO_ENSURE. project_id carries
+# String(36)+index and thereby automatically gains _apply_project_filter support.
 # ============================================================
 
 
 class WorkflowRunModel(Base):
-    """Workflow 运行档案表 — 一个 wf_id 一行，upsert by wf_id。"""
+    """Workflow run profile table — one row per wf_id, upsert by wf_id."""
 
     __tablename__ = "workflow_runs"
 
@@ -2210,11 +2223,11 @@ class WorkflowRunModel(Base):
     summary: Mapped[str] = mapped_column(Text, default="")
     result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     script_path: Mapped[str] = mapped_column(String(500), default="")
-    # 跨项目修复A：回执 transcript_dir 持久化（既有文件库经 COLUMNS_TO_ENSURE 补列）
+    # Cross-project fix A: receipt transcript_dir persistence (existing file DBs get the column via COLUMNS_TO_ENSURE)
     transcript_dir: Mapped[str] = mapped_column(String(500), default="")
     started_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
-    # Phase2 live 水位列（既有文件库经 COLUMNS_TO_ENSURE ALTER 补齐）
+    # Phase2 live watermark columns (existing file DBs are completed via COLUMNS_TO_ENSURE ALTER)
     journal_offset: Mapped[int] = mapped_column(Integer, default=0)
     source_fingerprint: Mapped[str] = mapped_column(String(64), default="")
     live_tokens: Mapped[int] = mapped_column(Integer, default=0)
@@ -2291,7 +2304,8 @@ class WorkflowRunModel(Base):
 
 
 class KnowledgeLinkModel(Base):
-    """跨域引用边 — 知识层 P1a。append-only，UNIQUE 五元组去重（重复插入忽略）。"""
+    """Cross-domain reference edge — knowledge layer P1a. Append-only, deduplicated by a UNIQUE quintuple (duplicate
+    inserts ignored)."""
 
     __tablename__ = "knowledge_links"
     __table_args__ = (
@@ -2328,7 +2342,7 @@ class KnowledgeLinkModel(Base):
 
 
 class WorkflowAgentModel(Base):
-    """逐-agent 遥测表 — 一个 run 一个 fan-out agent 一行，upsert by (wf_id, cc_agent_id)。"""
+    """Per-agent telemetry table — one row per run per fan-out agent, upsert by (wf_id, cc_agent_id)."""
 
     __tablename__ = "workflow_agents"
     __table_args__ = (
@@ -2355,7 +2369,7 @@ class WorkflowAgentModel(Base):
     result_preview: Mapped[str] = mapped_column(Text, default="")
     started_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     queued_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
-    # Phase2: agent jsonl 的 mtime（live 泳道右端 + 逐 agent 跳过水位）
+    # Phase2: the agent jsonl's mtime (the live swimlane's right end + per-agent skip watermark)
     last_activity_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utc_now)
@@ -2419,12 +2433,16 @@ class WorkflowAgentModel(Base):
 
 
 class GovernanceLeaseModel(Base):
-    """治理 leader 租约 — 单行表（id 恒为 'governance'）。
+    """Governance leader lease — a single-row table (id is always 'governance').
 
-    多 API 实例并存时（审计 M50），仅租约持有者运行后台治理（reaper/watchdog
-    的回收/推进/调度/唤醒/对账），杜绝重复唤醒与双份治理。DB 原子认领是本项目
-    唯一获准的跨进程仲裁原语（文件锁四次翻车史，见 docs/design-archaeology）。
-    时间戳存 tz-aware UTC ISO 字符串、只做字典序比较，刻意不经 ORM DateTime 解析。
+    When multiple API instances coexist (audit M50), only the lease holder runs background governance (the
+    reaper/watchdog's
+    collection/advancement/scheduling/waking/reconciliation), eliminating duplicate wakes and duplicated governance. DB
+    atomic claiming is this project's
+    only approved cross-process arbitration primitive (file locks have a history of four rollovers; see
+    docs/design-archaeology).
+    Timestamps are stored as tz-aware UTC ISO strings and compared lexicographically only, deliberately not parsed
+    through ORM DateTime.
     """
 
     __tablename__ = "governance_lease"

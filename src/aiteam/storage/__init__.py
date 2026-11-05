@@ -1,6 +1,6 @@
-"""AI Team OS — 存储层.
+"""AI Team OS — Storage layer.
 
-提供基于 SQLite 的数据持久化功能。
+Provides data persistence based on SQLite.
 """
 
 from aiteam.storage.connection import close_db, get_session, init_db

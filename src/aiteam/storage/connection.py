@@ -136,7 +136,7 @@ COLUMNS_TO_ENSURE: list[tuple[str, str, str]] = [
     ("ecosystem_scan_runs", "project_id", "VARCHAR(36)"),
     # K5: split dispatch prompt out of demo_log_excerpt
     ("ecosystem_deep_reviews", "dispatch_prompt", "TEXT DEFAULT ''"),
-    # v1.5.0-A: EcosystemDeepReview 渐进式漏斗 stage 状态 + 关联会议/集成任务
+    # v1.5.0-A: EcosystemDeepReview progressive funnel stage status + associated meeting/integration task
     ("ecosystem_deep_reviews", "stage_status", "VARCHAR(30) DEFAULT 'queued'"),
     ("ecosystem_deep_reviews", "integration_md", "TEXT DEFAULT ''"),
     ("ecosystem_deep_reviews", "shallow_completed_at", "DATETIME"),
@@ -145,7 +145,7 @@ COLUMNS_TO_ENSURE: list[tuple[str, str, str]] = [
     ("ecosystem_deep_reviews", "stage3_completed_at", "DATETIME"),
     ("ecosystem_deep_reviews", "debate_meeting_id", "VARCHAR(36)"),
     ("ecosystem_deep_reviews", "integration_task_id", "VARCHAR(36)"),
-    # v1.5.0-A: EcosystemRepoProfile 浅扫 + 失败追踪 + 活跃集
+    # v1.5.0-A: EcosystemRepoProfile shallow scan + failure tracking + active set
     ("ecosystem_repo_profiles", "shallow_summary", "TEXT DEFAULT ''"),
     ("ecosystem_repo_profiles", "last_shallow_refreshed_at", "DATETIME"),
     ("ecosystem_repo_profiles", "is_deleted", "BOOLEAN DEFAULT 0"),
@@ -154,7 +154,7 @@ COLUMNS_TO_ENSURE: list[tuple[str, str, str]] = [
     ("ecosystem_repo_profiles", "fetch_failure_count", "INTEGER DEFAULT 0"),
     ("ecosystem_repo_profiles", "is_active", "BOOLEAN DEFAULT 1"),
     ("ecosystem_repo_profiles", "active_rank", "INTEGER"),
-    # v1.5.3: worker pool claim 字段
+    # v1.5.3: worker pool claim fields
     ("ecosystem_deep_reviews", "claimed_by", "TEXT"),
     ("ecosystem_deep_reviews", "claimed_at", "DATETIME"),
     ("ecosystem_deep_reviews", "quality_score", "INTEGER"),
@@ -198,44 +198,48 @@ COLUMNS_TO_ENSURE: list[tuple[str, str, str]] = [
     ("ecosystem_project_settings", "alert_max_new_per_scan", "INTEGER DEFAULT 50"),
     # v1.6.1 Phase 2: scan run real metadata change counter
     ("ecosystem_scan_runs", "metadata_changed_count", "INTEGER DEFAULT 0"),
-    # v1.6.2 Workflow 观测层 Phase2: live 追踪水位列（既有文件库 ALTER 补齐；
-    # 新库/内存库由 models.py Mapped 列经 create_all 直接建齐）
+    # v1.6.2 Workflow observation layer Phase2: live tracking watermark columns (existing file DBs completed via ALTER;
+    # new/in-memory DBs are built completely by models.py's Mapped columns via create_all)
     ("workflow_runs", "journal_offset", "INTEGER DEFAULT 0"),
     ("workflow_runs", "source_fingerprint", "VARCHAR(64) DEFAULT ''"),
     ("workflow_runs", "live_tokens", "INTEGER DEFAULT 0"),
     ("workflow_runs", "last_activity_at", "DATETIME"),
-    # 跨项目修复A：回执 transcript_dir 持久化（live/终态直接寻址）
+    # Cross-project fix A: receipt transcript_dir persistence (live/terminal states address it directly)
     ("workflow_runs", "transcript_dir", "VARCHAR(500) DEFAULT ''"),
     ("workflow_agents", "last_activity_at", "DATETIME"),
-    # 记忆系统 v2 P1：方向层激活——memories 表加 4 列（既有库 ALTER 补齐；
-    # 新库/内存库由 models.py Mapped 列经 create_all 直接建齐）
+    # Memory system v2 P1: direction-layer activation — the memories table gains 4 columns (existing DBs completed via
+    # ALTER;
+    # new/in-memory DBs are built completely by models.py's Mapped columns via create_all)
     ("memories", "kind", "VARCHAR(20) DEFAULT 'preference'"),
     ("memories", "invalid_at", "DATETIME"),
     ("memories", "invalidated_by", "VARCHAR(36)"),
     ("memories", "source_refs", "JSON DEFAULT '[]'"),
-    # agent 复用治理 P1（批次 1B）：sub-agent 上下文水位台账列（既有库 ALTER 补齐；
-    # 新库/内存库由 models.py Mapped 列经 create_all 直接建齐）。设计见
-    # docs/agent-reuse-design.md §4.3。reuse_domain 为 P2 决策层预留，P1 不写入。
+    # Agent reuse governance P1 (batch 1B): sub-agent context watermark ledger columns (existing DBs completed via
+    # ALTER;
+    # new/in-memory DBs are built completely by models.py's Mapped columns via create_all). For the design see
+    # docs/agent-reuse-design.md §4.3. reuse_domain is reserved for the P2 decision layer; P1 does not write it.
     ("agents", "ctx_tokens", "INTEGER"),
     ("agents", "ctx_window", "INTEGER"),
     ("agents", "ctx_pct", "FLOAT"),
     ("agents", "transcript_path", "TEXT"),
     ("agents", "ctx_measured_at", "DATETIME"),
     ("agents", "reuse_domain", "VARCHAR(200)"),
-    # 计费口径的 token 归因（ctx_* 是"上下文水位"，两者不是一回事，故分列存）。
-    # 由 SubagentStop 从子 agent transcript 解析回填，见 services/token_attribution.py。
+    # Billing-caliber token attribution (ctx_* is the "context watermark"; the two are not the same thing, so they are
+    # stored in separate columns).
+    # Backfilled by SubagentStop parsing the sub-agent transcript; see services/token_attribution.py.
     ("agents", "input_tokens", "INTEGER"),
     ("agents", "output_tokens", "INTEGER"),
     ("agents", "cache_creation_tokens", "INTEGER"),
     ("agents", "cache_read_tokens", "INTEGER"),
     ("agents", "tokens_measured_at", "DATETIME"),
-    # token 用量归因 v1 阶段 0：上面四层数的来源审计（transcript / alias_fallback；
-    # NULL = 未采集）。见 docs/token-attribution-v1-design.md §2.6。
+    # Token usage attribution v1 stage 0: the source audit of the four-layer numbers above (transcript / alias_fallback;
+    # NULL = not collected). See docs/token-attribution-v1-design.md §2.6.
     ("agents", "tokens_source", "VARCHAR(20)"),
-    # 批 8.5 简报可筛选性：leader_briefings 加 tags（JSON list）。project_id 早已
-    # 由 briefing_add 自动盖章，缺的是主题维度——决策队列长了以后按项目+标签才筛得动。
+    # Batch 8.5 briefing filterability: leader_briefings gains tags (a JSON list). project_id has long been
+    # auto-stamped by briefing_add; what was missing is the topic dimension — once the decision queue grows long, only
+    # filtering by project+tags works.
     ("leader_briefings", "tags", "JSON DEFAULT '[]'"),
-    # 批 9 cc_task_bridge：tasks 记住来源 CC 任务 id，作为镜像的幂等键。
+    # Batch 9 cc_task_bridge: tasks remember the source CC task id, as the mirror's idempotency key.
     ("tasks", "cc_task_id", "VARCHAR(64)"),
 ]
 
@@ -601,7 +605,7 @@ def _ensure_agents_cc_tool_use_id_unique(con: object) -> None:
     cc_tool_use_id: keep the most-complete / newest row, delete the redundant ones.
     Rows with role='leader' are NEVER deleted — a parasitic leader row may share a
     workflow team and must survive cleanup (round-35 blood lesson: manual dedup once
-    误扫 a leader row). SELECT-audit the group before deleting anything.
+    wrongly swept a leader row). SELECT-audit the group before deleting anything.
 
     Idempotent: ``CREATE UNIQUE INDEX IF NOT EXISTS`` is a no-op on repeat, and the
     dedup only fires while duplicate groups still exist.

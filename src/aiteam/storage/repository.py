@@ -119,10 +119,12 @@ from aiteam.types import (
     derive_status_from_stage,
 )
 
-# Workflow run 状态单调推进的秩序（upsert 时不许降级，见 upsert_workflow_run）。
-# killed/failed 与 completed 同为终态同秩：真实数据约 10% 的 run 以 killed/failed
-# 收尾（缺了它们会被永久卡在 running，并打破 reaper「无 running 即零 stat」短路）；
-# 同秩允许 resumeFromRunId 原地重写文件后 killed→completed 的合法转移（守卫取 >=）。
+# The monotonic advancement order of workflow run statuses (no downgrading on upsert; see upsert_workflow_run).
+# killed/failed and completed are terminal states of the same rank: in real data about 10% of runs end as killed/failed
+# (without them they would be permanently stuck at running and break the reaper's "no running means zero stat"
+# short-circuit);
+# same rank allows the legitimate killed→completed transition after resumeFromRunId rewrites the file in place (the
+# guard uses >=).
 _WF_STATUS_RANK: dict[str, int] = {
     "planned": 0,
     "running": 1,
@@ -134,12 +136,12 @@ _WF_STATUS_RANK: dict[str, int] = {
 
 
 # ---------------------------------------------------------------------------
-# token 用量归因的取数辅助（docs/token-attribution-v1-design.md 阶段 2）
+# Data-fetching helpers for token usage attribution (docs/token-attribution-v1-design.md stage 2)
 # ---------------------------------------------------------------------------
 
 
 def _worked_on_agents_subquery(task_id: str = ""):
-    """``agent --worked_on--> task`` 边的 from_id 集合；给 task_id 则只取该 task 的。"""
+    """The from_id set of ``agent --worked_on--> task`` edges; when task_id is given, only that task's."""
     stmt = select(KnowledgeLinkModel.from_id).where(
         KnowledgeLinkModel.from_kind == AGENT_TASK_LINK_FROM_KIND,
         KnowledgeLinkModel.to_kind == AGENT_TASK_LINK_TO_KIND,
@@ -151,11 +153,14 @@ def _worked_on_agents_subquery(task_id: str = ""):
 
 
 def _single_worked_on_agents_subquery():
-    """只在**一个** task 上留过账的 agent —— 也就是四层数能干净归到那个 task 的那些。
+    """Agents that left bookkeeping entries on **one** task only — i.e. those whose four-layer numbers can be cleanly
+    attributed to that task.
 
-    留过两个及以上的进不来：agents 五列是整个生命周期的一个合计，没有逐区间用量
-    可供按边的时间序切分。§2.4 定死此时如实计"task 级未归因"，**不做平均分摊**
-    —— 分摊会造出无法证伪的数字，比缺失更坏。
+    Those with entries on two or more cannot enter: the agents five columns are a single total over the whole lifecycle,
+    with no per-interval usage
+    available to split by edge in time order. §2.4 fixes that in this case they are honestly counted as "task-level
+    unattributed", **with no averaging allocation**
+    — allocation would fabricate unfalsifiable numbers, which is worse than a gap.
     """
     return (
         _worked_on_agents_subquery()
@@ -170,11 +175,12 @@ def _apply_created_window(
     until: datetime | None,
     model: Any = None,
 ) -> Any:
-    """把查询窗口落在 ``created_at`` 上。
+    """Place the query window on ``created_at``.
 
-    **不是 ``tokens_measured_at``**，这条不容商量：按测量时间落窗会让没测过的行
-    直接从分母里消失，覆盖率于是恒等于 100%（§4.1 / R2）。这是"分母被悄悄做假"
-    最容易发生、也最难事后察觉的一种形态 —— 数字会变好看，而且完全说得通。
+    **Not ``tokens_measured_at``** — this is non-negotiable: windowing by measurement time would make unmeasured rows
+    vanish straight from the denominator, so coverage would always equal 100% (§4.1 / R2). This is the form of "quietly
+    faking the denominator"
+    that is easiest to commit and hardest to notice afterwards — the numbers look better, and entirely plausible.
     """
     column = (model or AgentModel).created_at
     if since is not None:
@@ -205,10 +211,12 @@ logger = logging.getLogger(__name__)
 
 RESERVED_ID_PREFIXES: tuple[str, ...] = ("test-", "demo-")
 
-# 一行 agent 是否携带 token 归因账。判据刻意宽：四层用量任意一层非零，**或**
-# 只是被测量过（``tokens_measured_at`` 有值）——测出来是 0 也是一次测量结果，
-# 与"从没测过"不是一回事（no-data != zero）。删掉这样一行等于把 transcript 已经
-# 解析出的数字永久抹掉：transcript 本身会随时间被清掉，重采是不可能的。
+# Whether an agent row carries a token attribution ledger. The criterion is deliberately loose: any one of the four
+# usage layers non-zero, **or**
+# merely having been measured (``tokens_measured_at`` has a value) — measuring 0 is still a measurement result,
+# not the same as "never measured" (no-data != zero). Deleting such a row equals permanently erasing numbers the
+# transcript has already
+# yielded: the transcript itself gets cleaned up over time, and re-collection is impossible.
 _TOKEN_LEDGER_COLUMNS: tuple[str, ...] = (
     "input_tokens",
     "output_tokens",
@@ -227,10 +235,14 @@ def _carries_token_ledger(agent: Any) -> bool:
 def _holds_unharvested_transcript(agent: Any) -> bool:
     """True when this row is the only pointer to a transcript not yet harvested.
 
-    ``transcript_path`` 只记在 agent 行上：行一删，即使 transcript 还躺在磁盘上，
-    回采也永远找不到它——窗口静默关闭，与销毁已记账是同一失败模式，只是早一步。
-    文件已被 CC 清掉的行不受此保护：没有可采的东西，回落为普通 husk。
-    路径读不了（权限等）时取宽当作还在——宁可多留一行，不可误关窗口。
+    ``transcript_path`` is recorded only on the agent row: once the row is deleted, even if the transcript still lies on
+    disk,
+    re-collection can never find it again — the window silently closes; the same failure mode as destroying booked data,
+    just one step earlier.
+    Rows whose files CC has already cleaned up are not protected: there is nothing to collect, so they fall back to
+    ordinary husks.
+    When a path cannot be read (permissions etc.), be lenient and treat it as still present — rather keep one extra row
+    than wrongly close a window.
     """
     if getattr(agent, "tokens_measured_at", None) is not None:
         return False
@@ -306,10 +318,14 @@ def _team_scope_clause(team_ids: list[str]):
     )
 
 
-# update_agent 的"纯记账"字段集：改动只涉及这些字段时不落 agent.updated 事件。
-# 只有 last_active_at 在内 —— 它是心跳时间戳，写完列就完事，没有任何检测、页面
-# 或 API 从事件流里读它。ctx_* 水位一组（近 7 天占 agent.updated 的 6.1%）**刻意
-# 不在此列**：它们是可解释的状态变化（上下文涨了），留在事件流里有信息量。
+# update_agent's "pure bookkeeping" field set: when a change involves only these fields, no agent.updated event is
+# recorded.
+# Only last_active_at is in it — it is a heartbeat timestamp; once the column is written the job is done, and no
+# detection, page,
+# or API reads it from the event stream. The ctx_* watermark group (6.1% of agent.updated in the last 7 days) is
+# **deliberately
+# not in this set**: they are explainable state changes (the context grew), and keeping them in the event stream is
+# informative.
 _SILENT_AGENT_UPDATE_FIELDS = frozenset({"last_active_at"})
 
 
@@ -330,7 +346,7 @@ class WorkflowRunUpsert(NamedTuple):
 
 
 def _merge_wf_source(old: str | None, new: str | None) -> str:
-    """合并 workflow run 的数据面溯源标签：hook + file → 'hook+file'（保序去重）。"""
+    """Merge a workflow run's data-plane provenance labels: hook + file → 'hook+file' (order-preserving dedup)."""
     tokens: list[str] = []
     for src in (old or "", new or ""):
         for part in src.split("+"):
@@ -341,7 +357,7 @@ def _merge_wf_source(old: str | None, new: str | None) -> str:
 
 
 def _parse_memo_timestamp(raw: object) -> datetime:
-    """把旧 memo 的 timestamp 字符串解析成 datetime；无法解析时退回 now。"""
+    """Parse an old memo's timestamp string into a datetime; fall back to now when unparseable."""
     if isinstance(raw, str) and raw:
         try:
             return datetime.fromisoformat(raw)
@@ -351,9 +367,10 @@ def _parse_memo_timestamp(raw: object) -> datetime:
 
 
 def _task_memo_to_legacy(memo: TaskMemo) -> dict[str, Any]:
-    """把 TaskMemo 行转成旧 config['memo'] 数组元素形态（写入接口零改动）。
+    """Convert a TaskMemo row into the old config['memo'] array element shape (zero changes to the write interface).
 
-    保留原有 timestamp/author/content/type 键，额外附真 id 便于引用/前端定位。
+    Keeps the original timestamp/author/content/type keys and additionally attaches the real id for referencing /
+    frontend location.
     """
     return {
         "id": memo.id,
@@ -467,8 +484,8 @@ class StorageRepository:
             )
             # Cascade: meetings
             await session.execute(delete(MeetingModel).where(MeetingModel.project_id == project_id))
-            # Cascade: task memos（先于 tasks 删——task_id 子查询兜底需 tasks 仍在；
-            # project_id 直删 + 子查询覆盖 project_id 为空的历史行）
+            # Cascade: task memos (deleted before tasks — the task_id subquery fallback needs tasks still present;
+            # direct delete by project_id + subquery covering historical rows with empty project_id)
             task_ids_stmt = select(TaskModel.id).where(TaskModel.project_id == project_id)
             await session.execute(
                 delete(TaskMemoModel).where(
@@ -478,9 +495,11 @@ class StorageRepository:
             )
             # Cascade: tasks (includes subtasks via project_id)
             await session.execute(delete(TaskModel).where(TaskModel.project_id == project_id))
-            # 团队 id 必须**在删 teams 行之前取实**：下面 agents / team 记忆 / events
-            # 三处都按它清理，若沿用惰性子查询，teams 删掉后子查询恒空——events 那处
-            # 就一直在清了个寂寞（2026-07-27 批 3 实测复现）。
+            # The team id must be **materialized before deleting the teams row**: the agents / team memories / events
+            # cleanups below
+            # all clean up by it; with a lazy subquery, once teams is deleted the subquery is always empty — the events
+            # cleanup
+            # would have been cleaning nothing all along (reproduced in practice, batch 3, 2026-07-27).
             team_ids = list(
                 (
                     await session.execute(
@@ -507,9 +526,11 @@ class StorageRepository:
                     (MemoryModel.scope == "project") & (MemoryModel.scope_id == project_id)
                 )
             )
-            # Cascade: memories (team-scoped)——团队知识 scope='team' + scope_id=<team_id>。
-            # 漏删它们正是孤儿记忆的直接成因：teams 行没了，这些条目 scope_id 指向不
-            # 存在的团队，从此既查不出也删不掉（历史孤儿另议，此处只堵住新增）。
+            # Cascade: memories (team-scoped) — team knowledge with scope='team' + scope_id=<team_id>.
+            # Missing them in deletion is exactly the direct cause of orphan memories: once the teams row is gone, these
+            # entries' scope_id points at a non-
+            # existent team, and from then on they can neither be queried nor deleted (historical orphans are a separate
+            # topic; here we only plug new ones).
             if team_ids:
                 await session.execute(
                     delete(MemoryModel).where(
@@ -523,9 +544,9 @@ class StorageRepository:
                     | (CrossMessageModel.to_project_id == project_id)
                 )
             )
-            # Cascade: events for project teams（events 无 team_id 列——
-            # 事件按 entity_id 关联团队，见 list_events 同款用法；此处曾写
-            # EventModel.team_id 致 project_delete 恒 500，2026-07-08 实测）
+            # Cascade: events for project teams (the events table has no team_id column —
+            # events associate with teams by entity_id, see the same usage in list_events; this spot once wrote
+            # EventModel.team_id, making project_delete constantly 500, measured 2026-07-08)
             if team_ids:
                 await session.execute(
                     delete(EventModel).where(EventModel.entity_id.in_(team_ids))
@@ -739,16 +760,21 @@ class StorageRepository:
         dry_run: bool = True,
         limit: int = 5000,
     ) -> list[dict[str, Any]]:
-        """列出（或修正）项目归属与「队内 Leader 行」矛盾的团队及其成员。
+        """List (or fix) teams whose project ownership contradicts the "in-team Leader row", together with their
+        members.
 
-        清账对象是 2026-07-27 之前 ``deps._auto_create_projects`` 用 **API 进程
-        cwd** 批量认领孤儿队留下的错行：队被记成服务器启动目录所在的项目，而队内
-        Leader 行（会话开启时按本会话 cwd 锁定）指向另一个项目。agent 行由
-        ``_on_subagent_start`` 顺着队继承，于是一并错。
+        The cleanup targets the wrong rows left before 2026-07-27 by ``deps._auto_create_projects`` bulk-claiming orphan
+        teams using the **API process's
+        cwd**: a team got recorded as the project of the server's startup directory, while the in-team
+        Leader row (locked at session start by that session's cwd) points at another project. Agent rows were inherited
+        from the team by
+        ``_on_subagent_start``, so they are wrong along with it.
 
-        判据保守——只在**同队 Leader 行有明确 project_id 且与队不一致**时才算错
-        账。无 Leader、Leader 未绑项目、kind=workflow（归属由观测层按落盘 slug
-        回填）一律不动：宁可留着无主，也不再猜一次。
+        The criterion is conservative — only when **the same-team Leader row has an explicit project_id that disagrees
+        with the team** does it count as a wrong
+        ledger entry. No Leader, a Leader unbound to a project, or kind=workflow (ownership backfilled by the
+        observation layer from the landing slug)
+        are all left untouched: rather leave them ownerless than guess once more.
 
         Returns a row per affected team with ``agents_fixed`` counting the member
         rows realigned alongside it. Writes nothing when ``dry_run`` is True.
@@ -823,7 +849,7 @@ class StorageRepository:
             result = await session.execute(select(TeamModel).where(TeamModel.id == team_id))
             row = result.scalar_one_or_none()
             if row is None:
-                msg = f"团队 {team_id} 不存在"
+                msg = f"Team {team_id} does not exist"
                 raise NotFoundError(msg)
 
             # Handle mode field: convert to string value
@@ -849,8 +875,10 @@ class StorageRepository:
             result = await session.execute(delete(TeamModel).where(TeamModel.id == team_id))
             return result.rowcount > 0  # type: ignore[union-attr]
 
-    # 一支容器队的"实质记录"清单：挂着其中任何一样，这支队就不是空壳，永不清理。
-    # 每一项都是用户还可能去看的东西，宁可让空壳多留几支，也不删掉一份记录。
+    # A container team's list of "substantive records": carrying any one of them means the team is not an empty shell
+    # and is never cleaned up.
+    # Every item is something the user might still go look at; rather let a few extra empty shells remain than delete a
+    # single record.
     _CONTAINER_KEEP_IF_ANY: tuple[tuple[Any, str], ...] = (
         (TaskModel, "team_id"),
         (MeetingModel, "team_id"),
@@ -932,18 +960,26 @@ class StorageRepository:
                     .scalars()
                     .all()
                 )
-                # 成员还在忙 / 刚活跃过 = 这支队还在用，比队上任何时间戳都硬。
+                # A member still busy / recently active = this team is still in use — harder evidence than any timestamp
+                # on the team.
                 if any(m.status == "busy" for m in members):
                     continue
                 if any(m.last_active_at and m.last_active_at >= cutoff for m in members):
                     continue
-                # 成员行上挂着用量账，或还指着一份没采过账、仍在磁盘上的 transcript
-                # = 永不清理。这道闸与上面六张表的判据不同：那些问"这支队挂着谁还会去
-                # 看的记录"，这一条问"删掉这些行会不会毁掉再也采不回来的数据"。token
-                # 五列是 transcript 解析出来的，路径又只记在行自己身上——行没了，账与
-                # 回采窗口一起永久消失，不像任务/报告还能从别处重建。
-                # 时序是这个缺口的根因：purge 随 v1.11.0（2026-07-27）上线，token 五列
-                # 直到 v1.11.1（2026-07-29）才落到 agents 行上，清理闸从未回头补这一条。
+                # A member row carrying a usage ledger, or still pointing at a transcript that has not been collected
+                # yet and is still on disk
+                # = never clean up. This gate's criterion differs from the six tables above: those ask "does this team
+                # carry records someone will still go
+                # look at"; this one asks "would deleting these rows destroy data that can never be collected again".
+                # The token
+                # five columns are parsed from transcripts, and the path is recorded only on the row itself — once the
+                # row is gone, the ledger and
+                # the re-collection window vanish permanently together, unlike tasks/reports, which can be rebuilt from
+                # elsewhere.
+                # Timing is the root cause of this gap: the purge shipped with v1.11.0 (2026-07-27), while the token
+                # five columns
+                # only landed on agent rows in v1.11.1 (2026-07-29), and the cleanup gate never went back to add this
+                # rule.
                 if any(
                     _carries_token_ledger(m) or _holds_unharvested_transcript(m)
                     for m in members
@@ -1022,9 +1058,11 @@ class StorageRepository:
             name=name,
             role=role,
             system_prompt=str(kwargs.get("system_prompt", "")),
-            # 默认不落具体型号：模型未知就留空（展示为 --），真实值由 transcript
-            # 尾读(Leader)/wf 终态(workflow agent)回填。曾因默认 'claude-opus-4-7'
-            # 在多个建行点反复冒出误导展示（2026-07-07 用户三次实测追出根因）。
+            # Do not persist a specific model by default: when the model is unknown, leave it empty (displayed as --);
+            # the real value is backfilled by transcript
+            # tail-reads (Leader) / wf terminal state (workflow agents). A default of 'claude-opus-4-7' once
+            # kept surfacing at multiple row-creation points and misled the display (root-caused by the user across
+            # three practical tests, 2026-07-07).
             model=str(kwargs.get("model", "")),
             config=kwargs.get("config", {}),  # type: ignore[arg-type]
             source=str(kwargs.get("source", "api")),
@@ -1062,7 +1100,7 @@ class StorageRepository:
             result = await session.execute(select(AgentModel).where(AgentModel.id == agent_id))
             row = result.scalar_one_or_none()
             if row is None:
-                msg = f"Agent {agent_id} 不存在"
+                msg = f"Agent {agent_id} not found"
                 raise NotFoundError(msg)
 
             # Handle status field: convert to string value
@@ -1079,19 +1117,23 @@ class StorageRepository:
 
             updated = row.to_pydantic()
 
-        # 纯心跳不落事件（Q2，缔造者 2026-07-27 拍板，硬条件"不影响任何检测功能"）。
-        # 心跳**检测**分毫未动：判据一直是 agents.last_active_at 这一列，上面已经
-        # 写完了；停的只是"顺手再写一行事件"。
-        # 取证：agent.updated 共 112,349 行 = events 全表 237,126 行的 47.4%，其中
-        # changes 恰好只有 last_active_at 的占 94,029 行——单这一类就是全表的
-        # 39.7%（近 7 天 45,717 / 118,867 = 38.5%）。
-        # 消费面已逐个查过，**零检测消费者**：StateReaper / wake_actionable /
-        # wake_manager / watchdog 一个都不读 events 表；state_snapshot 全仓只写不读；
-        # 这条路径走的是 repository.create_event（只落库），不经 EventBus，所以也
-        # 从没参与过 WS 实时刷新——UI 的刷新一直由 cc.tool_use / cc.tool_complete
-        # 驱动，与本改动无关。真实消费者只有 /api/events 列表与 team_briefing 的
-        # 最近事件，两者都因为少了这层噪声而变好。
-        # 历史行按红线一概保留，只停写不删。
+        # Pure heartbeats record no event (Q2, decided by the Creator 2026-07-27, with the hard condition "must not
+        # affect any detection function").
+        # Heartbeat **detection** is untouched: the criterion has always been the agents.last_active_at column, already
+        # written above;
+        # what stopped is only the "also write one more event row on the side".
+        # Evidence: agent.updated totals 112,349 rows = 47.4% of the events table's 237,126 rows, of which
+        # 94,029 rows have changes of exactly last_active_at alone — that one class alone is
+        # 39.7% of the whole table (45,717 / 118,867 = 38.5% in the last 7 days).
+        # The consumption surface was checked one by one: **zero detection consumers** — StateReaper / wake_actionable /
+        # wake_manager / watchdog — none of them read the events table; state_snapshot is written everywhere in the repo
+        # but read nowhere;
+        # this path goes through repository.create_event (persist only), not the EventBus, so it also
+        # never participated in WS real-time refresh — UI refresh has always been driven by cc.tool_use /
+        # cc.tool_complete,
+        # unrelated to this change. The real consumers are only the /api/events list and team_briefing's
+        # recent events, and both improve with this layer of noise gone.
+        # Historical rows are all kept per the red line — stop writing, never delete.
         if set(kwargs) <= _SILENT_AGENT_UPDATE_FIELDS:
             return updated
 
@@ -1152,16 +1194,17 @@ class StorageRepository:
         optional.setdefault("depth", 0)
         optional.setdefault("order", 0)
 
-        # 项目归属（2026-07-27 修复）：显式参数 > 所属队的 project_id > 请求作用域。
+        # Project ownership (fixed 2026-07-27): explicit parameter > the owning team's project_id > request scope.
         #
-        # 队绑定排在作用域之前，因为它是结构事实（任务就长在那支队的墙上），而
-        # _project_scope 只是本次请求的视图上下文（X-Project-Id/Dir 头）。
+        # The team binding ranks before the scope because it is a structural fact (the task grows on that team's wall),
+        # whereas
+        # _project_scope is only this request's view context (the X-Project-Id/Dir headers).
         #
-        # 补这一档之前，四个「经团队建任务」的入口（tasks/run、task_decompose 的
-        # 父子任务、issue 上报、TeamManager.execute_task）全都不写 project_id，
-        # 而 MCP 侧调用不带作用域头 → 任务一律 project_id=None，项目级任务墙
-        # （task_list_project / GET /api/projects/{id}/task-wall）永远看不到它们。
-        # 修在这一个收口点而非四个调用点：新入口不会再漏。
+        # Before this tier was added, the four "create a task via a team" entry points (tasks/run, task_decompose's
+        # parent/child tasks, issue reporting, TeamManager.execute_task) all failed to write project_id,
+        # and MCP-side calls carry no scope header → tasks uniformly got project_id=None, so the project-level task wall
+        # (task_list_project / GET /api/projects/{id}/task-wall) could never see them.
+        # Fixed at this single choke point rather than the four call sites: new entry points cannot leak it again.
         if not optional.get("project_id") and team_id:
             team = await self.get_team(team_id)
             if team is not None and team.project_id:
@@ -1256,7 +1299,7 @@ class StorageRepository:
             result = await session.execute(select(TaskModel).where(TaskModel.id == task_id))
             row = result.scalar_one_or_none()
             if row is None:
-                msg = f"任务 {task_id} 不存在"
+                msg = f"Task {task_id} not found"
                 raise NotFoundError(msg)
 
             # Handle status field: convert to string value
@@ -1454,7 +1497,8 @@ class StorageRepository:
             # down the caller that produced it (hooks are fire-and-forget, and a
             # test-suite run is exactly when this fires).
             logger.warning(
-                "events 写入被护栏拒绝：保留身份 %r（type=%s source=%s）", reserved, event_type, source
+                "events write rejected by guardrail: reserved identity %r (type=%s "
+                "source=%s)", reserved, event_type, source
             )
             return Event(
                 type=EventType(event_type),
@@ -1525,15 +1569,17 @@ class StorageRepository:
         name_prefix: str = "mcp__ai-team-os%",
         min_distinct_days: int = 2,
     ) -> list[tuple[str, int, int]]:
-        """近期高频 MCP 工具频次聚合（工具加载 P1 alwaysLoad 轮换的唯一取数）。
+        """Frequency aggregation of recent high-frequency MCP tools (the sole data source for the tool-loading P1
+        alwaysLoad rotation).
 
-        一条 SQL：近 ``days`` 天 agent_activities 中匹配 ``name_prefix`` 的工具，
-        按 tool_name 分组，跨天数（COUNT DISTINCT date(timestamp)）≥ ``min_distinct_days``
-        以挡时段性爆发，按总频次降序返回。
+        One SQL statement: tools in agent_activities from the last ``days`` days matching ``name_prefix``,
+        grouped by tool_name, with distinct days (COUNT DISTINCT date(timestamp)) ≥ ``min_distinct_days``
+        to fend off time-window bursts, returned in descending total-frequency order.
 
         Returns:
-            [(tool_name, count, distinct_days), ...]，频次降序。tool_name 为库中原始
-            全名（含 ``mcp__ai-team-os__`` 前缀），归一化在服务层做。
+            [(tool_name, count, distinct_days), ...], frequency descending. tool_name is the raw full name stored in the
+            DB
+            (including the ``mcp__ai-team-os__`` prefix); normalization happens in the service layer.
         """
         cutoff = utc_now() - timedelta(days=days)
         distinct_days = func.count(func.distinct(func.date(AgentActivityModel.timestamp)))
@@ -1557,9 +1603,10 @@ class StorageRepository:
     # Memories
     # ================================================================
 
-    # 方向层直属 kind（记忆系统 v2 P1）：注入/红线只作用于这四类，team/agent 遗留分区不受影响。
+    # Direction-layer native kinds (memory system v2 P1): injection/red lines apply only to these four kinds; the legacy
+    # team/agent partitions are unaffected.
     DIRECTION_KINDS = ("constraint", "design", "directive", "preference")
-    # 注入截断优先级（高→低）：约束/护栏最先保留，格式偏好最先被砍。
+    # Injection truncation priority (high→low): constraints/guardrails are kept first; format preferences are cut first.
     DIRECTION_KIND_PRIORITY = {"constraint": 0, "design": 1, "directive": 2, "preference": 3}
 
     async def create_memory(
@@ -1573,11 +1620,12 @@ class StorageRepository:
         source_refs: list[str] | None = None,
         supersedes: str | None = None,
     ) -> Memory:
-        """Create a memory（方向层写入，零 LLM）。
+        """Create a memory (direction-layer write, zero LLM).
 
-        supersedes 给定时置被取代行 invalid_at=now、invalidated_by=新 id
-        （Zep 失效语义：偏好被改 = 新条置换旧条，不删除）。体量红线在服务层
-        （POST /api/memories）强制，此处只负责落库与置换。
+        When supersedes is given, set the superseded row's invalid_at=now and invalidated_by=the new id
+        (Zep invalidation semantics: a changed preference = the new entry replaces the old one, no deletion). The volume
+        red line is enforced in the service layer
+        (POST /api/memories); this place only persists and replaces.
         """
         memory = Memory(
             scope=MemoryScope(scope),
@@ -1602,7 +1650,8 @@ class StorageRepository:
     async def invalidate_memory(
         self, memory_id: str, invalidated_by: str | None = None
     ) -> Memory | None:
-        """显式失效一条方向层记忆（不删除，Zep 失效语义）。返回失效后的条目。"""
+        """Explicitly invalidate one direction-layer memory (no deletion, Zep invalidation semantics). Returns the entry
+        after invalidation."""
         async with get_session(self._db_url) as session:
             res = await session.execute(
                 select(MemoryModel).where(MemoryModel.id == memory_id)
@@ -1615,8 +1664,10 @@ class StorageRepository:
                 row.invalidated_by = invalidated_by
             return row.to_pydantic()
 
-    # count_valid_memories 已随条数轴一同退役（记忆 v2.1，2026-07-31）：体量红线改按
-    # 桶字符配额校验，且超限协议要交回全桶条目全文，读的是 list_memories 而不是计数。
+    # count_valid_memories was retired together with the count axis (memory v2.1, 2026-07-31): the volume red line is
+    # now checked against
+    # per-bucket character quotas, and the over-limit protocol must hand back the full text of all bucket entries,
+    # reading list_memories rather than a count.
 
     async def list_direction_memories(
         self,
@@ -1624,11 +1675,13 @@ class StorageRepository:
         kind: str | None = None,
         include_invalidated: bool = False,
     ) -> list[Memory]:
-        """列方向层有效条目供双 hook 常驻注入（Zep 双读之"方向层全量"）。
+        """List valid direction-layer entries for the dual hooks' resident injection (the "full direction layer" of
+        Zep's dual read).
 
-        方向层 = scope∈{global, user}（全局/用户级恒纳入）+ scope=project 且
-        scope_id==project_id（仅当前项目）。默认只返回有效条目，按 kind 优先级 +
-        时间倒序排列，便于注入时按预算从高优先级向低截断。
+        Direction layer = scope∈{global, user} (global/user level always included) + scope=project with
+        scope_id==project_id (only the current project). By default returns only valid entries, ordered by kind priority
+        +
+        time descending, so injection can truncate by budget from high priority downward.
         """
         async with get_session(self._db_url) as session:
             scope_clause = MemoryModel.scope.in_(
@@ -1671,9 +1724,9 @@ class StorageRepository:
         include_invalidated: bool = False,
         kind: str | None = None,
     ) -> list[Memory]:
-        """List memories within a scope（记忆 v2 P1：默认只返回有效条目）。
+        """List memories within a scope (memory v2 P1: by default returns only valid entries).
 
-        include_invalidated=True 时含已失效条目；kind 给定时按 kind 过滤。
+        With include_invalidated=True, includes invalidated entries; when kind is given, filters by kind.
         """
         async with get_session(self._db_url) as session:
             stmt = select(MemoryModel).where(
@@ -1694,7 +1747,7 @@ class StorageRepository:
         """Search memories: SQL coarse-recall within scope, then Python BM25 rerank.
 
         The old whole-string LIKE match missed multi-word queries whose terms
-        were not contiguous (e.g. "Python 部署" against "Python 后端 部署"). We now
+        were not contiguous (e.g. "Python deployment" against "Python backend deployment"). We now
         pull the scope's candidates from SQL (scope isolation unchanged — the
         scope/scope_id filter is the project boundary for memories, which carry
         no project_id column) and rerank them in-process with the built-in BM25.
@@ -1714,8 +1767,10 @@ class StorageRepository:
                 .where(
                     MemoryModel.scope == scope,
                     MemoryModel.scope_id == scope_id,
-                    # v2 失效语义：检索读路径与 list 路径同规——失效不删除、读时过滤
-                    #（审查 major：此前唯独 BM25 路径漏过滤，同端点行为自相矛盾）
+                    # v2 invalidation semantics: the retrieval read path follows the same rule as the list path —
+                    # invalidation does not delete; filtering happens at read time
+                    #(review major: previously only the BM25 path missed the filter, making the same endpoint's behavior
+                    #self-contradictory)
                     MemoryModel.invalid_at.is_(None),
                 )
                 .order_by(MemoryModel.created_at.desc())
@@ -1742,7 +1797,7 @@ class StorageRepository:
             return result.rowcount > 0  # type: ignore[union-attr]
 
     # ================================================================
-    # Task memos（记忆系统 v2 P0：情景层升表）
+    # Task memos (memory system v2 P0: the episodic layer promoted to its own table)
     # ================================================================
 
     async def add_task_memo(
@@ -1755,10 +1810,10 @@ class StorageRepository:
         project_id: str | None = None,
         supersedes: str | None = None,
     ) -> TaskMemo:
-        """写一条 task memo 到 task_memos 表（零 LLM，纯 append）。
+        """Write one task memo to the task_memos table (zero LLM, pure append).
 
-        supersedes 给定时置被取代行 invalid_at=now、invalidated_by=新 id
-        （Zep 失效语义：矛盾/更新不删旧条，只失效）。
+        When supersedes is given, set the superseded row's invalid_at=now and invalidated_by=the new id
+        (Zep invalidation semantics: a contradiction/update does not delete the old entry, only invalidates it).
         """
         memo = TaskMemo(
             task_id=task_id,
@@ -1783,7 +1838,7 @@ class StorageRepository:
     async def list_task_memos(
         self, task_id: str, include_invalidated: bool = False
     ) -> list[TaskMemo]:
-        """列一个任务的 memo，默认只返回有效条目（invalid_at IS NULL）。"""
+        """List a task's memos; by default returns only valid entries (invalid_at IS NULL)."""
         async with get_session(self._db_url) as session:
             stmt = select(TaskMemoModel).where(TaskMemoModel.task_id == task_id)
             if not include_invalidated:
@@ -1793,7 +1848,7 @@ class StorageRepository:
             return [r.to_pydantic() for r in result.scalars().all()]
 
     async def get_task_memo(self, memo_id: str) -> TaskMemo | None:
-        """按真 id 取单条 memo。"""
+        """Fetch a single memo by its real id."""
         async with get_session(self._db_url) as session:
             res = await session.execute(
                 select(TaskMemoModel).where(TaskMemoModel.id == memo_id)
@@ -1807,10 +1862,10 @@ class StorageRepository:
         scope_path: str | None = None,
         include_invalidated: bool = False,
     ) -> list[TaskMemo]:
-        """列一个项目的全部 task memo（记忆 v2 P2 reconcile 粗筛的语料源）。
+        """List all task memos of a project (the corpus source for memory v2 P2 reconcile's coarse screening).
 
-        默认只返回有效条目（invalid_at IS NULL）。scope_path 给定时仅取该路径
-        作用域的 memo，便于按需切片整理。
+        By default returns only valid entries (invalid_at IS NULL). When scope_path is given, takes only that path
+        scope's memos, for on-demand sliced organization.
         """
         async with get_session(self._db_url) as session:
             stmt = select(TaskMemoModel).where(
@@ -1827,10 +1882,11 @@ class StorageRepository:
     async def invalidate_task_memo(
         self, memo_id: str, invalidated_by: str | None = None
     ) -> TaskMemo | None:
-        """显式失效一条 task memo（不删除，Zep 失效语义）。
+        """Explicitly invalidate one task memo (no deletion, Zep invalidation semantics).
 
-        幂等：已失效条目直接返回其当前状态、不二次改写（reconcile apply 重复
-        操作返回 noop 的底座）。id 不存在返回 None。
+        Idempotent: an already-invalidated entry returns its current state directly, without a second rewrite (the base
+        for reconcile apply's repeated
+        operations returning noop). Returns None when the id does not exist.
         """
         async with get_session(self._db_url) as session:
             res = await session.execute(
@@ -1847,7 +1903,8 @@ class StorageRepository:
     async def score_task_memo(
         self, memo_id: str, quality_score: int, reason: str = ""
     ) -> TaskMemo | None:
-        """为 memo 补质量分（⑧）：quality_score 入列、reason 入 meta。id 不存在返回 None。"""
+        """Add a quality score to a memo (item 8): quality_score goes into the column, reason into meta. Returns None
+        when the id does not exist."""
         async with get_session(self._db_url) as session:
             res = await session.execute(
                 select(TaskMemoModel).where(TaskMemoModel.id == memo_id)
@@ -1856,7 +1913,7 @@ class StorageRepository:
             if row is None:
                 return None
             row.quality_score = quality_score
-            # 重新赋新 dict 触发 JSON 列脏检测（plain JSON 无 MutableDict 追踪）。
+            # Reassign a new dict to trigger the JSON column's dirty detection (plain JSON has no MutableDict tracking).
             meta = dict(row.meta) if isinstance(row.meta, dict) else {}
             if reason:
                 meta["quality_reason"] = reason
@@ -1866,9 +1923,9 @@ class StorageRepository:
     async def count_valid_task_memos_since(
         self, project_id: str, since: datetime | None
     ) -> int:
-        """统计项目内 since 之后创建的有效 task memo 数（量阈软提示用）。
+        """Count valid task memos created in a project after since (for the volume-threshold soft hint).
 
-        since 为 None 时统计全部有效条目。
+        When since is None, counts all valid entries.
         """
         async with get_session(self._db_url) as session:
             stmt = (
@@ -1885,7 +1942,7 @@ class StorageRepository:
             return int(res.scalar() or 0)
 
     async def get_last_reconcile_at(self, project_id: str) -> datetime | None:
-        """读项目上次整理时间（存在 project.config['memory']['last_reconcile_at']）。"""
+        """Read a project's last organization time (stored in project.config['memory']['last_reconcile_at'])."""
         project = await self.get_project(project_id)
         if project is None:
             return None
@@ -1900,7 +1957,8 @@ class StorageRepository:
     async def set_last_reconcile_at(
         self, project_id: str, when: datetime | None = None
     ) -> datetime | None:
-        """记项目整理时间戳到 project.config（复用现有 config 存储，不建新表）。"""
+        """Record a project's organization timestamp into project.config (reusing the existing config storage; no new
+        table)."""
         when = when or utc_now()
         async with get_session(self._db_url) as session:
             res = await session.execute(
@@ -1920,11 +1978,13 @@ class StorageRepository:
     async def _hydrate_task_memos(
         self, session: Any, tasks: list[Task]
     ) -> None:
-        """把 task_memos 表中有效 memo 拼回各 task 的 config['memo'] 视图字段。
+        """Assemble the valid memos from the task_memos table back into each task's config['memo'] view field.
 
-        升表后写路径只进表、config 里的原 JSON 冻结为档案。此处让所有仍读
-        task.config['memo'] 的消费方（completion 验证 / 完成门 hook / 失败诊断 /
-        replay / 前端等）零改动地拿到有效 memo，且 id 为真 id、失效条目已过滤。
+        After the table promotion, the write path goes only to the table and the original JSON in config is frozen as an
+        archive. This lets all consumers still reading
+        task.config['memo'] (completion verification / completion-gate hook / failure diagnosis /
+        replay / frontend, etc.) obtain valid memos with zero changes, with real ids and invalidated entries filtered
+        out.
         """
         ids = [t.id for t in tasks]
         if not ids:
@@ -1943,9 +2003,12 @@ class StorageRepository:
             grouped.setdefault(r.task_id, []).append(
                 _task_memo_to_legacy(r.to_pydantic())
             )
-        # 仅当表里存在该任务的有效 memo 时才覆盖 config['memo'] 视图；表里没有
-        # 则保留 config 原值（升表后写路径只进表、绝不再写 config.memo，故生产
-        # 不会残留脏 memo；此回退只让"直写 config 的遗留/测试路径"保持兼容）。
+        # Only overwrite the config['memo'] view when the table holds a valid memo for that task; when the table has
+        # none,
+        # keep the original config value (after the promotion the write path goes only to the table and never writes
+        # config.memo again, so production
+        # leaves no dirty memos behind; this fallback only keeps the "direct config-writing legacy/test paths"
+        # compatible).
         for t in tasks:
             memos = grouped.get(t.id)
             if not memos:
@@ -1955,15 +2018,17 @@ class StorageRepository:
             t.config = cfg
 
     async def backfill_task_memos_from_config(self) -> int:
-        """记忆系统 v2 P0 一次性回填：tasks.config['memo'] 数组 → task_memos 行。
+        """Memory system v2 P0 one-time backfill: tasks.config['memo'] arrays → task_memos rows.
 
-        幂等两层（审查 major：本仓有双 uvicorn 实例并存史，check-then-insert
-        跨进程非原子，曾可产生 2N 重复行）：
-        ① 快路径：表非空即跳过；
-        ② 竞态兜底：行 id 用 uuid5(task_id, 数组下标) 确定性生成——config.memo
-          已冻结为档案下标稳定，双实例同时回填落同一批 PK，INSERT OR IGNORE
-          让后者逐行静默跳过，行数守恒。
-        原 JSON 保留不动（档案）。
+        Two layers of idempotency (review major: this repo has a history of dual uvicorn instances coexisting, and
+        check-then-insert
+        is not atomic across processes and once could produce 2N duplicate rows):
+        1) Fast path: skip when the table is non-empty;
+        2) Race fallback: row ids are deterministically generated with uuid5(task_id, array index) — config.memo
+          is frozen as an archive so indices are stable; two instances backfilling simultaneously land on the same batch
+          of PKs, and INSERT OR IGNORE
+          makes the later one silently skip row by row, conserving the row count.
+        The original JSON is kept untouched (archive).
         """
         import uuid as _uuid
 
@@ -1974,7 +2039,7 @@ class StorageRepository:
                 select(func.count()).select_from(TaskMemoModel)
             )
             if (existing.scalar() or 0) > 0:
-                return 0  # 表非空 = 已迁移，不重复跑
+                return 0  # a non-empty table = already migrated; do not run again
 
             rows = (await session.execute(select(TaskModel))).scalars().all()
             inserted = 0
@@ -2151,7 +2216,7 @@ class StorageRepository:
             )
             row = result.scalar_one_or_none()
             if row is None:
-                msg = f"会议 {meeting_id} 不存在"
+                msg = f"Meeting {meeting_id} not found"
                 raise NotFoundError(msg)
 
             # Handle status field: convert to string value
@@ -3089,9 +3154,9 @@ class StorageRepository:
             rows = result.scalars().all()
             items = [r.to_pydantic() for r in rows]
         if tag:
-            # 标签比对在 Python 侧做整值匹配：tags 是 JSON 列，用 LIKE '%tag%'
-            # 会把 "release" 匹到 "release-candidate" 上（子串误命中）。队列规模是
-            # 人工决策项，全表取回再过滤的代价可以忽略。
+            # Tag comparison does whole-value matching on the Python side: tags is a JSON column, and LIKE '%tag%'
+            # would match "release" onto "release-candidate" (a substring false hit). The queue's scale is
+            # human decision items, so the cost of fetching the whole table and filtering is negligible.
             items = [b for b in items if tag in (b.tags or [])]
         return items
 
@@ -3260,12 +3325,12 @@ class StorageRepository:
         profile: EcosystemRepoProfile,
         project_id: str | None = None,
     ) -> None:
-        """按 (project_id, repo_full_name) 唯一键 upsert 生态仓档案，更新动态字段。
+        """Upsert an ecosystem repo profile by the (project_id, repo_full_name) unique key, updating dynamic fields.
 
         Args:
-            profile: 待写入的生态仓档案 Pydantic 模型。
-            project_id: 显式指定项目作用域；为空时回退到当前 repo 的 _project_scope，
-                        最终 None 表示全局/未归属（兼容旧数据）。
+            profile: the ecosystem repo profile Pydantic model to write.
+            project_id: explicitly specified project scope; when empty, falls back to the current repo's _project_scope,
+                        and a final None means global/unowned (compatible with legacy data).
         """
         import json
 
@@ -3302,7 +3367,7 @@ class StorageRepository:
                 row.relevance_score = profile.relevance_score
                 row.one_line_summary = profile.one_line_summary
                 row.last_scanned_at = now
-                # Stage B 字段：动态可更新
+                # Stage B fields: dynamically updatable
                 row.pushed_at = profile.pushed_at
                 row.is_archived = profile.is_archived
                 row.scan_run_id = profile.scan_run_id
@@ -3322,10 +3387,10 @@ class StorageRepository:
         limit: int = 50,
         project_id: str | None = None,
     ) -> list[EcosystemRepoProfile]:
-        """按字段筛选生态仓档案，支持关键词、topic、star 范围、深审标记。
+        """Filter ecosystem repo profiles by field, supporting keywords, topics, star ranges, and deep-review flags.
 
         Args:
-            project_id: 显式指定项目作用域；为空时由 _project_scope 自动注入。
+            project_id: explicitly specified project scope; when empty, _project_scope injects it automatically.
         """
         from sqlalchemy import or_
 
@@ -3373,11 +3438,11 @@ class StorageRepository:
         repo_full_name: str,
         project_id: str | None = None,
     ) -> EcosystemRepoProfile | None:
-        """按 repo_full_name 获取单个生态仓档案。
+        """Fetch a single ecosystem repo profile by repo_full_name.
 
         Args:
-            project_id: 显式作用域；为空回退到 _project_scope。
-                若都为空则匹配 project_id IS NULL（全局行）。
+            project_id: explicit scope; when empty, falls back to _project_scope.
+                If both are empty, matches project_id IS NULL (global rows).
         """
         effective_pid = self._effective_project_id(project_id)
         async with get_session(self._db_url) as session:
@@ -3403,11 +3468,11 @@ class StorageRepository:
         repo_id: str,
         project_id: str | None = None,
     ) -> EcosystemRepoProfile | None:
-        """按主键 id 获取单个生态仓档案。
+        """Fetch a single ecosystem repo profile by primary-key id.
 
         Args:
-            project_id: 显式作用域；为空回退到 _project_scope。
-                作用域非空时仅匹配同项目 id，避免跨项目泄露。
+            project_id: explicit scope; when empty, falls back to _project_scope.
+                When the scope is non-empty, matches only the same project's id, avoiding cross-project leakage.
         """
         effective_pid = self._effective_project_id(project_id)
         async with get_session(self._db_url) as session:
@@ -3431,14 +3496,14 @@ class StorageRepository:
         review: EcosystemDeepReview,
         project_id: str | None = None,
     ) -> EcosystemDeepReview:
-        """创建一份深扫报告记录。
+        """Create a deep-scan report record.
 
-        D5 收敛 choke point ①：``status`` 是 ``stage_status`` 的派生只读视图，
-        入库前强制 ``status = derive_status_from_stage(stage_status)``，
-        调用方传入的 status 值被忽略（types.STAGE_TO_STATUS 为唯一真源）。
+        D5 convergence choke point 1: ``status`` is a derived read-only view of ``stage_status``;
+        before persisting, force ``status = derive_status_from_stage(stage_status)``,
+        and the status value passed by the caller is ignored (types.STAGE_TO_STATUS is the sole source of truth).
 
         Args:
-            project_id: 显式作用域；空时使用 _project_scope，再空时使用 review.project_id。
+            project_id: explicit scope; when empty use _project_scope, and when still empty use review.project_id.
         """
         effective_pid = self._effective_project_id(project_id) or review.project_id
         if effective_pid and not review.project_id:
@@ -3453,10 +3518,11 @@ class StorageRepository:
         review_id: str,
         project_id: str | None = None,
     ) -> EcosystemDeepReview | None:
-        """按 id 获取深扫报告。
+        """Fetch a deep-scan report by id.
 
         Args:
-            project_id: 显式作用域；空回退到 _project_scope，作用域非空时仅匹配同项目。
+            project_id: explicit scope; when empty falls back to _project_scope; when the scope is non-empty, matches
+            only the same project.
         """
         effective_pid = self._effective_project_id(project_id)
         async with get_session(self._db_url) as session:
@@ -3476,10 +3542,10 @@ class StorageRepository:
         review_id: str,
         **fields: Any,
     ) -> EcosystemDeepReview | None:
-        """部分更新深扫报告字段。fields 中的 enum 自动转 .value。
+        """Partially update a deep-scan report's fields. Enums in fields are automatically converted to .value.
 
-        - 若 fields 含 _project_id 关键字（service 显式传入），仅匹配同项目；
-        - 否则若当前 repo 设置了 _project_scope，则只允许更新同项目下的行。
+        - If fields contains the _project_id keyword (passed explicitly by the service), match only the same project;
+        - otherwise, if the current repo has _project_scope set, only rows under the same project may be updated.
         """
         explicit_pid = fields.pop("_project_id", None)
         effective_pid = explicit_pid or self._effective_project_id(None)
@@ -3510,10 +3576,10 @@ class StorageRepository:
         limit: int = 50,
         project_id: str | None = None,
     ) -> list[EcosystemDeepReview]:
-        """按 repo_id 或 status 列出深扫报告。空字符串忽略对应过滤条件。
+        """List deep-scan reports by repo_id or status. An empty string ignores the corresponding filter.
 
         Args:
-            project_id: 显式作用域；空时由 _project_scope 自动注入。
+            project_id: explicit scope; when empty, _project_scope injects it automatically.
         """
         async with get_session(self._db_url) as session:
             stmt = select(EcosystemDeepReviewModel)
@@ -3540,14 +3606,14 @@ class StorageRepository:
         now: datetime,
         ttl_seconds: int = STALE_CLAIM_TTL_SECONDS,
     ) -> Any:
-        """认领租约可用的 SQL 谓词：未认领 / 不可判龄 / 已过期。
+        """SQL predicate for an available claim lease: unclaimed / age-indeterminable / expired.
 
         Args:
-            now: 当前时刻（aware UTC，见 aiteam/clock.py）。
-            ttl_seconds: 租约时长，超过即视为夭折可被接管。
+            now: the current moment (aware UTC, see aiteam/clock.py).
+            ttl_seconds: the lease duration; beyond it the claim is treated as aborted and takeover-able.
 
         Returns:
-            可直接挂到 select/update 的 ``WHERE`` 条件。
+            Can be attached directly to a select/update ``WHERE`` condition.
         """
         cutoff = now - timedelta(seconds=ttl_seconds)
         return or_(
@@ -3564,22 +3630,23 @@ class StorageRepository:
         project_id: str | None = None,
         limit: int = 1000,
     ) -> list[dict[str, Any]]:
-        """回收（或仅预览）租约过期的 ``queued`` 认领行。
+        """Reclaim (or only preview) lease-expired ``queued`` claim rows.
 
-        认领租约到期后 ``claim_next_shallow_repo`` 已能自行接管，本方法是配套的
-        **批量清账**：把僵死预定显式清空，让 ``shallow_queue_status`` 的
-        pending / in_progress 计数立刻回到真相，也便于运维一次性止血
-        （见 ``scripts/reclaim_stale_shallow_claims.py``）。
+        After a claim lease expires, ``claim_next_shallow_repo`` can already take over by itself; this method is the
+        companion
+        **bulk ledger cleanup**: explicitly clear dead reservations so ``shallow_queue_status``'s
+        pending / in_progress counts immediately return to the truth, and operations can stop the bleeding in one pass
+        (see ``scripts/reclaim_stale_shallow_claims.py``).
 
         Args:
-            dry_run: True（默认）只返回将被回收的行，不写库。
-            ttl_seconds: 判定过期的租约时长。
-            project_id: 显式作用域；空时回退到 _project_scope。
-            limit: 单次处理上限，防一次扫全表。
+            dry_run: True (default) only returns the rows that would be reclaimed, without writing to the DB.
+            ttl_seconds: the lease duration used to judge expiry.
+            project_id: explicit scope; when empty, falls back to _project_scope.
+            limit: the per-call processing cap, preventing a full-table scan in one go.
 
         Returns:
-            每行 ``{id, repo_id, project_id, claimed_by, claimed_at, stale_seconds}``，
-            按认领时间从旧到新排序。dry_run=False 时这些行的认领已被清空。
+            Each row ``{id, repo_id, project_id, claimed_by, claimed_at, stale_seconds}``,
+            sorted by claim time from oldest to newest. With dry_run=False, these rows' claims have been cleared.
         """
         effective_pid = self._effective_project_id(project_id)
         now = utc_now()
@@ -3638,27 +3705,28 @@ class StorageRepository:
         worker_id: str,
         project_id: str | None = None,
     ) -> EcosystemDeepReview | None:
-        """原子认领下一个待浅扫仓（stage_status='queued' 且认领租约可用）。
+        """Atomically claim the next repo awaiting a shallow scan (stage_status='queued' and the claim lease available).
 
-        使用两步原子协议：
-        1. UPDATE ... WHERE stage_status='queued' AND <租约可用> LIMIT 1 SET claimed_by=worker_id
-        2. 用 rowcount 判断是否成功（rowcount > 0 = 认领成功），再 SELECT 取回完整行。
+        Uses a two-step atomic protocol:
+        1. UPDATE ... WHERE stage_status='queued' AND <lease available> LIMIT 1 SET claimed_by=worker_id
+        2. Judge success by rowcount (rowcount > 0 = claim succeeded), then SELECT back the full row.
 
-        SQLite 序列化写入保证两步操作间不会有其他 writer 插入，rowcount 是
-        "我是否真正更新了行"的唯一真相源，避免 SKIP LOCKED（SQLite 不支持）。
+        SQLite's serialized writes guarantee no other writer interleaves between the two steps, so rowcount is
+        the sole source of truth for "did I really update the row", avoiding SKIP LOCKED (unsupported by SQLite).
 
-        「租约可用」= 未认领，或认领已过期（超过 ``STALE_CLAIM_TTL_SECONDS``，
-        含 claimed_at 缺失的不可判龄行）。过期条件是队列死锁的解药：tick 建行时
-        原子预写 claimed_by 防双抓（D5），但派遣出去的 sub-agent 一旦夭折，
-        这份预定过去是**永久**的——行永远 queued+claimed，对所有认领方隐身
-        （生产实测 74 行卡死 17 天，pending 恒 0）。
+        "Lease available" = unclaimed, or the claim has expired (beyond ``STALE_CLAIM_TTL_SECONDS``,
+        including age-indeterminable rows with a missing claimed_at). The expiry condition is the antidote to queue
+        deadlock: when a tick creates a row, it
+        atomically pre-writes claimed_by to prevent double-grabbing (D5), but once a dispatched sub-agent aborts,
+        this reservation used to be **permanent** — the row stayed queued+claimed forever, invisible to all claimants
+        (measured in production: 74 rows stuck dead for 17 days, pending constantly 0).
 
         Args:
-            worker_id: 认领方的唯一标识字符串。
-            project_id: 显式作用域；空时回退到 _project_scope。
+            worker_id: the claimant's unique identifier string.
+            project_id: explicit scope; when empty, falls back to _project_scope.
 
         Returns:
-            认领到的深扫报告（已写入 claimed_by/claimed_at），无可用行时返回 None。
+            The claimed deep-scan report (with claimed_by/claimed_at written); returns None when no row is available.
         """
         from sqlalchemy import text
 
@@ -3728,19 +3796,21 @@ class StorageRepository:
         project_id: str | None = None,
         min_stars: int = 0,
     ) -> tuple[EcosystemDeepReview, EcosystemRepoProfile] | None:
-        """原子认领下一个待质量审查行（stage_status='shallow_done'，quality_score IS NULL，租约可用）。
+        """Atomically claim the next row awaiting quality review (stage_status='shallow_done', quality_score IS NULL,
+        lease available).
 
-        同时返回关联的 EcosystemRepoProfile（含 shallow_summary 供审查者评估）。
-        与浅扫认领同源的租约语义：认领超过 ``STALE_CLAIM_TTL_SECONDS`` 未收敛
-        即视为夭折可被接管，避免审查 worker 掉线把行永久锁死。
+        Also returns the associated EcosystemRepoProfile (including shallow_summary for the reviewer's assessment).
+        Lease semantics from the same origin as the shallow-scan claim: a claim that does not converge within
+        ``STALE_CLAIM_TTL_SECONDS``
+        is treated as aborted and takeover-able, preventing a review worker going offline from locking the row forever.
 
         Args:
-            worker_id: 认领方的唯一标识字符串。
-            project_id: 显式作用域；空时回退到 _project_scope。
-            min_stars: 最小星数过滤，0 表示不过滤。
+            worker_id: the claimant's unique identifier string.
+            project_id: explicit scope; when empty, falls back to _project_scope.
+            min_stars: minimum-stars filter; 0 means no filtering.
 
         Returns:
-            (deep_review, repo_profile) 元组；无可用行时返回 None。
+            A (deep_review, repo_profile) tuple; returns None when no row is available.
         """
         effective_pid = self._effective_project_id(project_id)
         now = utc_now()
@@ -3814,20 +3884,20 @@ class StorageRepository:
         recommendation: str,
         project_id: str | None = None,
     ) -> EcosystemDeepReview | None:
-        """写入质量审查结果并释放认领锁。
+        """Write the quality review result and release the claim lock.
 
-        写入 quality_score / quality_notes / reviewed_by / reviewed_at，
-        清空 claimed_by 释放认领锁，并更新 integration_recommendation。
+        Writes quality_score / quality_notes / reviewed_by / reviewed_at,
+        clears claimed_by to release the claim lock, and updates integration_recommendation.
 
         Args:
-            dr_id: 目标 EcosystemDeepReview.id。
-            quality_score: 0-100 质量分。
-            quality_notes: 审查理由文本。
-            recommendation: integrate / reference / learn / skip。
-            project_id: 显式作用域；空时回退到 _project_scope。
+            dr_id: the target EcosystemDeepReview.id.
+            quality_score: a 0-100 quality score.
+            quality_notes: the review rationale text.
+            recommendation: integrate / reference / learn / skip.
+            project_id: explicit scope; when empty, falls back to _project_scope.
 
         Returns:
-            更新后的深扫报告；行不存在时返回 None。
+            The updated deep-scan report; returns None when the row does not exist.
         """
         effective_pid = self._effective_project_id(project_id)
         now = utc_now()
@@ -3859,17 +3929,17 @@ class StorageRepository:
         reason: str,
         project_id: str | None = None,
     ) -> EcosystemDeepReview | None:
-        """释放认领锁（不写质量分），将 reason 记录到 quality_notes。
+        """Release the claim lock (without writing a quality score), recording reason into quality_notes.
 
-        用于 worker 放弃认领（超时、错误）场景，清空 claimed_by 让其他 worker 可重新认领。
+        Used when a worker abandons a claim (timeout, error); clears claimed_by so other workers can claim again.
 
         Args:
-            dr_id: 目标 EcosystemDeepReview.id。
-            reason: 释放原因，记录到 quality_notes。
-            project_id: 显式作用域；空时回退到 _project_scope。
+            dr_id: the target EcosystemDeepReview.id.
+            reason: the release reason, recorded into quality_notes.
+            project_id: explicit scope; when empty, falls back to _project_scope.
 
         Returns:
-            更新后的深扫报告；行不存在时返回 None。
+            The updated deep-scan report; returns None when the row does not exist.
         """
         effective_pid = self._effective_project_id(project_id)
 
@@ -3894,7 +3964,7 @@ class StorageRepository:
     # ================================================================
 
     async def upsert_tag(self, tag: EcosystemTag) -> EcosystemTag:
-        """按 name 唯一键 upsert 标签。已存在则更新非主键字段。"""
+        """Upsert a tag by the name unique key. If it exists, update the non-primary-key fields."""
         async with get_session(self._db_url) as session:
             result = await session.execute(
                 select(EcosystemTagModel).where(EcosystemTagModel.name == tag.name)
@@ -3909,7 +3979,7 @@ class StorageRepository:
         return tag
 
     async def get_tag_by_name(self, name: str) -> EcosystemTag | None:
-        """按名称获取标签。"""
+        """Fetch a tag by name."""
         async with get_session(self._db_url) as session:
             result = await session.execute(
                 select(EcosystemTagModel).where(EcosystemTagModel.name == name)
@@ -3918,7 +3988,7 @@ class StorageRepository:
             return row.to_pydantic() if row else None
 
     async def get_tag(self, tag_id: str) -> EcosystemTag | None:
-        """按 id 获取标签。"""
+        """Fetch a tag by id."""
         async with get_session(self._db_url) as session:
             result = await session.execute(
                 select(EcosystemTagModel).where(EcosystemTagModel.id == tag_id)
@@ -3929,7 +3999,7 @@ class StorageRepository:
     async def list_tags(
         self, category: str = "", limit: int = 200
     ) -> list[EcosystemTag]:
-        """列出标签，可按 category 过滤。"""
+        """List tags, optionally filtered by category."""
         async with get_session(self._db_url) as session:
             stmt = select(EcosystemTagModel)
             if category:
@@ -3948,10 +4018,10 @@ class StorageRepository:
         repo_tag: EcosystemRepoTag,
         project_id: str | None = None,
     ) -> EcosystemRepoTag:
-        """添加仓-标签关联，已存在则更新 confidence/source/agent_id（应用层 upsert）。
+        """Add a repo-tag association; if it exists, update confidence/source/agent_id (application-layer upsert).
 
         Args:
-            project_id: 显式作用域；空时回退到 _project_scope/repo_tag.project_id。
+            project_id: explicit scope; when empty, falls back to _project_scope/repo_tag.project_id.
         """
         effective_pid = self._effective_project_id(project_id) or repo_tag.project_id
         if effective_pid and not repo_tag.project_id:
@@ -3981,7 +4051,7 @@ class StorageRepository:
         tag_id: str,
         project_id: str | None = None,
     ) -> bool:
-        """移除仓-标签关联，返回是否实际删除了记录。"""
+        """Remove a repo-tag association; returns whether a record was actually deleted."""
         effective_pid = self._effective_project_id(project_id)
         async with get_session(self._db_url) as session:
             stmt = select(EcosystemRepoTagModel).where(
@@ -4041,10 +4111,10 @@ class StorageRepository:
         limit: int = 200,
         project_id: str | None = None,
     ) -> list[EcosystemRepoTag]:
-        """列出仓-标签关联，按 repo_id 或 tag_id 过滤。
+        """List repo-tag associations, filtered by repo_id or tag_id.
 
         Args:
-            project_id: 显式作用域；空时由 _project_scope 自动注入。
+            project_id: explicit scope; when empty, _project_scope injects it automatically.
         """
         async with get_session(self._db_url) as session:
             stmt = select(EcosystemRepoTagModel)
@@ -4069,10 +4139,10 @@ class StorageRepository:
         relation: EcosystemRelation,
         project_id: str | None = None,
     ) -> EcosystemRelation:
-        """添加仓与仓的引用关系。
+        """Add a reference relation between repos.
 
         Args:
-            project_id: 显式作用域；空时回退到 _project_scope/relation.project_id。
+            project_id: explicit scope; when empty, falls back to _project_scope/relation.project_id.
         """
         effective_pid = self._effective_project_id(project_id) or relation.project_id
         if effective_pid and not relation.project_id:
@@ -4089,10 +4159,10 @@ class StorageRepository:
         limit: int = 200,
         project_id: str | None = None,
     ) -> list[EcosystemRelation]:
-        """列出仓-仓关联，按起点 / 终点 / 类型过滤。
+        """List repo-repo relations, filtered by source / target / type.
 
         Args:
-            project_id: 显式作用域；空时由 _project_scope 自动注入。
+            project_id: explicit scope; when empty, _project_scope injects it automatically.
         """
         async with get_session(self._db_url) as session:
             stmt = select(EcosystemRelationModel)
@@ -4115,7 +4185,7 @@ class StorageRepository:
         relation_id: str,
         project_id: str | None = None,
     ) -> bool:
-        """删除一条关联记录。"""
+        """Delete one relation record."""
         effective_pid = self._effective_project_id(project_id)
         async with get_session(self._db_url) as session:
             stmt = select(EcosystemRelationModel).where(
@@ -4141,10 +4211,10 @@ class StorageRepository:
         scan_run: EcosystemScanRun,
         project_id: str | None = None,
     ) -> EcosystemScanRun:
-        """创建一次扫描批次记录。
+        """Create one scan batch record.
 
         Args:
-            project_id: 显式作用域；空时回退到 _project_scope / scan_run.project_id。
+            project_id: explicit scope; when empty, falls back to _project_scope / scan_run.project_id.
         """
         effective_pid = self._effective_project_id(project_id) or scan_run.project_id
         if effective_pid and not scan_run.project_id:
@@ -4158,7 +4228,7 @@ class StorageRepository:
         scan_run_id: str,
         project_id: str | None = None,
     ) -> EcosystemScanRun | None:
-        """按 id 获取扫描批次。"""
+        """Fetch a scan batch by id."""
         effective_pid = self._effective_project_id(project_id)
         async with get_session(self._db_url) as session:
             stmt = select(EcosystemScanRunModel).where(
@@ -4177,9 +4247,9 @@ class StorageRepository:
         scan_run_id: str,
         **fields: Any,
     ) -> EcosystemScanRun | None:
-        """部分更新扫描批次字段。fields 中的 enum 自动转 .value。
+        """Partially update a scan batch's fields. Enums in fields are automatically converted to .value.
 
-        作用域非空时只允许更新同项目下的行。
+        When the scope is non-empty, only rows under the same project may be updated.
         """
         effective_pid = self._effective_project_id(None)
         async with get_session(self._db_url) as session:
@@ -4208,10 +4278,10 @@ class StorageRepository:
         limit: int = 50,
         project_id: str | None = None,
     ) -> list[EcosystemScanRun]:
-        """按 strategy 列出扫描批次，按 started_at 降序。
+        """List scan batches by strategy, in started_at descending order.
 
         Args:
-            project_id: 显式作用域；空时由 _project_scope 自动注入。
+            project_id: explicit scope; when empty, _project_scope injects it automatically.
         """
         async with get_session(self._db_url) as session:
             stmt = select(EcosystemScanRunModel)
@@ -4249,16 +4319,16 @@ class StorageRepository:
         id_filter: list[str] | None = None,
         id_exclude: list[str] | None = None,
     ) -> tuple[list[EcosystemRepoProfile], int]:
-        """Stage E 扩展检索：支持 tags / language / pushed_after / 多种排序。
+        """Stage E extended search: supports tags / language / pushed_after / multiple sort orders.
 
-        参数：
-            tags: 标签名列表（按 EcosystemTag.name 匹配）。空 list / None 不过滤。
-            tag_match_mode: "all"（默认，AND 语义，所有 tag 必须存在）/ "any"（OR 语义）。
-            sort: "stars"（默认，stars desc）/ "recency"（pushed_at desc，nulls last）
-                / "relevance"（relevance_score desc）。
-            offset: 分页偏移，配合 limit 实现翻页。
+        Parameters:
+            tags: a list of tag names (matched against EcosystemTag.name). An empty list / None means no filtering.
+            tag_match_mode: "all" (default, AND semantics, all tags must exist) / "any" (OR semantics).
+            sort: "stars" (default, stars desc) / "recency" (pushed_at desc, nulls last)
+                / "relevance" (relevance_score desc).
+            offset: the pagination offset, used with limit for paging.
 
-        返回 (profiles, total_count_before_limit)。
+        Returns (profiles, total_count_before_limit).
         """
         from sqlalchemy import or_
 
@@ -4270,7 +4340,7 @@ class StorageRepository:
                     EcosystemRepoProfileModel.project_id == project_id
                 )
 
-            # 基础字段过滤
+            # Basic field filtering
             if id_filter is not None:
                 if not id_filter:
                     return ([], 0)
@@ -4312,9 +4382,9 @@ class StorageRepository:
                 tp = f"%{topic}%"
                 stmt = stmt.where(EcosystemRepoProfileModel.topics.ilike(tp))
 
-            # tags 过滤：通过 EXISTS subquery 实现 AND/OR
+            # tags filtering: AND/OR implemented via EXISTS subqueries
             if tags:
-                # 解析 tag 名 -> tag_id
+                # Resolve tag names -> tag_ids
                 tag_ids: list[str] = []
                 tag_rows = await session.execute(
                     select(EcosystemTagModel).where(EcosystemTagModel.name.in_(tags))
@@ -4323,18 +4393,18 @@ class StorageRepository:
                     tag_ids.append(t.id)
 
                 if not tag_ids:
-                    # 标签全不存在 -> 0 结果
+                    # No tags exist at all -> 0 results
                     return ([], 0)
 
                 if tag_match_mode == "any":
-                    # OR 语义：repo 至少有一个匹配标签
+                    # OR semantics: the repo has at least one matching tag
                     subq = (
                         select(EcosystemRepoTagModel.repo_id)
                         .where(EcosystemRepoTagModel.tag_id.in_(tag_ids))
                     )
                     stmt = stmt.where(EcosystemRepoProfileModel.id.in_(subq))
                 else:
-                    # AND 语义：每个 tag_id 都必须有对应 repo_tag 行
+                    # AND semantics: every tag_id must have a corresponding repo_tag row
                     for tid in tag_ids:
                         subq = (
                             select(EcosystemRepoTagModel.repo_id)
@@ -4342,14 +4412,14 @@ class StorageRepository:
                         )
                         stmt = stmt.where(EcosystemRepoProfileModel.id.in_(subq))
 
-            # 计算 total（offset/limit 之前）
+            # Compute the total (before offset/limit)
             count_stmt = select(func.count()).select_from(stmt.subquery())
             total_result = await session.execute(count_stmt)
             total = int(total_result.scalar() or 0)
 
-            # 排序
+            # Sorting
             if sort == "recency":
-                # SQLite 的 NULLS LAST 兼容做法：is null asc + value desc
+                # SQLite-compatible NULLS LAST approach: is null asc + value desc
                 stmt = stmt.order_by(
                     EcosystemRepoProfileModel.pushed_at.is_(None).asc(),
                     EcosystemRepoProfileModel.pushed_at.desc(),
@@ -4378,14 +4448,16 @@ class StorageRepository:
         is_archived: bool | None = None,
         project_id: str | None = None,
     ) -> dict[str, dict[str, int]]:
-        """计算 facet 聚合：在给定基础筛选下，统计 category / language / archived 的分布。
+        """Compute facet aggregations: under the given base filters, count the distribution of category / language /
+        archived.
 
-        返回 {"category": {...}, "language": {...}, "archived": {"true": n, "false": n}}。
+        Returns {"category": {...}, "language": {...}, "archived": {"true": n, "false": n}}.
 
-        K1 perf: 三个 GROUP BY 共享一个 session + 单一 ``_apply_filters`` helper
-        消除原版的 cat_stmt dead-code 和 5 段重复 ``or_(...)``。GROUP BY 在 SQL 层
-        聚合比 fetch 全行后 Python 聚合在大表上更快（实测 50K 行 GROUP BY 132ms
-        vs Python 全 fetch 152ms）。
+        K1 perf: the three GROUP BYs share one session + a single ``_apply_filters`` helper,
+        eliminating the original's cat_stmt dead code and 5 duplicated ``or_(...)`` segments. GROUP BY aggregation at
+        the SQL layer
+        is faster than fetching all rows and aggregating in Python on large tables (measured: 50K rows, GROUP BY 132ms
+        vs Python full fetch 152ms).
         """
         from sqlalchemy import or_
 
@@ -4461,10 +4533,13 @@ class StorageRepository:
                 key = "true" if row[0] else "false"
                 archived_counts[key] = int(row[1])
 
-            # v1.5.1: stage facet — 透出渐进漏斗状态分布（让前端 StatsBar/筛选不被 limit 截断）
-            # 实现：1) 取所有 deep_reviews 按 created_at desc 在 Python 端聚合 latest stage map
-            #       2) 再取所有满足 filter 的 profile id，按 stage_map 聚合
-            # 当前数据量级（< 1万 reviews）此方案够用；后续大表可改窗口函数 SQL。
+            # v1.5.1: stage facet — exposes the progressive funnel's state distribution (so the frontend
+            # StatsBar/filters are not truncated by limit)
+            # Implementation: 1) take all deep_reviews in created_at desc order and aggregate a latest stage map on the
+            # Python side
+            #       2) then take all profile ids satisfying the filter and aggregate by stage_map
+            # At the current data scale (< 10k reviews) this approach suffices; larger tables can later switch to
+            # window-function SQL.
             all_reviews_q = select(
                 EcosystemDeepReviewModel.repo_id,
                 EcosystemDeepReviewModel.stage_status,
@@ -4530,15 +4605,16 @@ class StorageRepository:
         deep_reviews_limit: int = 20,
         project_id: str | None = None,
     ) -> dict[str, Any] | None:
-        """全息获取仓档案：profile + tags(含名称) + deep_reviews + relations(from/to) + scan_run。
+        """Fetch a repo profile holographically: profile + tags (with names) + deep_reviews + relations (from/to) +
+        scan_run.
 
-        repo_full_name 与 repo_id 二选一（repo_id 优先）。
-        返回 None 当仓不存在。
+        repo_full_name and repo_id are alternatives (repo_id takes priority).
+        Returns None when the repo does not exist.
 
         Args:
-            project_id: 显式作用域；空时由 _project_scope 自动注入。
+            project_id: explicit scope; when empty, _project_scope injects it automatically.
         """
-        # 1) 主档案
+        # 1) main profile
         profile: EcosystemRepoProfile | None = None
         if repo_id:
             profile = await self.get_ecosystem_profile_by_id(
@@ -4551,7 +4627,7 @@ class StorageRepository:
         if profile is None:
             return None
 
-        # 2) tags（join EcosystemTag 取名称 + category）
+        # 2) tags (join EcosystemTag for name + category)
         async with get_session(self._db_url) as session:
             tag_join = await session.execute(
                 select(EcosystemRepoTagModel, EcosystemTagModel)
@@ -4582,14 +4658,14 @@ class StorageRepository:
                     }
                 )
 
-        # 3) deep reviews（带 project 作用域）
+        # 3) deep reviews (with project scope)
         deep_reviews = await self.list_deep_reviews(
             repo_id=profile.id,
             limit=deep_reviews_limit,
             project_id=project_id,
         )
 
-        # 4) relations from + to（含目标仓简要信息）
+        # 4) relations from + to (including brief info on the target repo)
         async with get_session(self._db_url) as session:
             from_rows = await session.execute(
                 select(EcosystemRelationModel, EcosystemRepoProfileModel)
@@ -4647,7 +4723,7 @@ class StorageRepository:
                     }
                 )
 
-        # 5) scan_run（带 project 作用域）
+        # 5) scan_run (with project scope)
         scan_run = None
         if profile.scan_run_id:
             scan_run = await self.get_scan_run(
@@ -4664,37 +4740,37 @@ class StorageRepository:
         }
 
     # ================================================================
-    # Stage J: 项目隔离 backfill
+    # Stage J: project-isolation backfill
     # ================================================================
 
     async def backfill_ecosystem_to_project(
         self, project_id: str
     ) -> dict[str, int]:
-        """把所有 project_id IS NULL 的 ecosystem 数据迁移至指定项目。
+        """Migrate all ecosystem data with project_id IS NULL to the specified project.
 
-        覆盖 5 张数据表：profiles / scan_runs / deep_reviews / repo_tags / relations。
-        EcosystemTag 字典保持 NULL（全局共用）。
+        Covers 5 data tables: profiles / scan_runs / deep_reviews / repo_tags / relations.
+        The EcosystemTag dictionary stays NULL (shared globally).
 
-        幂等：已有 project_id 的行不动；只迁移 NULL 行。
+        Idempotent: rows that already have a project_id are untouched; only NULL rows are migrated.
 
         Args:
-            project_id: 目标项目 id（必须存在于 projects 表）。
+            project_id: the target project's id (must exist in the projects table).
 
         Returns:
-            每张表实际迁移行数的字典。
+            A dict of the rows actually migrated per table.
         """
         from sqlalchemy import update
 
         if not project_id:
-            raise ValueError("project_id 不能为空")
+            raise ValueError("project_id must not be empty")
 
         async with get_session(self._db_url) as session:
-            # 校验目标项目存在
+            # verify the target project exists
             existing_project = await session.execute(
                 select(ProjectModel).where(ProjectModel.id == project_id)
             )
             if existing_project.scalar_one_or_none() is None:
-                raise ValueError(f"项目 {project_id} 不存在")
+                raise ValueError(f"Project {project_id} not found")
 
             counts: dict[str, int] = {}
             tables = [
@@ -4716,7 +4792,7 @@ class StorageRepository:
             return counts
 
     # ================================================================
-    # v1.5.0-A: Stage status helpers (DeepReview 渐进式漏斗)
+    # v1.5.0-A: Stage status helpers (DeepReview progressive funnel)
     # ================================================================
 
     async def update_deep_review_stage(
@@ -4730,32 +4806,35 @@ class StorageRepository:
         integration_md: str | None = None,
         project_id: str | None = None,
     ) -> EcosystemDeepReview | None:
-        """推进 DeepReview 的 stage_status，自动写对应阶段时间戳。
+        """Advance a DeepReview's stage_status, automatically writing the corresponding stage timestamp.
 
-        D5 收敛 choke point ②：每次 stage 推进同步——
-        - ``status`` := derive_status_from_stage(stage)（派生只读视图，唯一合法写入口）；
-        - 统一清空 ``claimed_by`` / ``claimed_at``（释放认领，覆盖 tick / lifecycle /
-          claim worker 全部派遣来源，与 apply_quality_review / release_claim 语义一致）；
-        - 派生态 ∈ {completed, failed} 且行 ``completed_at`` 为空时补写（历史不可改写）。
+        D5 convergence choke point 2: every stage advance synchronously —
+        - sets ``status`` := derive_status_from_stage(stage) (derived read-only view; the sole legitimate write entry);
+        - uniformly clears ``claimed_by`` / ``claimed_at`` (releasing the claim, covering all dispatch sources: tick /
+        lifecycle /
+          claim workers, consistent with apply_quality_review / release_claim semantics);
+        - when the derived state ∈ {completed, failed} and the row's ``completed_at`` is empty, backfills it (history is
+        not rewritable).
 
         Args:
-            review_id: 目标 DeepReview id。
-            stage_status: 新 stage 值；接受 enum 或字符串。
-            completed_at: 阶段完成时间，默认当前 UTC 时间；用于回填历史时显式指定。
-            debate_meeting_id: stage_status=DEBATED 时关联的会议 id。
-            integration_task_id: stage_status=INTEGRATED 时关联的任务 id。
-            integration_md: 集成建议的 markdown 内容。
-            project_id: 显式作用域；空时由 _project_scope 自动注入。
+            review_id: the target DeepReview id.
+            stage_status: the new stage value; accepts an enum or a string.
+            completed_at: the stage completion time, defaulting to the current UTC time; specified explicitly when
+            backfilling history.
+            debate_meeting_id: the associated meeting id when stage_status=DEBATED.
+            integration_task_id: the associated task id when stage_status=INTEGRATED.
+            integration_md: the markdown content of the integration suggestion.
+            project_id: explicit scope; when empty, _project_scope injects it automatically.
 
         Returns:
-            更新后的 DeepReview Pydantic 模型；找不到则返回 None。
+            The updated DeepReview Pydantic model; returns None when not found.
         """
         if isinstance(stage_status, str):
             stage_status = EcosystemStageStatus(stage_status)
 
         ts = completed_at or utc_now()
 
-        # 不同阶段写入不同时间戳字段
+        # Different stages write different timestamp fields
         timestamp_fields: dict[str, datetime | None] = {}
         if stage_status == EcosystemStageStatus.SHALLOW_DONE:
             timestamp_fields["shallow_completed_at"] = ts
@@ -4772,9 +4851,9 @@ class StorageRepository:
         derived = derive_status_from_stage(stage_status)
         update_kwargs: dict[str, Any] = {
             "stage_status": stage_status.value,
-            # D5: status 列为派生只读视图，仅在此处随 stage 推进联动。
+            # D5: the status column is a derived read-only view, linked to stage advancement only here.
             "status": derived.value,
-            # D5: stage 每次推进/失败统一释放认领，防悬挂占住。
+            # D5: every stage advance/failure uniformly releases the claim, preventing dangling occupation.
             "claimed_by": None,
             "claimed_at": None,
         }
@@ -4788,7 +4867,8 @@ class StorageRepository:
         if project_id is not None:
             update_kwargs["_project_id"] = project_id
 
-        # 派生终态补齐 completed_at（COALESCE 语义：已有值绝不覆盖，保历史快照）
+        # A derived terminal state backfills completed_at (COALESCE semantics: an existing value is never overwritten,
+        # preserving the historical snapshot)
         if derived in (
             EcosystemDeepReviewStatus.COMPLETED,
             EcosystemDeepReviewStatus.FAILED,
@@ -4806,10 +4886,10 @@ class StorageRepository:
         limit: int = 50,
         project_id: str | None = None,
     ) -> list[EcosystemDeepReview]:
-        """按 stage_status 列出 deep reviews。
+        """List deep reviews by stage_status.
 
-        v1.5.0 漏斗 UI/Worker 使用：例如查 ``shallow_done`` 的所有仓供 Stage 1
-        候选展示，或查 ``shallow_failed`` 仓供 manual retry 列表。
+        Used by the v1.5.0 funnel UI/Workers: e.g. query all repos at ``shallow_done`` for Stage 1
+        candidate display, or query ``shallow_failed`` repos for the manual retry list.
         """
         if isinstance(stage_status, EcosystemStageStatus):
             stage_status = stage_status.value
@@ -4830,17 +4910,17 @@ class StorageRepository:
         self,
         project_id: str | None = None,
     ) -> dict[str, int]:
-        """统计浅扫 DR 行的各 stage_status 精确计数。
+        """Count the exact per-stage_status counts of shallow-scan DR rows.
 
-        Bug 4 修复辅助方法：直接查 ecosystem_deep_reviews 表，
-        避免用 profile.shallow_summary 空判定导致语义偏差。
+        Bug 4 fix helper method: queries the ecosystem_deep_reviews table directly,
+        avoiding the semantic skew caused by judging from an empty profile.shallow_summary.
 
         Returns:
             {
-              "pending":     queued 且 claimed_by IS NULL 的行数,
-              "in_progress": queued 且 claimed_by IS NOT NULL 的行数,
-              "done":        shallow_done 的行数,
-              "failed":      shallow_failed 的行数,
+              "pending":     the number of rows that are queued with claimed_by IS NULL,
+              "in_progress": the number of rows that are queued with claimed_by IS NOT NULL,
+              "done":        the number of shallow_done rows,
+              "failed":      the number of shallow_failed rows,
             }
         """
         from sqlalchemy import case, func
@@ -4905,14 +4985,15 @@ class StorageRepository:
         self,
         project_id: str | None = None,
     ) -> int:
-        """v1.6.1 backfill: 将 stage_status='shallow_done' 且 status='running' 的行 status 改为 'completed'。
+        """v1.6.1 backfill: change the status of rows with stage_status='shallow_done' and status='running' to
+        'completed'.
 
-        根因：apply_shallow_summary 的 v1.5.2 注释误保留了 status='running'，
-        导致 678 个 shallow_done 行的 status 字段是脏数据，令 _dispatch_one 的
-        旧 status 判定误跳过所有老库重扫。此 backfill 幂等修正历史数据。
+        Root cause: apply_shallow_summary's v1.5.2 comment mistakenly preserved status='running',
+        leaving the status field of 678 shallow_done rows as dirty data, which made _dispatch_one's
+        old status judgment wrongly skip all legacy-DB rescans. This backfill idempotently corrects the historical data.
 
         Returns:
-            实际更新的行数。
+            The number of rows actually updated.
         """
         from sqlalchemy import update as sa_update
 
@@ -4934,29 +5015,30 @@ class StorageRepository:
         self,
         project_id: str | None = None,
     ) -> dict[str, int]:
-        """D5 双轴收敛回填：status 派生视图全量对齐 stage_status 权威轴。
+        """D5 dual-axis convergence backfill: fully align the status derived view to the stage_status authoritative
+        axis.
 
-        5 条纯 UPDATE 按 R1→R2→F1→F2→F3 固定序单次串行执行（反向规则必须
-        先于正向规则，否则 F3 会把老 reviewer 遗留 completed 行误重置回
-        queued）。派生映射唯一真源为 types.STAGE_TO_STATUS，本方法的 SQL
-        字面量从该 dict 生成。全程只 UPDATE（append-only 铁律），幂等：
-        每条 WHERE 都排除自身写后状态，重跑 rowcount 恒 0。
+        5 pure UPDATEs executed serially in one pass in the fixed order R1→R2→F1→F2→F3 (the reverse rules must
+        precede the forward rules, otherwise F3 would wrongly reset legacy completed rows left by old reviewers back to
+        queued). The derivation mapping's sole source of truth is types.STAGE_TO_STATUS; this method's SQL
+        literals are generated from that dict. UPDATEs only throughout (the append-only iron rule), idempotent:
+        each WHERE excludes its own post-write state, so re-running always yields rowcount 0.
 
-        规则：
-        - R1 反向：(status=completed, stage=queued) 老 reviewer 完成行 →
-          stage=shallow_done，shallow_completed_at=COALESCE(自身, completed_at, created_at)。
-          消除 M20(a) "永久跳过" 残根。
-        - R2 反向：(status=failed, stage=queued) 且有派遣证据
-          (started_at / report_id / dispatch_prompt 任一非空) → stage=shallow_failed。
-          无证据的 (failed, queued) 行交 F3 重置回真排队。
-        - F1 正向：stage ∈ 完成态 且 status≠completed → status=completed，
-          completed_at=COALESCE(自身, created_at)。覆盖 v1.5.2 误留 running 的
-          678 行主病灶及 Stage1/2/3 纯 stage 写入行。
-        - F2 正向：stage ∈ 失败态 且 status≠failed → status=failed，同上补时间戳。
-        - F3 正向收口（必须最后）：stage=queued 且 status≠queued → status=queued。
+        Rules:
+        - R1 reverse: (status=completed, stage=queued) completed rows from old reviewers →
+          stage=shallow_done, shallow_completed_at=COALESCE(itself, completed_at, created_at).
+          Eliminates the M20(a) "permanently skipped" residual root.
+        - R2 reverse: (status=failed, stage=queued) with dispatch evidence
+          (any of started_at / report_id / dispatch_prompt non-empty) → stage=shallow_failed.
+          (failed, queued) rows without evidence are handed to F3 to reset to genuinely queued.
+        - F1 forward: stage ∈ a completed state and status≠completed → status=completed,
+          completed_at=COALESCE(itself, created_at). Covers the 678-row main lesion of running mistakenly left by v1.5.2
+          and the pure-stage write rows of Stage1/2/3.
+        - F2 forward: stage ∈ a failed state and status≠failed → status=failed, backfilling the timestamp as above.
+        - F3 forward wrap-up (must be last): stage=queued and status≠queued → status=queued.
 
         Returns:
-            分规则 rowcount 字典 {"R1": n, "R2": n, "F1": n, "F2": n, "F3": n}。
+            A per-rule rowcount dict {"R1": n, "R2": n, "F1": n, "F2": n, "F3": n}.
         """
         from sqlalchemy import func, or_
         from sqlalchemy import update as sa_update
@@ -4983,7 +5065,7 @@ class StorageRepository:
 
         counts: dict[str, int] = {}
         async with get_session(self._db_url) as session:
-            # R1 — 反向：completed 卡 queued 的老 reviewer 行推到 shallow_done
+            # R1 — reverse: push old reviewer rows stuck at completed+queued to shallow_done
             r1 = _scoped(
                 sa_update(model)
                 .where(model.stage_status == queued_stage)
@@ -4998,7 +5080,7 @@ class StorageRepository:
             )
             counts["R1"] = int((await session.execute(r1)).rowcount or 0)
 
-            # R2 — 反向：failed 卡 queued 且有派遣证据的行推到 shallow_failed
+            # R2 — reverse: push rows stuck at failed+queued with dispatch evidence to shallow_failed
             r2 = _scoped(
                 sa_update(model)
                 .where(model.stage_status == queued_stage)
@@ -5013,7 +5095,7 @@ class StorageRepository:
             ).values(stage_status=EcosystemStageStatus.SHALLOW_FAILED.value)
             counts["R2"] = int((await session.execute(r2)).rowcount or 0)
 
-            # F1 — 正向：完成态 stage 的行 status 对齐 completed
+            # F1 — forward: align the status of completed-state stage rows to completed
             f1 = _scoped(
                 sa_update(model)
                 .where(model.stage_status.in_(completed_stages))
@@ -5024,7 +5106,7 @@ class StorageRepository:
             )
             counts["F1"] = int((await session.execute(f1)).rowcount or 0)
 
-            # F2 — 正向：失败态 stage 的行 status 对齐 failed
+            # F2 — forward: align the status of failed-state stage rows to failed
             f2 = _scoped(
                 sa_update(model)
                 .where(model.stage_status.in_(failed_stages))
@@ -5035,7 +5117,7 @@ class StorageRepository:
             )
             counts["F2"] = int((await session.execute(f2)).rowcount or 0)
 
-            # F3 — 正向收口（必须最后）：真排队行 status 重置回 queued
+            # F3 — forward wrap-up (must be last): reset genuinely queued rows' status back to queued
             f3 = _scoped(
                 sa_update(model)
                 .where(model.stage_status == queued_stage)
@@ -5047,7 +5129,7 @@ class StorageRepository:
         return counts
 
     # ================================================================
-    # v1.5.0-A: Failed flag helpers (Profile 失败追踪)
+    # v1.5.0-A: Failed flag helpers (Profile failure tracking)
     # ================================================================
 
     async def mark_profile_deleted(
@@ -5057,11 +5139,11 @@ class StorageRepository:
         error_message: str = "",
         project_id: str | None = None,
     ) -> EcosystemRepoProfile | None:
-        """把 profile 标为 GitHub 端被删除。
+        """Mark a profile as deleted on the GitHub side.
 
-        - 设置 is_deleted=True / is_active=False；
-        - 失败次数 +1，记最近错误消息；
-        - lifecycle 标签由调用方另行 add_repo_tag('deleted', source='lifecycle')。
+        - Sets is_deleted=True / is_active=False;
+        - failure count +1, recording the latest error message;
+        - the lifecycle tag is added separately by the caller via add_repo_tag('deleted', source='lifecycle').
         """
         return await self._update_profile_failure_state(
             repo_id,
@@ -5078,7 +5160,7 @@ class StorageRepository:
         error_message: str = "",
         project_id: str | None = None,
     ) -> EcosystemRepoProfile | None:
-        """把 profile 标为 GitHub 端被设为私密 (403 forbidden, not rate limit)。"""
+        """Mark a profile as made private on the GitHub side (403 forbidden, not rate limit)."""
         return await self._update_profile_failure_state(
             repo_id,
             is_private_now=True,
@@ -5094,10 +5176,10 @@ class StorageRepository:
         error_message: str,
         project_id: str | None = None,
     ) -> EcosystemRepoProfile | None:
-        """记录一次抓取失败，failure_count +1。
+        """Record one fetch failure, failure_count +1.
 
-        不切换 is_deleted/is_private/is_active；调用方根据错误类型决定是否升级到
-        mark_profile_deleted/private。
+        Does not toggle is_deleted/is_private/is_active; the caller decides by error type whether to escalate to
+        mark_profile_deleted/private.
         """
         return await self._update_profile_failure_state(
             repo_id,
@@ -5112,7 +5194,7 @@ class StorageRepository:
         *,
         project_id: str | None = None,
     ) -> EcosystemRepoProfile | None:
-        """复活：抓取重新成功，清空失败状态 (decision §3.3 复活机制)。
+        """Revival: the fetch succeeds again; clear the failure state (decision §3.3 revival mechanism).
 
         - is_deleted/is_private_now → False
         - is_active → True
@@ -5141,7 +5223,7 @@ class StorageRepository:
         fetch_failure_count_reset: bool = False,
         project_id: str | None = None,
     ) -> EcosystemRepoProfile | None:
-        """内部统一入口，更新 profile 失败/活跃相关字段。"""
+        """Internal unified entry point; updates a profile's failure/activity-related fields."""
         effective_pid = self._effective_project_id(project_id)
         async with get_session(self._db_url) as session:
             stmt = select(EcosystemRepoProfileModel).where(
@@ -5176,7 +5258,7 @@ class StorageRepository:
         active_rank: int | None,
         project_id: str | None = None,
     ) -> EcosystemRepoProfile | None:
-        """更新仓的活跃集状态 (recompute_active_set 内部用)。"""
+        """Update a repo's active-set state (used internally by recompute_active_set)."""
         effective_pid = self._effective_project_id(project_id)
         async with get_session(self._db_url) as session:
             stmt = select(EcosystemRepoProfileModel).where(
@@ -5201,7 +5283,7 @@ class StorageRepository:
         refreshed_at: datetime | None = None,
         project_id: str | None = None,
     ) -> EcosystemRepoProfile | None:
-        """写入 Stage 0 浅扫总结，更新 last_shallow_refreshed_at。"""
+        """Write the Stage 0 shallow-scan summary, updating last_shallow_refreshed_at."""
         effective_pid = self._effective_project_id(project_id)
         ts = refreshed_at or utc_now()
         async with get_session(self._db_url) as session:
@@ -5220,7 +5302,7 @@ class StorageRepository:
             return row.to_pydantic()
 
     # ================================================================
-    # v1.5.0-A: Status snapshot helpers (append-only 决策 D)
+    # v1.5.0-A: Status snapshot helpers (append-only decision D)
     # ================================================================
 
     async def create_status_snapshot(
@@ -5228,11 +5310,11 @@ class StorageRepository:
         snapshot: EcosystemRepoStatusSnapshot,
         project_id: str | None = None,
     ) -> EcosystemRepoStatusSnapshot:
-        """写入一条状态快照 (append-only)。
+        """Write one status snapshot (append-only).
 
         Args:
-            snapshot: 状态快照 Pydantic。
-            project_id: 显式作用域；空时回退到 _project_scope/snapshot.project_id。
+            snapshot: the status snapshot Pydantic model.
+            project_id: explicit scope; when empty, falls back to _project_scope/snapshot.project_id.
         """
         effective_pid = self._effective_project_id(project_id) or snapshot.project_id
         if effective_pid and not snapshot.project_id:
@@ -5248,12 +5330,12 @@ class StorageRepository:
         limit: int = 100,
         project_id: str | None = None,
     ) -> list[EcosystemRepoStatusSnapshot]:
-        """列出状态快照，按 snapshot_at 降序。
+        """List status snapshots, in snapshot_at descending order.
 
-        参数：
-            repo_id: 按仓过滤；空 = 不过滤。
-            scan_run_id: 按 scan 批次过滤；空 = 不过滤。
-            project_id: 显式作用域；空时由 _project_scope 自动注入。
+        Parameters:
+            repo_id: filter by repo; empty = no filtering.
+            scan_run_id: filter by scan batch; empty = no filtering.
+            project_id: explicit scope; when empty, _project_scope injects it automatically.
         """
         async with get_session(self._db_url) as session:
             stmt = select(EcosystemRepoStatusSnapshotModel)
@@ -5281,7 +5363,7 @@ class StorageRepository:
         self,
         project_id: str,
     ) -> EcosystemProjectSettings | None:
-        """按 project_id 获取项目的 ecosystem 配置。"""
+        """Fetch a project's ecosystem config by project_id."""
         if not project_id:
             return None
         async with get_session(self._db_url) as session:
@@ -5296,13 +5378,13 @@ class StorageRepository:
         self,
         settings: EcosystemProjectSettings,
     ) -> EcosystemProjectSettings:
-        """按 project_id 主键 upsert 项目 ecosystem 配置。
+        """Upsert a project's ecosystem config by the project_id primary key.
 
-        已存在则更新所有字段（除 created_at）；不存在则插入。
-        updated_at 总是设为当前 UTC。
+        If it exists, update all fields (except created_at); otherwise insert.
+        updated_at is always set to the current UTC time.
         """
         if not settings.project_id:
-            raise ValueError("project_id 不能为空")
+            raise ValueError("project_id must not be empty")
         now = utc_now()
         async with get_session(self._db_url) as session:
             stmt = select(EcosystemProjectSettingsModel).where(
@@ -5332,12 +5414,12 @@ class StorageRepository:
         *,
         is_ai_team_os: bool = False,
     ) -> EcosystemProjectSettings:
-        """确保项目存在 ecosystem 设置；不存在则按默认值创建。
+        """Ensure a project has ecosystem settings; create them with defaults when absent.
 
-        AI Team OS 项目用更严格默认 (min_stars=5000, focus claude/mcp/agent topics)；
-        其他项目用通用默认 (min_stars=1000, top_n=100, focus_topics=[])。
+        The AI Team OS project uses stricter defaults (min_stars=5000, focus claude/mcp/agent topics);
+        other projects use generic defaults (min_stars=1000, top_n=100, focus_topics=[]).
 
-        幂等：已存在则直接返回，不覆盖人工修改。
+        Idempotent: if it exists, return it directly without overwriting manual edits.
         """
         existing = await self.get_ecosystem_project_settings(project_id)
         if existing is not None:
@@ -5365,7 +5447,7 @@ class StorageRepository:
         self,
         batch: EcosystemShallowBatch,
     ) -> EcosystemShallowBatch:
-        """创建新浅扫批次。"""
+        """Create a new shallow-scan batch."""
         async with get_session(self._db_url) as session:
             session.add(EcosystemShallowBatchModel.from_pydantic(batch))
         return batch
@@ -5375,7 +5457,7 @@ class StorageRepository:
         batch_id: str,
         project_id: str | None = None,
     ) -> EcosystemShallowBatch | None:
-        """按 ID 查询浅扫批次。"""
+        """Query a shallow-scan batch by ID."""
         effective_pid = self._effective_project_id(project_id)
         async with get_session(self._db_url) as session:
             stmt = select(EcosystemShallowBatchModel).where(
@@ -5393,7 +5475,7 @@ class StorageRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[EcosystemShallowBatch], int]:
-        """列出浅扫批次（按 created_at 倒序）。返回 (batches, total)。"""
+        """List shallow-scan batches (created_at descending). Returns (batches, total)."""
         effective_pid = self._effective_project_id(project_id)
         async with get_session(self._db_url) as session:
             base = select(EcosystemShallowBatchModel)
@@ -5414,7 +5496,7 @@ class StorageRepository:
         project_id: str | None = None,
         **kwargs: Any,
     ) -> EcosystemShallowBatch | None:
-        """更新浅扫批次字段（通过 kwargs 传入字段名/值）。"""
+        """Update a shallow-scan batch's fields (field names/values passed via kwargs)."""
         effective_pid = self._effective_project_id(project_id)
         now = utc_now()
         async with get_session(self._db_url) as session:
@@ -5439,9 +5521,10 @@ class StorageRepository:
         batch_id: str,
         project_id: str | None = None,
     ) -> int:
-        """删除批次中尚未开工的浅扫任务行（stage_status='queued' 且未被认领）。
+        """Delete the not-yet-started shallow-scan task rows in a batch (stage_status='queued' and unclaimed).
 
-        已认领/已完成的行不动。approve 的逆操作，用于回滚不再执行的批次。
+        Claimed/completed rows are untouched. The inverse operation of approve, used to roll back a batch that will no
+        longer run.
         """
         effective_pid = self._effective_project_id(project_id)
         async with get_session(self._db_url) as session:
@@ -5462,15 +5545,15 @@ class StorageRepository:
         batch_id: str,
         project_id: str | None = None,
     ) -> list[dict]:
-        """获取批次内候选仓清单（含 repo 基础信息）。
+        """Get the candidate repo list within a batch (including basic repo info).
 
-        返回格式: [{repo_id, repo_full_name, stars, stage_status, shallow_summary_excerpt, last_commit_at}, ...]
+        Return format: [{repo_id, repo_full_name, stars, stage_status, shallow_summary_excerpt, last_commit_at}, ...]
         """
         import json
 
         effective_pid = self._effective_project_id(project_id)
         async with get_session(self._db_url) as session:
-            # 1. 拉批次行取 candidates_snapshot_json
+            # 1. Pull the batch row to get candidates_snapshot_json
             batch_stmt = select(EcosystemShallowBatchModel).where(
                 EcosystemShallowBatchModel.id == batch_id
             )
@@ -5483,7 +5566,7 @@ class StorageRepository:
             if batch_row is None:
                 return []
 
-            # 2. 解析候选快照
+            # 2. Parse the candidate snapshot
             repo_ids: list[str] = []
             if batch_row.candidates_snapshot_json:
                 try:
@@ -5494,7 +5577,7 @@ class StorageRepository:
             if not repo_ids:
                 return []
 
-            # 3. 批量拉 repo profile 基础字段
+            # 3. Batch-pull the repo profiles' basic fields
             profile_stmt = select(EcosystemRepoProfileModel).where(
                 EcosystemRepoProfileModel.id.in_(repo_ids)
             )
@@ -5505,7 +5588,7 @@ class StorageRepository:
             profile_result = await session.execute(profile_stmt)
             profiles = {r.id: r for r in profile_result.scalars().all()}
 
-            # 4. 拉关联 DR 的 stage_status（最新一条）
+            # 4. Pull the associated DRs' stage_status (the latest one)
             dr_stmt = (
                 select(EcosystemDeepReviewModel.repo_id, EcosystemDeepReviewModel.stage_status)
                 .where(EcosystemDeepReviewModel.repo_id.in_(repo_ids))
@@ -5932,26 +6015,29 @@ class StorageRepository:
     # ================================================================
     # I3a: Workflow observability (workflow_runs / workflow_agents)
     #
-    # 两张表是「不可变文件 wf_<id>.json 的可重建缓存」：按自然键 UPSERT
-    # 单调推进、绝不 DELETE 行、绝不破坏 stage_history/审计事件（红线3）。
-    # upsert 按唯一自然键定位，故 *不* 套 _apply_project_filter（scoped repo 下
-    # 过滤未命中会导致对唯一 wf_id 重复 INSERT → 触发 unique 约束报错）；
-    # get/list 读端才套 _apply_project_filter 做项目隔离。
+    # The two tables are "rebuildable caches of the immutable file wf_<id>.json": UPSERT by natural key,
+    # advancing monotonically, never DELETE-ing rows, never destroying stage_history/audit events (red line 3).
+    # Upserts locate by the unique natural key, so they do *not* apply _apply_project_filter (under a scoped repo,
+    # a filter miss would cause a duplicate INSERT on the unique wf_id → triggering a unique-constraint error);
+    # only the get/list read side applies _apply_project_filter for project isolation.
     # ================================================================
 
     async def upsert_workflow_run(self, run: WorkflowRun) -> WorkflowRunUpsert:
         """Insert-or-update a workflow run by natural key ``wf_id``.
 
-        单调合并语义（幂等、支持 hook/file 交错到达）：
-        - status 只升不降（按 _WF_STATUS_RANK）；
-        - source 合并（hook + file → 'hook+file'）；
-        - 文本/整型字段仅当新值非空/非零才覆盖，避免 hook 骨架抹掉 file 遥测、
-          或 file 遥测抹掉 hook 的 planned_agent_count。
+        Monotonic merge semantics (idempotent, supporting interleaved hook/file arrival):
+        - status only rises, never falls (per _WF_STATUS_RANK);
+        - source merging (hook + file → 'hook+file');
+        - text/integer fields are overwritten only when the new value is non-empty/non-zero, preventing a hook skeleton
+        from erasing file telemetry,
+          or file telemetry from erasing the hook's planned_agent_count.
 
-        返回 :class:`WorkflowRunUpsert`(run + became_completed + became_terminal)：
-        把「本次是否首次转 completed / 首次入终态」的判定收进本事务(读旧 status →
-        写新 status 同一 session)，供调用方做一次性事件 emit。事务外读 was_completed
-        再 emit 会在三条无串行 ingest 驱动交错时重复发射(审计 WP10)。
+        Returns :class:`WorkflowRunUpsert` (run + became_completed + became_terminal):
+        the judgment of "whether this is the first transition to completed / first entry into a terminal state" is
+        folded into this transaction (read old status →
+        write new status, same session), for the caller to emit a one-time event. Reading was_completed outside the
+        transaction and
+        then emitting would double-emit when the three unserialized ingest drivers interleave (audit WP10).
         """
         async with get_session(self._db_url) as session:
             result = await session.execute(
@@ -5964,48 +6050,50 @@ class StorageRepository:
                 orm.updated_at = now
                 session.add(orm)
                 await session.flush()
-                # 首见即为终态：本次就是该终态的首次落库 → 报告转移。
+                # First seen already in a terminal state: this is that terminal state's first persistence → report the
+                # transition.
                 became_completed = orm.status == "completed"
                 became_terminal = orm.status in _WF_TERMINAL_STATUSES
                 return WorkflowRunUpsert(
                     orm.to_pydantic(), became_completed, became_terminal
                 )
 
-            # 记录旧状态(写入前)，用于本事务内判定终态跃迁。
+            # Record the old state (before writing), to judge terminal-state transitions within this transaction.
             old_status = row.status
             old_terminal = old_status in _WF_TERMINAL_STATUSES
 
-            # status: 只升不降
+            # status: only rises, never falls
             if run.status:
                 old_rank = _WF_STATUS_RANK.get(row.status, 0)
                 new_rank = _WF_STATUS_RANK.get(run.status, 0)
                 if new_rank >= old_rank:
                     row.status = run.status
 
-            # source: 合并去重
+            # source: merge with dedup
             row.source = _merge_wf_source(row.source, run.source)
 
-            # 文本/关联字段：新非空值胜出
+            # Text/association fields: a new non-empty value wins
             for fld in ("name", "summary", "script_path", "transcript_dir",
                         "cc_task_id", "session_id", "team_id", "project_id"):
                 val = getattr(run, fld)
                 if val:
                     setattr(row, fld, val)
 
-            # JSON 字段：新非空/非 None 胜出
+            # JSON fields: a new non-empty/non-None value wins
             if run.phases:
                 row.phases = run.phases
             if run.result is not None:
                 row.result = run.result
 
-            # 整型计数：新非零胜出（保护 hook planned_* 与 file agent_count 互不覆盖）
+            # Integer counts: a new non-zero value wins (protecting hook planned_* and file agent_count from overwriting
+            # each other)
             for fld in ("planned_agent_count", "dynamic_nodes", "agent_count",
                         "total_tokens", "total_tool_calls"):
                 val = getattr(run, fld)
                 if val:
                     setattr(row, fld, val)
 
-            # 时间：新非 None 胜出
+            # Times: a new non-None value wins
             if run.duration_ms is not None:
                 row.duration_ms = run.duration_ms
             if run.started_at is not None:
@@ -6013,14 +6101,17 @@ class StorageRepository:
             if run.completed_at is not None:
                 row.completed_at = run.completed_at
 
-            # Phase2 水位/live 列：调用方显式携带(非 None)才覆盖，允许显式 0/'' 复位
-            # —— 绝不套上面「新非零胜出」整型规则（否则 journal_offset 永远回不了 0、
-            # source_fingerprint 无法清空走 mtime 兜底）。
+            # Phase2 watermark/live columns: overwritten only when the caller explicitly carries them (non-None),
+            # allowing an explicit 0/'' reset
+            # — never apply the "new non-zero wins" integer rule above (otherwise journal_offset could never return to
+            # 0, and
+            # source_fingerprint could not be cleared to fall back to mtime).
             for fld in ("journal_offset", "source_fingerprint", "live_tokens"):
                 val = getattr(run, fld)
                 if val is not None:
                     setattr(row, fld, val)
-            # last_activity_at 单调取 max（文件 mtime 天然单调，防乱序 tick/时钟回拨）
+            # last_activity_at monotonically takes max (file mtimes are naturally monotonic; guards against out-of-order
+            # ticks/clock rollbacks)
             if run.last_activity_at is not None and (
                 row.last_activity_at is None or run.last_activity_at > row.last_activity_at
             ):
@@ -6028,10 +6119,11 @@ class StorageRepository:
 
             row.updated_at = now
             await session.flush()
-            # 终态跃迁判定(写入后 row.status vs 事务开头 old_status)：
-            # completed rank 3 恒 >= 任何旧秩，故 status==completed 时必已写入。
-            # completed↔killed↔failed 等秩互转也算「首次入该终态」——与旧
-            # was_completed(prev.status=='completed') 语义一致(旧 killed→completed 会 emit)。
+            # Terminal-state transition judgment (post-write row.status vs the transaction-start old_status):
+            # completed's rank 3 is always >= any old rank, so when status==completed it has necessarily been written.
+            # Same-rank conversions among completed↔killed↔failed also count as "first entry into that terminal state" —
+            # consistent with the old
+            # was_completed (prev.status=='completed') semantics (an old killed→completed would emit).
             became_completed = row.status == "completed" and old_status != "completed"
             became_terminal = (
                 row.status in _WF_TERMINAL_STATUSES and not old_terminal
@@ -6043,8 +6135,9 @@ class StorageRepository:
     async def upsert_workflow_agent(self, agent: WorkflowAgent) -> WorkflowAgent:
         """Insert-or-update a workflow fan-out agent by ``(wf_id, cc_agent_id)``.
 
-        文件是遥测真相源，故新非空/非 None 值覆盖既有；None/空保留原值
-        （例如 os_agent_id 尚未关联时不抹掉先前关联）。
+        The file is the telemetry source of truth, so a new non-empty/non-None value overrides the existing one;
+        None/empty keeps the original value
+        (e.g. when os_agent_id is not yet associated, do not erase a previous association).
         """
         async with get_session(self._db_url) as session:
             result = await session.execute(
@@ -6115,9 +6208,11 @@ class StorageRepository:
             if status:
                 stmt = stmt.where(WorkflowRunModel.status == status)
             stmt = self._apply_project_filter(stmt, WorkflowRunModel)
-            # 展示序 = 实际运行时间优先（started_at 缺失回退入库时间）：历史批量
-            # 收编会让 created_at 挤在同一天，按它排序会把最新运行埋出分页外
-            #（2026-07-06 用户实测“6.29 后无记录”的根因）。
+            # Display order = actual run time first (falling back to ingestion time when started_at is missing):
+            # historical bulk
+            # absorption crowds created_at onto the same day, and sorting by it would bury the latest runs beyond the
+            # pagination
+            #(the root cause of the user's 2026-07-06 measurement "no records after 6.29").
             stmt = stmt.order_by(
                 func.coalesce(
                     WorkflowRunModel.started_at, WorkflowRunModel.created_at
@@ -6128,13 +6223,16 @@ class StorageRepository:
             return [r.to_pydantic() for r in rows]
 
     async def aggregate_model_usage(self, days: int = 7) -> list[dict[str, Any]]:
-        """按模型档位聚合近 N 天 workflow agent 用量（编排宪章观测口径）。
+        """Aggregate the last N days of workflow agent usage by model tier (the orchestration charter's observation
+        semantics).
 
-        数据源 workflow_agents（终态回填 model/tokens），按 tokens 降序。
+        Data source: workflow_agents (model/tokens backfilled at terminal state), in tokens descending order.
         """
-        # cutoff 与 workflow_agents.updated_at 同为 UTC(全库唯一时钟),直接相比即可。
-        # 史料:这里曾是双墙钟时代的事故点——cutoff 取 UTC 而该列写本地,于是在 UTC+8
-        # 上"近 N 天"实际统计 N 天 + 8 小时,不抛异常、只是数字悄悄偏大。
+        # The cutoff and workflow_agents.updated_at are both UTC (the whole DB's single clock), so they can be compared
+        # directly.
+        # Historical note: this was once an accident site of the dual-wall-clock era — the cutoff was UTC while the
+        # column was written in local time, so in UTC+8
+        # "the last N days" actually counted N days + 8 hours; no exception, just numbers quietly inflated.
         cutoff = utc_now() - timedelta(days=days)
         async with get_session(self._db_url) as session:
             stmt = (
@@ -6152,7 +6250,7 @@ class StorageRepository:
             stmt = self._apply_project_filter(stmt, WorkflowAgentModel)
             result = await session.execute(stmt)
             return [
-                {"model": model or "(未记录)", "agents": agents, "tokens": tokens}
+                {"model": model or "(not recorded)", "agents": agents, "tokens": tokens}
                 for model, agents, tokens in result.all()
             ]
 
@@ -6172,7 +6270,8 @@ class StorageRepository:
     async def find_workflow_agents_by_cc_id(
         self, cc_agent_id: str
     ) -> list[WorkflowAgent]:
-        """按 cc_agent_id 反查观测行（回执迁移负排除用：判断成员真身属于哪条 run）。"""
+        """Reverse-look-up an observation row by cc_agent_id (used by the receipt migration's negative exclusion:
+        judging which run a member truly belongs to)."""
         async with get_session(self._db_url) as session:
             stmt = select(WorkflowAgentModel).where(
                 WorkflowAgentModel.cc_agent_id == cc_agent_id
@@ -6182,11 +6281,12 @@ class StorageRepository:
             return [r.to_pydantic() for r in rows]
 
     # ================================================================
-    # Knowledge links（知识层 P1a — 跨域引用图谱，append-only）
+    # Knowledge links (knowledge layer P1a — cross-domain reference graph, append-only)
     # ================================================================
 
     async def insert_knowledge_links(self, links: list[KnowledgeLink]) -> int:
-        """批量插入引用边，UNIQUE 冲突静默忽略（幂等，可反复回扫）。"""
+        """Batch-insert reference edges, silently ignoring UNIQUE conflicts (idempotent; can be re-scanned
+        repeatedly)."""
         if not links:
             return 0
         from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -6222,7 +6322,7 @@ class StorageRepository:
         direction: str = "both",
         limit: int = 100,
     ) -> list[KnowledgeLink]:
-        """按端点查边。direction: out（此对象引用了谁）/ in（谁引用了它）/ both。"""
+        """Query edges by endpoint. direction: out (whom this object references) / in (who references it) / both."""
         async with get_session(self._db_url) as session:
             conds = []
             if direction in ("out", "both"):
@@ -6253,9 +6353,9 @@ class StorageRepository:
         depth: int = 2,
         limit: int = 50,
     ) -> list[dict]:
-        """无向递归扇出（深度 clamp 1-2，GBrain relationalFanout 思路）。
+        """Undirected recursive fan-out (depth clamped to 1-2, following GBrain's relationalFanout idea).
 
-        返回可达节点 [{kind, id, hop, via_types, path}]，按 hop 升序。
+        Returns reachable nodes [{kind, id, hop, via_types, path}], in hop ascending order.
         """
         from sqlalchemy import text as sa_text
 
@@ -6311,16 +6411,20 @@ class StorageRepository:
             ]
 
     # ================================================================
-    # Governance leader lease (D3 阶段C, 审计 M50)
+    # Governance leader lease (D3 stage C, audit M50)
     # ================================================================
 
     async def release_governance_lease(self, holder: str) -> bool:
-        """主动释放治理租约（仅当自己是持有者）。返回是否真的释放了。
+        """Actively release the governance lease (only when self is the holder). Returns whether it was really released.
 
-        不释放也能自愈——租约有 TTL——但那要等满 TTL（3×REAPER_CHECK_INTERVAL=180s），
-        期间治理全线静默（回收/推进/调度/唤醒/对账都不跑）。API 重启在开发中很频繁，
-        2026-07-26 实测：重启后新实例被自己刚杀掉的旧 pid 的租约挡在门外近 3 分钟，
-        矛盾态自愈等修复看起来"没生效"。优雅关闭时把租约让出来，新实例即刻接管。
+        Not releasing also self-heals — the lease has a TTL — but that means waiting out the full TTL
+        (3×REAPER_CHECK_INTERVAL=180s),
+        during which governance is silent across the board (no collection/advancement/scheduling/waking/reconciliation
+        runs). API restarts are frequent in development;
+        measured 2026-07-26: after a restart, the new instance was locked out for nearly 3 minutes by the lease of the
+        old pid it had just killed,
+        making fixes like contradiction-state self-healing look "ineffective". Yield the lease on graceful shutdown so
+        the new instance takes over immediately.
         """
         from sqlalchemy import text
 
@@ -6336,17 +6440,22 @@ class StorageRepository:
             return bool(result.rowcount and result.rowcount > 0)
 
     async def try_acquire_governance_lease(self, holder: str, ttl_seconds: int) -> bool:
-        """原子获取/续约治理 leader 租约（单行 id='governance'）。
+        """Atomically acquire/renew the governance leader lease (single row id='governance').
 
-        多 API 实例并存时只有持有者运行后台治理。复用 v1.5.3 claim 范式——
-        SQLite 串行写 + rowcount 是"我是否真的抢到"的唯一真相源；绝不用文件锁
-        （四次翻车史）。胜出条件：同 holder 续约，或行无主/租约已过期。
-        时间戳为 UTC ISO 字符串，仅做字典序比较（同一格式下与时间序等价）。
+        When multiple API instances coexist, only the holder runs background governance. Reuses the v1.5.3 claim
+        paradigm —
+        SQLite serialized writes + rowcount are the sole source of truth for "did I really win it"; never use file locks
+        (a history of four rollovers). Winning conditions: same-holder renewal, or the row is ownerless/the lease has
+        expired.
+        Timestamps are UTC ISO strings, compared lexicographically only (equivalent to time order under the same
+        format).
 
-        A2-obs（辩论 503e07f1 议题A）：抢到之后，若被抢的是一个**还挂在行上、
-        但租约已过期**的前任，额外落一条 GOVERNANCE_LEASE_TAKEN_OVER 事件。不加列、
-        不改 schema，纯观测——先回答"治理易主到底发生过没有"，观测期内一条都没有，
-        A2-impl（epoch 列）就不必做。
+        A2-obs (debate 503e07f1, topic A): after winning, if the displaced holder is a predecessor **still hanging on
+        the row
+        but whose lease has expired**, additionally record a GOVERNANCE_LEASE_TAKEN_OVER event. No new column,
+        no schema change, pure observation — first answer "has governance ever changed hands"; if there is not a single
+        one in the observation period,
+        A2-impl (the epoch column) need not be done.
         """
         from sqlalchemy import text
 
@@ -6363,10 +6472,12 @@ class StorageRepository:
                 ),
                 {"now": now_str},
             )
-            # 纯观测的一次读：判定权仍然只在下面 UPDATE 的 WHERE 上，这行不参与胜负，
-            # 只用来回答"我是从谁手里接过来的"。理论上 SELECT 与 UPDATE 之间仍可能被
-            # 另一实例插进来，读到的前任因此是尽力而为——观测面容得下这点误差，
-            # 判定面容不下，所以真相源一步都没有挪。
+            # One read for pure observation: the judgment right still lies solely in the UPDATE's WHERE below; this read
+            # does not participate in win/loss,
+            # it only answers "from whom did I take over". In theory another instance can still slip in between the
+            # SELECT and the UPDATE,
+            # so the predecessor read is best-effort — the observation surface can tolerate this much error,
+            # but the judgment surface cannot, so the source of truth has not moved a single step.
             prior = (
                 await session.execute(
                     text("SELECT holder, expires_at FROM governance_lease WHERE id = 'governance'")
@@ -6388,17 +6499,21 @@ class StorageRepository:
         if acquired and prior is not None:
             prev_holder = prior[0] or ""
             prev_expires = prior[1]
-            # 只认"前任在位且租约到点"这一种。续约（同 holder）、无主认领（holder 空）、
-            # 以及主动 release 后的接手都不是交替。holder 非空却 expires_at IS NULL 是
-            # 手写行才造得出的畸形态（release 一定同时清两个字段），按裁决口径不计。
+            # Recognizes only "the predecessor is in place and the lease is due". Renewal (same holder), ownerless
+            # claiming (empty holder),
+            # and takeover after an active release are not handovers. A non-empty holder with expires_at IS NULL is
+            # a deformed shape only a hand-written row can produce (a release always clears both fields together); per
+            # the ruling semantics it does not count.
             if (
                 prev_holder
                 and prev_holder != holder
                 and prev_expires
                 and str(prev_expires) < now_str
             ):
-                # 事件写失败绝不能拖垮租约本身——治理是主流程，观测是旁路。
-                # 但也绝不静默：吞掉异常等于把"观测没在跑"伪装成"没发生过交替"。
+                # An event-write failure must never drag down the lease itself — governance is the main flow;
+                # observation is a side channel.
+                # But never silently either: swallowing the exception would disguise "observation is not running" as "no
+                # handover ever happened".
                 try:
                     await self.create_event(
                         event_type=EventType.GOVERNANCE_LEASE_TAKEN_OVER.value,
@@ -6414,7 +6529,8 @@ class StorageRepository:
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
-                        "治理租约接管事件写入失败（租约已正常取得，不影响治理）："
+                        "Failed to write the governance lease takeover event (the lease was acquired normally; "
+                        "governance is unaffected): "
                         "%s → %s, err=%s",
                         prev_holder,
                         holder,
@@ -6424,12 +6540,14 @@ class StorageRepository:
         return acquired
 
     async def count_project_sessions(self, project_id: str) -> int:
-        """该项目启动过的 CC 会话数——以文件系统为真相源。
+        """The number of CC sessions this project has launched — with the file system as the source of truth.
 
-        统计 ``~/.claude/projects/<slug>/*.jsonl`` 会话转录文件数（slug 计算与
-        workflow_ingest._project_slug 同式：每个非字母数字字符 → '-'）。
-        刻意不用 agents.session_id 归属足迹：归属会随 heal/收纳策略漂移，
-        曾令计数恒 0（2026-07-07 实测）；转录文件不撒谎。
+        Counts the ``~/.claude/projects/<slug>/*.jsonl`` session transcript files (the slug computation is the same
+        formula as
+        workflow_ingest._project_slug: every non-alphanumeric character → '-').
+        Deliberately not using the agents.session_id ownership footprint: ownership drifts with heal/absorption
+        strategies and
+        once made the count constantly 0 (measured 2026-07-07); transcript files do not lie.
         """
         import re as _re
         from pathlib import Path as _Path
@@ -6451,15 +6569,18 @@ class StorageRepository:
             return 0
 
     # ================================================================
-    # agent → task 边的名字解析（§2.4）
+    # Name resolution for agent → task edges (§2.4)
     # ================================================================
 
     async def find_teams_by_owner_session(self, session_id: str) -> list[str]:
-        """归属该 CC 会话的 team id（判据与 hook_translator._team_owned_by_session 同源）。
+        """The team id owned by this CC session (the criterion is from the same origin as
+        hook_translator._team_owned_by_session).
 
-        两个信号按同样的顺序：建队时盖的 ``config.owner_session_id`` 优先；老行才退回
-        「容器队名编码了会话 id 前 8 位」。名字兜底**只在没盖章时**生效 —— 否则一支
-        已明确归属别人的队会因为名字撞了 8 位十六进制而被认成自己的。
+        The two signals in the same order: the ``config.owner_session_id`` stamped at team creation takes priority; old
+        rows fall back to
+        "the container team name encodes the first 8 characters of the session id". The name fallback takes effect
+        **only when there is no stamp** — otherwise a team
+        clearly owned by someone else would be mistaken for one's own because its name collides on 8 hex characters.
         """
         if not session_id:
             return []
@@ -6483,16 +6604,20 @@ class StorageRepository:
         session_id: str = "",
         team_ids: list[str] | None = None,
     ) -> Agent | None:
-        """同名 agent 行里、**限定域内**、``created_at`` 最新的那一行。
+        """Among same-named agent rows, the one with the latest ``created_at`` **within the limited domain**.
 
-        域（``session_id`` 或 ``team_ids``）**必须给至少一个**，两个都空直接返回 None
-        而不是全表找。这不是防御性编程，是本方法存在的全部意义：``name`` 在 agents
-        表里根本不唯一 —— 实测 ``Leader`` 一个名字对应 117 行、横跨 79 支队。全表按
-        名字取最新，等于把三周前另一个会话的 Leader 认成现在这个，边写下去还查得到、
-        不报错，只是绑错了对象。
+        The domain (``session_id`` or ``team_ids``) **must provide at least one**; with both empty, return None directly
+        rather than searching the whole table. This is not defensive programming; it is this method's entire reason to
+        exist: ``name`` in the agents
+        table is fundamentally not unique — measured: the single name ``Leader`` corresponds to 117 rows spanning 79
+        teams. Taking the latest by name across the whole table
+        is equivalent to mistaking another session's Leader from three weeks ago for the current one; the edge written
+        from it can still be queried and
+        raises no error — it just binds the wrong object.
 
-        大小写不敏感：memo 的 ``author`` 默认值是 ``"leader"``，而 Leader 行的
-        ``name`` 是 ``"Leader"``。严格比对会让占比最大的那批记账行为一条边都建不出来。
+        Case-insensitive: a memo's ``author`` default is ``"leader"``, while a Leader row's
+        ``name`` is ``"Leader"``. Strict comparison would prevent the largest share of bookkeeping actions from building
+        a single edge.
         """
         cleaned = (name or "").strip()
         if not cleaned or (not session_id and not team_ids):
@@ -6514,36 +6639,45 @@ class StorageRepository:
             return row.to_pydantic() if row is not None else None
 
     # ================================================================
-    # token 用量归因（docs/token-attribution-v1-design.md 阶段 2）
+    # Token usage attribution (docs/token-attribution-v1-design.md stage 2)
     #
-    # 只读聚合。API 端点与 MCP 工具都走这两个方法，不各写一份 SQL ——
-    # 分母一旦有第二个实现，两处就会在某次改动后悄悄给出不同的覆盖率。
+    # Read-only aggregation. API endpoints and MCP tools both go through these two methods rather than each writing its
+    # own SQL —
+    # once the denominator has a second implementation, the two places will quietly give different coverage after some
+    # change.
     # ================================================================
 
     def _dispatch_population_filter(self, stmt: Any, population: DispatchPopulation) -> Any:
-        """把派工路径落成 WHERE 条件。分母的定义就在这一行，且只在这一行。
+        """Turn the dispatch path into a WHERE condition. The denominator's definition lives on this line, and only this
+        line.
 
-        分母数的是 ``agents`` **行**，而"一行 = 一次派工"这个等式是靠登记侧维持的：
-        SubagentStart 的复用判据只认派工身份（``services.agent_identity``），同名不
-        构成复用。A-06 修复前那条判据是按名字的，同名多次派工会折叠成一行，于是历史
-        窗口的分母偏小、覆盖率偏乐观 —— 见 :meth:`usage_coverage_report` 里 SUBAGENT
-        行的口径注。
+        The denominator counts ``agents`` **rows**, and the equation "one row = one dispatch" is maintained by the
+        registration side:
+        SubagentStart's reuse criterion recognizes only the dispatch identity (``services.agent_identity``); the same
+        name does not
+        constitute reuse. Before the A-06 fix, that criterion was by name, so multiple same-named dispatches folded into
+        one row, making historical
+        windows' denominators too small and coverage too optimistic — see the caliber note for SUBAGENT rows in
+        :meth:`usage_coverage_report`.
+
         """
         if population is DispatchPopulation.SUBAGENT:
             return stmt.where(AgentModel.role != LEADER_ROLE)
         if population is DispatchPopulation.LEADER_SESSION:
             return stmt.where(AgentModel.role == LEADER_ROLE)
         msg = (
-            f"population={population.value} 不是 agents 表上的群体 —— "
-            f"workflow_self_report 走 workflow_agents 自报值、tool_call 设计上不采集，"
-            f"二者都只有覆盖率没有四层用量，见 usage_coverage_report()"
+            f"population={population.value} is not a population on the agents table — "
+            f"workflow_self_report uses workflow_agents self-reported values, and tool_call is not collected "
+            f"by design; "
+            f"both have coverage only and no four-layer usage — see usage_coverage_report()"
         )
         raise ValueError(msg)
 
     def _attribution_scope_filter(
         self, stmt: Any, scope: AttributionScope, scope_id: str
     ) -> Any:
-        """把 scope 落成 WHERE 条件；``scope_id`` 为空表示不按该维度过滤（全库）。"""
+        """Turn a scope into a WHERE condition; an empty ``scope_id`` means no filtering on that dimension (whole
+        DB)."""
         if not scope_id:
             return stmt
         if scope is AttributionScope.PROJECT:
@@ -6560,7 +6694,8 @@ class StorageRepository:
                     )
                 )
             )
-        # TASK：只有留过账的 agent 进这个 scope（边由 §2.4 的寄生写入产生）
+        # TASK: only agents that left bookkeeping entries enter this scope (edges are produced by §2.4's parasitic
+        # writes)
         return stmt.where(AgentModel.id.in_(_worked_on_agents_subquery(scope_id)))
 
     async def aggregate_token_attribution(
@@ -6573,37 +6708,47 @@ class StorageRepository:
         since: datetime | None = None,
         until: datetime | None = None,
     ) -> TokenAttribution:
-        """按 scope 聚合 ``usage_sum`` 四层用量，连同分子分母与未归因分类一起返回。
+        """Aggregate the ``usage_sum`` four-layer usage by scope, returning it together with the numerator/denominator
+        and the unattributed classification.
 
-        ``metric`` 必填且当前只接受 ``USAGE_SUM``：``ctx_last`` 的四层分解从未被保存过
-        （``workflow_agents.tokens`` 在 ingest 时已经是四字段之和），塞进这个强制四层
-        分列的结构里只能靠编数字。它的覆盖率走 :meth:`usage_coverage_report`。
+        ``metric`` is required and currently accepts only ``USAGE_SUM``: ``ctx_last``'s four-layer decomposition was
+        never stored
+        (``workflow_agents.tokens`` is already the sum of the four fields at ingest time); forcing it into this
+        mandatory four-layer
+        split structure would require fabricating numbers. Its coverage goes through :meth:`usage_coverage_report`.
 
-        窗口按 ``created_at`` 落，**不按 ``tokens_measured_at``** —— 后者会把没测过的
-        行直接从分母里抹掉，覆盖率恒等于 100%（§4.1，R2 点名的做假方式）。
+        The window falls on ``created_at``, **not on ``tokens_measured_at``** — the latter would erase unmeasured
+        rows straight from the denominator, making coverage always 100% (§4.1, the faking method R2 named).
         """
         if metric is not TokenMetric.USAGE_SUM:
             msg = (
-                f"metric={metric.value} 不支持四层归因：ctx_last 是末轮上下文水位，"
-                f"其四层分解在 ingest 时就已合并为一个数、从未落库（§1.1）。"
-                f"它的分子分母见 usage_coverage_report()，但没有可分列的四层用量。"
+                f"metric={metric.value} does not support four layers of attribution: ctx_last is the final-round "
+                f"context watermark, "
+                f"and its four-layer decomposition was merged into a single number at ingest time and never stored "
+                f"(§1.1). "
+                f"See usage_coverage_report() for its numerator and denominator, but there is no splittable "
+                f"four-layer usage."
             )
             raise ValueError(msg)
         if scope is AttributionScope.TASK and not scope_id:
-            # 空 task_id 会让"未归因"整体退化成谎话：scope 过滤被跳过后，一条 task 边
-            # 都没有的行也落进"不是单边"的补集，于是被标成 multi_task_unsplittable
-            # ——"切不开"与"根本没有边"是两回事，后者是 task 边覆盖率的问题（0.8%），
-            # 混进前者就把全链最窄的那一跳藏起来了。
+            # An empty task_id would degrade "unattributed" as a whole into a lie: once the scope filter is skipped,
+            # rows without a single task edge
+            # also fall into the complement of "not single-edged" and get labeled multi_task_unsplittable
+            # — "cannot be split" and "has no edge at all" are two different things; the latter is a task-edge coverage
+            # problem (0.8%), and
+            # mixing it into the former would hide the narrowest hop of the whole chain.
             msg = (
-                "scope=task 必须指定 scope_id：task 级归因是逐 task 的问句。"
-                "全局的 task 边覆盖率请看 usage_coverage_report() 里的 agent->task 跳。"
+                "scope=task requires scope_id: task-level attribution is a per-task question. "
+                "For global task-edge coverage, see the agent->task hop in usage_coverage_report()."
             )
             raise ValueError(msg)
 
         measured = AgentModel.tokens_measured_at.is_not(None)
-        # TASK scope 多一道闸：跨多个 task 留过账的 agent，其四层数是整个生命周期的
-        # 一个合计，没有逐区间用量可供按边的时间序切分 —— §2.4 定死此时如实计未归因，
-        # 禁止平均分摊。所以它既不进分子，也不贡献任何 token。
+        # The TASK scope has one more gate: an agent that left bookkeeping entries across multiple tasks has four-layer
+        # numbers that are a single total
+        # over its whole lifecycle, with no per-interval usage to split by edge in time order — §2.4 fixes that it is
+        # then honestly counted as unattributed,
+        # with averaging allocation forbidden. So it enters neither the numerator nor contributes any tokens.
         single_task = AgentModel.id.in_(_single_worked_on_agents_subquery())
         attributed = and_(measured, single_task) if scope is AttributionScope.TASK else measured
 
@@ -6639,9 +6784,11 @@ class StorageRepository:
         stmt = self._attribution_scope_filter(stmt, scope, scope_id)
         stmt = _apply_created_window(stmt, since, until)
 
-        # 未归因行的 transcript 路径 —— 拿回来逐个 probe，把"救得回"与"救不回"分开。
-        # 这是本方法唯一一次碰文件系统：分类结果无法从库里推出来，而不分类的话
-        # "未归因 22%" 就是一句没法行动的话（§3.4）。
+        # The transcript paths of unattributed rows — fetch them back and probe one by one to separate "recoverable"
+        # from "unrecoverable".
+        # This is the only time this method touches the file system: the classification cannot be derived from the DB,
+        # and without classifying,
+        # "22% unattributed" would be an unactionable statement (§3.4).
         detail = select(AgentModel.transcript_path, AgentModel.id).select_from(AgentModel)
         detail = self._dispatch_population_filter(detail, population)
         detail = self._attribution_scope_filter(detail, scope, scope_id)
@@ -6678,7 +6825,8 @@ class StorageRepository:
             dispatches_total=int(row.total or 0),
             unattributed_reasons=reasons,
             measured_window=window,
-            # 只要有一行是别名兜底推来的，整份答案就降级标注 —— 口径诚实优先于好看。
+            # As long as one row was derived via an alias fallback, the whole answer is labeled downgraded — caliber
+            # honesty over good looks.
             method=(
                 AttributionMethod.ALIAS_FALLBACK
                 if int(row.alias_rows or 0) > 0
@@ -6692,10 +6840,12 @@ class StorageRepository:
         since: datetime | None = None,
         until: datetime | None = None,
     ) -> UsageCoverageReport:
-        """覆盖率向量（§4.1）—— 矩阵各行 + 各跳 C_hop，**零 token 数值**。
+        """The coverage vector (§4.1) — the matrix rows + per-hop C_hop, with **zero token values**.
 
-        这是页面第一屏第一块与 ``os_health_check`` 摘要行的共同数据源。矩阵刻意
-        不提供合计行：``usage_sum`` 与 ``ctx_last`` 实测差 5~25 倍，跨行合计就是混口径。
+        This is the shared data source of the page's first block on the first screen and ``os_health_check``'s summary
+        line. The matrix deliberately
+        provides no total row: ``usage_sum`` and ``ctx_last`` differ by a measured 5~25×, so a cross-row total would mix
+        calibers.
         """
         sub = await self.aggregate_token_attribution(
             metric=TokenMetric.USAGE_SUM,
@@ -6712,19 +6862,22 @@ class StorageRepository:
 
         non_leader = AgentModel.role != LEADER_ROLE
         hop_specs: list[tuple[str, Any, str]] = [
-            ("agent->session", AgentModel.session_id.is_not(None), "由 transcript 路径派生回填（阶段 1）"),
-            ("agent->project", AgentModel.project_id.is_not(None), "派工时由队归属带入"),
+            ("agent->session", AgentModel.session_id.is_not(None), "Derived and backfilled from the transcript path "
+                "(stage 1)"),
+            ("agent->project", AgentModel.project_id.is_not(None), "Carried in by team ownership at dispatch time"),
             (
                 "agent->workflow",
                 AgentModel.id.in_(select(WorkflowAgentModel.os_agent_id)),
-                "workflow_agents.os_agent_id 匹配",
+                "workflow_agents.os_agent_id match",
             ),
-            ("agent->transcript", AgentModel.transcript_path.is_not(None), "回采的前提，决定可救比例"),
+            ("agent->transcript", AgentModel.transcript_path.is_not(None), "The prerequisite for re-collection; "
+                "determines the recoverable share"),
             (
                 "agent->task",
                 AgentModel.id.in_(_worked_on_agents_subquery()),
-                "全链最窄的一跳：task 边靠寄生在记账行为上采得（§2.4），"
-                "端到端 task 级归因不可能高于它（R5 要求同屏披露）",
+                "The narrowest hop of the whole chain: task edges are collected parasitically on bookkeeping actions "
+                "(§2.4),"
+                "so end-to-end task-level attribution can never exceed it (R5 requires same-screen disclosure)",
             ),
         ]
 
@@ -6772,10 +6925,11 @@ class StorageRepository:
                 dispatches_attributed=sub.dispatches_attributed,
                 unattributed_reasons=sub.unattributed_reasons,
                 note=(
-                    "分母 = 已登记的派工行数（一行 = 一次派工 = 一份 transcript）。"
-                    "该等式自 A-06 修复起成立；此前 SubagentStart 按名字复用，同名的"
-                    "多次派工会折叠进一行，历史窗口分母偏小、覆盖率偏乐观，且被折叠"
-                    "掉的那几次派工的账已被覆写、不可恢复"
+                    "Denominator = the number of registered dispatch rows (one row = one dispatch = one transcript). "
+                    "This equation holds since the A-06 fix; before that, SubagentStart reused by name, so multiple "
+                    "same-named dispatches folded into one row, making historical windows denominators too small and "
+                    "coverage too optimistic, and the folded "
+                    "dispatches ledgers were overwritten and are unrecoverable"
                 ),
             ),
             UsageCoverageRow(
@@ -6784,7 +6938,8 @@ class StorageRepository:
                 dispatches_total=leader.dispatches_total,
                 dispatches_attributed=leader.dispatches_attributed,
                 unattributed_reasons=leader.unattributed_reasons,
-                note="主会话量级远超全部子 agent 之和，与上一行分列呈现、默认不合并（§3.3）",
+                note="The main session magnitude far exceeds the sum of all sub-agents; presented in a separate column "
+                     "from the row above and not merged by default (§3.3)",
             ),
             UsageCoverageRow(
                 path=DispatchPopulation.WORKFLOW_SELF_REPORT,
@@ -6796,18 +6951,22 @@ class StorageRepository:
                     if wf_total > wf_reported
                     else {}
                 ),
-                note="口径不同，不可与上面两行相加；自报缺失补不回来（wf JSON 从头没带遥测）",
+                note="Different caliber; cannot be added to the two rows above; missing self-reports cannot be "
+                     "recovered (the wf JSON never carried telemetry)",
             ),
             UsageCoverageRow(
                 path=DispatchPopulation.TOOL_CALL,
                 metric="",
-                # None 而不是 0：这条路径上"测到多少"这个问题不适用，而 0 会被读成
-                # "一次都没测到"。"设计上不采集"是一个正式取值，不是空白（§3.2 / §5.2）。
+                # None rather than 0: on this path the question "how much was measured" does not apply, and 0 would be
+                # read as
+                # "never measured once". "Not collected by design" is a formal value, not a blank (§3.2 / §5.2).
                 dispatches_total=None,
                 dispatches_attributed=None,
                 note=(
-                    f"设计上不采集：{activities} 条活动记录无 token 字段。工具调用是逐调用"
-                    f"粒度、计费是逐请求粒度，两者不一一对应（§3.2 主动选择，不是遗漏）"
+                    f"Not collected by design: {activities} activity records have no token field. Tool calls are "
+                    f"per-call "
+                    f"granularity while billing is per-request granularity; the two do not correspond one-to-one "
+                    f"(§3.2, a deliberate choice, not an omission)"
                 ),
             ),
         ]
@@ -6826,15 +6985,18 @@ class StorageRepository:
         scan_limit: int = 400,
         per_reason: int = 5,
     ) -> dict[str, Any]:
-        """未归因抽屉（§5.2 ②）的下钻数据 —— 每个原因码给几行真样例。
+        """Drill-down data for the unattributed drawer (§5.2 item 2) — a few real sample rows per reason code.
 
-        **样例是样例，不是分母**：这里只扫最近 ``scan_limit`` 行未归因派工，够凑齐每类
-        几行就停。各类的**计数**一律以 :meth:`usage_coverage_report` 的全量扫描为准，
-        两者职责不同 —— 抽屉要回答的是"这一类长什么样、救不救得回"，不是"有多少个"。
-        返回值里带上 ``scanned`` 就是为了让这个边界在页面上说得出口。
+        **Samples are samples, not the denominator**: this scans only the most recent ``scan_limit`` unattributed
+        dispatch rows, stopping once each class has
+        a few rows. Each class's **count** follows :meth:`usage_coverage_report`'s full scan,
+        and the two have different duties — the drawer answers "what does this class look like, and is it recoverable",
+        not "how many are there".
+        Including ``scanned`` in the return value is exactly so this boundary can be stated on the page.
 
-        ``by_design`` 不会出现在这里：它描述的是工具调用级（活动记录无 token 字段），
-        与派工不是同一个单位，本来就不进未归因 dict（见 ``UnattributedReason`` 文档）。
+        ``by_design`` never appears here: it describes the tool-call level (activity records have no token field),
+        which is not the same unit as a dispatch and never entered the unattributed dict to begin with (see the
+        ``UnattributedReason`` docs).
         """
         stmt = select(
             AgentModel.id,
@@ -6872,7 +7034,7 @@ class StorageRepository:
         return {"scanned": len(rows), "scan_limit": scan_limit, "samples": samples}
 
     def _scope_group_key(self, scope: AttributionScope) -> Any:
-        """该层级用哪一列分组 —— 下钻候选清单的"一行"是什么。"""
+        """Which column this level groups by — what "one row" of the drill-down candidate list is."""
         if scope is AttributionScope.PROJECT:
             return AgentModel.project_id
         if scope is AttributionScope.SESSION:
@@ -6884,20 +7046,21 @@ class StorageRepository:
         return KnowledgeLinkModel.to_id  # TASK
 
     async def _scope_labels(self, scope: AttributionScope, keys: list[str]) -> dict[str, str]:
-        """给候选 id 配人看的名字。取不到就留空，由呈现面退回显示 id —— 不编名字。"""
+        """Pair candidate ids with human-readable names. When unavailable, leave it empty and let the presentation fall
+        back to showing the id — never fabricate a name."""
         if not keys:
             return {}
         spec: dict[AttributionScope, tuple[Any, Any, Any]] = {
             AttributionScope.PROJECT: (ProjectModel, ProjectModel.id, ProjectModel.name),
             AttributionScope.AGENT: (AgentModel, AgentModel.id, AgentModel.name),
-            # workflow_run 这一档的 scope_id 是 ``workflow_agents.run_id``，实测存的是
-            # **wf_id**（形如 wf_3db2273a-91b）而不是 workflow_runs 的 uuid 主键 ——
-            # 按主键去 join 会一条都匹配不上，静默退化成"全部没有名字"。
+            # The workflow_run level's scope_id is ``workflow_agents.run_id``, which in practice stores
+            # the **wf_id** (shaped like wf_3db2273a-91b), not workflow_runs' uuid primary key —
+            # joining by primary key would match nothing at all, silently degrading to "no names anywhere".
             AttributionScope.WORKFLOW_RUN: (WorkflowRunModel, WorkflowRunModel.wf_id, WorkflowRunModel.name),
             AttributionScope.TASK: (TaskModel, TaskModel.id, TaskModel.title),
         }
         if scope not in spec:
-            return {}  # SESSION：id 本身就是它的名字，没有第二个名字可查
+            return {}  # SESSION: the id itself is its name; there is no second name to look up
         model, id_col, label_col = spec[scope]
         stmt = select(id_col, label_col).select_from(model).where(id_col.in_(keys))
         async with get_session(self._db_url) as session:
@@ -6914,29 +7077,40 @@ class StorageRepository:
         until: datetime | None = None,
         limit: int = 30,
     ) -> list[dict[str, Any]]:
-        """枚举某一层级下可下钻的候选 —— 只回派工数与已测数，**一个 token 数都不回**。
+        """Enumerate the drill-down candidates under one level — returns only dispatch counts and measured counts, **not
+        a single token number**.
 
-        §5.2 ③ 要求 ``project → session → workflow_run → agent`` 逐级下钻，而"这一级
-        有哪些可选项"本身是一个查询。它刻意与 :meth:`aggregate_token_attribution` 拆开：
-        四层用量必须对**选中的那一个** scope_id 单独发起归因查询才拿得到。列表顺手把
-        token 带出来就会诞生一张没有分母的排行榜，而那正是 §2.5 要在结构上杜绝的东西。
+        §5.2 item 3 requires stepwise drill-down ``project → session → workflow_run → agent``, and "which options
+        this level has" is itself a query. It is deliberately split from :meth:`aggregate_token_attribution`:
+        the four-layer usage can only be obtained by issuing a separate attribution query for **the one selected**
+        scope_id. If the list conveniently
+        carried tokens along, it would give birth to a leaderboard without denominators — exactly what §2.5 exists to
+        structurally eliminate.
 
-        分子分母与聚合查询共用同一对 filter 助手，所以点开某一行看到的卡片，其分母
-        必然等于列表里那一行的分母 —— 两处各写一份 SQL 就会在某次改动后悄悄分叉。
+        The numerator/denominator share the same pair of filter helpers as the aggregation query, so the card you see
+        when opening a row has a denominator that
+        necessarily equals that row's denominator in the list — two separately written SQLs would quietly diverge after
+        some change.
 
-        排序键是**派工数**（count 量纲），不是用量：这里根本没有用量。真正的用量排序
-        由卡片上的 ``output_tokens`` 承担（§1.2）。
+        The sort key is the **dispatch count** (a count dimension), not usage: there is no usage here at all. The real
+        usage sorting
+        is borne by the card's ``output_tokens`` (§1.2).
         """
         if scope is AttributionScope.TASK and parent_id:
-            # task 是旁支不是第五级（§2.1）：它与前四档不构成父子关系，
-            # 硬套父级过滤会给出一个看着合理、实则无法解释的子集。
-            msg = "scope=task 是归因链的旁支，不接受 parent_id —— 它不是 project/session 的下一级"
+            # task is a side branch, not a fifth level (§2.1): it has no parent-child relation with the first four
+            # levels,
+            # and force-fitting a parent filter would yield a subset that looks reasonable but is actually inexplicable.
+            msg = (
+                "scope=task is a side branch of the attribution chain and does not accept parent_id — it is not "
+                "the next level below project/session"
+            )
             raise ValueError(msg)
 
         key = self._scope_group_key(scope)
         measured = AgentModel.tokens_measured_at.is_not(None)
-        # TASK 的"已归因"多一道闸，与 aggregate_token_attribution 逐字同源：
-        # 跨多个 task 留过账的 agent 切不开，如实计未归因，不做平均分摊（§2.4）。
+        # TASK's "attributed" has one more gate, verbatim from the same origin as aggregate_token_attribution:
+        # an agent that left bookkeeping entries across multiple tasks cannot be split; count it honestly as
+        # unattributed, with no averaging allocation (§2.4).
         attributed = (
             and_(measured, AgentModel.id.in_(_single_worked_on_agents_subquery()))
             if scope is AttributionScope.TASK
@@ -6948,8 +7122,9 @@ class StorageRepository:
             func.count(func.distinct(AgentModel.id)).label("total"),
             func.count(func.distinct(case((attributed, AgentModel.id)))).label("attributed"),
         ).select_from(AgentModel)
-        # 一个 agent 可能对应多行 workflow_agents / 多条 task 边，所以计数一律 DISTINCT
-        # agent id——按 join 出来的行数计会把分母吹大，覆盖率随之被系统性压低。
+        # One agent can correspond to multiple workflow_agents rows / multiple task edges, so counting is uniformly
+        # DISTINCT
+        # agent id — counting joined rows would inflate the denominator and systematically depress coverage.
         if scope is AttributionScope.WORKFLOW_RUN:
             stmt = stmt.join(WorkflowAgentModel, WorkflowAgentModel.os_agent_id == AgentModel.id)
         elif scope is AttributionScope.TASK:
@@ -6970,8 +7145,10 @@ class StorageRepository:
             stmt.where(key.is_not(None))
             .where(key != "")
             .group_by(key)
-            # 次序键补一个"最近活动"兜底：agent 这一档每行派工数恒为 1，只按计数排
-            # 出来的是主键字典序 —— 一份看着有序、实则与任何人关心的东西都无关的清单。
+            # The ordering key gets a "most recent activity" fallback: at the agent level every row's dispatch count is
+            # constantly 1, so sorting by count alone
+            # yields primary-key lexicographic order — a list that looks ordered but is unrelated to anything anyone
+            # cares about.
             .order_by(
                 func.count(func.distinct(AgentModel.id)).desc(),
                 func.max(AgentModel.created_at).desc(),
