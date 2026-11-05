@@ -49,7 +49,7 @@ def _resolve_cc_pids(teams: list[Team]) -> list[Team]:
     if containers:
         try:
             live = {r.session_id: r.pid for r in session_registry.read_sessions() if r.session_id}
-        except Exception:  # noqa: BLE001 — 注册表读不到就是不知道，列表照常返回
+        except Exception:  # noqa: BLE001 — if the registry cannot be read, we simply do not know; the list is returned as usual
             live = {}
     for team in teams:
         config = team.config or {}
@@ -114,15 +114,15 @@ async def update_team(
     elif body.status is not None:
         team = await repo.update_team(team.id, status=body.status)
 
-    # 项目归属改派/解绑（空串=解绑，等自动归属按权威路径重绑）。校验目标项目存在，
-    # 防手滑写入不存在的 id 造成幽灵归属。
+    # Reassign/unbind project ownership (empty string = unbind, letting automatic attribution rebind via the authoritative path). Verify the target project exists,
+    # to prevent accidentally writing a nonexistent id and creating a phantom attribution.
     if body.project_id is not None:
         target = body.project_id.strip()
         if target and await repo.get_project(target) is None:
-            raise HTTPException(status_code=404, detail=f"项目不存在: {target}")
+            raise HTTPException(status_code=404, detail=f"Project not found: {target}")
         team = await repo.update_team(team.id, project_id=target or None)
 
-    return APIResponse(data=team, message="团队更新成功")
+    return APIResponse(data=team, message="Team updated successfully")
 
 
 @router.delete("/{team_id}", response_model=APIResponse[bool])
@@ -132,7 +132,7 @@ async def delete_team(
 ) -> APIResponse[bool]:
     """Delete a team."""
     result = await manager.delete_team(team_id)
-    return APIResponse(data=result, message="团队删除成功")
+    return APIResponse(data=result, message="Team deleted successfully")
 
 
 @router.get("/{team_id}/status", response_model=APIResponse[TeamStatusSummary])
@@ -189,20 +189,20 @@ async def team_briefing(
     hints: list[str] = []
     if idle_agents:
         names = ", ".join(a.name for a in idle_agents)
-        hints.append(f"{len(idle_agents)}个agent空闲，可分配任务: {names}")
+        hints.append(f"{len(idle_agents)} agents idle, available for task assignment: {names}")
     if busy_agents:
-        descs = ", ".join(f"{a.name}({a.current_task or '无描述'})" for a in busy_agents)
-        hints.append(f"{len(busy_agents)}个agent工作中: {descs}")
+        descs = ", ".join(f"{a.name}({a.current_task or 'no description'})" for a in busy_agents)
+        hints.append(f"{len(busy_agents)} agents working: {descs}")
     if ready_tasks or blocked_tasks:
-        hints.append(f"{len(ready_tasks)}个任务可执行，{len(blocked_tasks)}个被阻塞")
+        hints.append(f"{len(ready_tasks)} tasks ready to run, {len(blocked_tasks)} blocked")
     if not agents:
-        hints.append("团队暂无成员，直接派发即可（自动收编入队）")
+        hints.append("The team has no members yet; dispatch directly (members are auto-enrolled into the team)")
 
-    # 7. Context-aware hints. 只报"你看不到的状态事实"，不写常识动作提醒——
-    #    "空闲成员过多该回收""该开会讨论方向"这类删掉也不会让读者行为变差（2026-07-28 用户裁定）。
-    #    Agent 的 team_name 参数已废弃且被忽略，文案不得再出现该用法。
+    # 7. Context-aware hints. Only report "state facts you cannot see"; no common-sense action reminders —
+    #    reminders like "too many idle members, reclaim them" or "hold a meeting to discuss direction" would not make the reader's behavior any worse if deleted (user ruling 2026-07-28).
+    #    The Agent team_name parameter is deprecated and ignored; the copy must not present that usage anymore.
     if idle_agents and ready_tasks:
-        hints.append("[规则] 有空闲agent和待办任务，可用 SendMessage(to='<成员名>') 续派并行推进")
+        hints.append("[Rule] There are idle agents and pending tasks; use SendMessage(to='<member name>') to keep dispatching and advance in parallel")
 
     # 8. File hotspot detection (files edited by multiple agents)
     file_hotspots = hook_translator.get_file_hotspots(window_minutes=10)
@@ -210,7 +210,7 @@ async def team_briefing(
         hotspot_desc = ", ".join(
             f"{h['file_path']}({'+'.join(h['agents'])})" for h in file_hotspots[:3]
         )
-        hints.append(f"文件编辑热点: {hotspot_desc}")
+        hints.append(f"File edit hotspot: {hotspot_desc}")
 
     return {
         "success": True,

@@ -1,10 +1,10 @@
 """AI Team OS — Workflow observability routes (I3a).
 
-CC ultracode/Workflow 运行档案 + 逐-agent 遥测的只读查询 + 手动对账端点。
+Read-only queries for CC ultracode/Workflow run records + per-agent telemetry, plus a manual reconciliation endpoint.
 
-项目隔离用可选 ``?project_id=`` query（非 ``X-Project-Id`` 头）：前端 apiFetch 只对
-``/api/ecosystem`` 附加隔离头（client.ts 硬 gate），非 ecosystem 端点用 get_repository
-全局仓 + 显式 query 过滤，避免重演 teams 全消失 bug（守红线2 不动 project_scope）。
+Project isolation uses the optional ``?project_id=`` query (not the ``X-Project-Id`` header): the frontend apiFetch only
+attaches the isolation header to ``/api/ecosystem`` (a hard gate in client.ts); non-ecosystem endpoints use get_repository
+with the global repository + explicit query filtering, avoiding a repeat of the all-teams-disappeared bug (red line 2: do not touch project_scope).
 """
 
 from __future__ import annotations
@@ -22,14 +22,14 @@ router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
 
 class WorkflowReconcileBody(BaseModel):
-    """POST /reconcile 请求体（全可选）。"""
+    """POST /reconcile request body (all fields optional)."""
 
     session_id: str | None = None
     project_dir: str | None = None
 
 
 class WorkflowReconcileResult(BaseModel):
-    """对账结果计数。"""
+    """Reconciliation result counts."""
 
     success: bool = True
     ingested: int = 0
@@ -40,12 +40,12 @@ class WorkflowReconcileResult(BaseModel):
 
 @router.get("", response_model=APIListResponse[WorkflowRun])
 async def list_workflow_runs(
-    status: str = Query("", description="按状态过滤：planned/running/completed/interrupted/killed/failed"),
-    project_id: str = Query("", description="按项目过滤（空=全部项目）"),
+    status: str = Query("", description="Filter by status: planned/running/completed/interrupted/killed/failed"),
+    project_id: str = Query("", description="Filter by project (empty = all projects)"),
     limit: int = Query(50, ge=1, le=200),
     repo: StorageRepository = Depends(get_repository),
 ) -> APIListResponse[WorkflowRun]:
-    """列出已物化的 workflow 运行（天然排除 workflow-session-* 兜底团队）。"""
+    """List materialized workflow runs (naturally excludes the workflow-session-* fallback teams)."""
     runs = await repo.list_workflow_runs(project_id=project_id, status=status, limit=limit)
     return APIListResponse(data=runs, total=len(runs))
 
@@ -55,7 +55,7 @@ async def get_workflow_run(
     wf_id: str,
     repo: StorageRepository = Depends(get_repository),
 ) -> WorkflowRun:
-    """运行详情（phases、计划-vs-实际、run 级总量、summary/result）。"""
+    """Run details (phases, planned-vs-actual, run-level totals, summary/result)."""
     run = await repo.get_workflow_run(wf_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Workflow run '{wf_id}' not found")
@@ -67,7 +67,7 @@ async def list_workflow_agents(
     wf_id: str,
     repo: StorageRepository = Depends(get_repository),
 ) -> APIListResponse[WorkflowAgent]:
-    """逐-agent 遥测（label/model/tokens/toolCalls/duration/state/lastTool/resultPreview）。"""
+    """Per-agent telemetry (label/model/tokens/toolCalls/duration/state/lastTool/resultPreview)."""
     agents = await repo.list_workflow_agents(wf_id)
     return APIListResponse(data=agents, total=len(agents))
 
@@ -78,9 +78,9 @@ async def reconcile_workflows(
     repo: StorageRepository = Depends(get_repository),
     event_bus: EventBus = Depends(get_event_bus),
 ) -> WorkflowReconcileResult:
-    """手动对账：扫 proj-slug 下 workflows/wf_*.json 逐文件 ingest。
+    """Manual reconciliation: scan workflows/wf_*.json under the proj-slug and ingest them file by file.
 
-    SessionStart hook + Dashboard「刷新」+ MCP workflow_reconcile 共用同一纯函数。
+    The SessionStart hook, the Dashboard "Refresh" action, and MCP workflow_reconcile share the same pure function.
     """
     from aiteam.api import workflow_ingest
 
@@ -92,8 +92,8 @@ async def reconcile_workflows(
         session_id=body.session_id,
     )
 
-    # Phase2 可选增强：对 running/interrupted run 顺带 live tail + .output 富化，
-    # 手动刷新即时看 live、不等 60s reaper tick。best-effort，失败不影响对账结果。
+    # Phase 2 optional enhancement: for running/interrupted runs, also perform a live tail + .output enrichment,
+    # so a manual refresh shows the live state immediately without waiting for the 60s reaper tick. Best-effort; failures do not affect the reconciliation result.
     live: list[WorkflowRun] = []
     for st in ("running", "interrupted"):
         try:
@@ -107,7 +107,7 @@ async def reconcile_workflows(
             newly_marked = bool(isinstance(res, dict) and res.get("marked_interrupted"))
             if run.status == "interrupted" or newly_marked:
                 await workflow_ingest.enrich_from_task_output(repo, run)
-        except Exception:  # noqa: BLE001 — 手动对账不因 live 富化失败而报错
+        except Exception:  # noqa: BLE001 — manual reconciliation must not error out because live enrichment failed
             pass
 
     return WorkflowReconcileResult(

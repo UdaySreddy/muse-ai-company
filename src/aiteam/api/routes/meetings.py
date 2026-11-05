@@ -41,7 +41,7 @@ async def create_meeting(
     if team is None:
         team = await repo.get_team_by_name(team_id)
         if team is None:
-            raise HTTPException(status_code=404, detail=f"团队 '{team_id}' 不存在")
+            raise HTTPException(status_code=404, detail=f"Team '{team_id}' not found")
         resolved_team_id = team.id
 
     try:
@@ -52,7 +52,7 @@ async def create_meeting(
             meta_json=body.meta_json,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"创建会议失败: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Failed to create meeting: {exc}") from exc
     await event_bus.emit(
         "meeting.started",
         f"meeting:{meeting.id}",
@@ -64,11 +64,11 @@ async def create_meeting(
         },
     )
     guide = (
-        f"会议创建成功。操作指引：\n"
-        f"  发送消息: POST http://localhost:8000/api/meetings/{meeting.id}/messages\n"
-        f"  读取消息: GET http://localhost:8000/api/meetings/{meeting.id}/messages\n"
-        f"  结束会议: PUT http://localhost:8000/api/meetings/{meeting.id}/conclude\n"
-        f"  讨论规则: R1各自观点 → R2+引用回应 → 最后汇总共识"
+        f"Meeting created successfully. Operating guide:\n"
+        f"  Send message: POST http://localhost:8000/api/meetings/{meeting.id}/messages\n"
+        f"  Read messages: GET http://localhost:8000/api/meetings/{meeting.id}/messages\n"
+        f"  Conclude meeting: PUT http://localhost:8000/api/meetings/{meeting.id}/conclude\n"
+        f"  Discussion rules: R1 state your own view → R2+ respond with citations → finally summarize the consensus"
     )
     return APIResponse(data=meeting, message=guide)
 
@@ -79,7 +79,7 @@ async def create_meeting(
 )
 async def list_meetings(
     team_id: str,
-    status: str | None = Query(None, description="按状态过滤: active / concluded"),
+    status: str | None = Query(None, description="Filter by status: active / concluded"),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> APIListResponse[Meeting]:
     """List team meetings."""
@@ -99,7 +99,7 @@ async def get_meeting(
     """Get meeting details."""
     meeting = await repo.get_meeting(meeting_id)
     if meeting is None:
-        msg = f"会议 '{meeting_id}' 不存在"
+        msg = f"Meeting '{meeting_id}' not found"
         raise NotFoundError(msg)
     return APIResponse(data=meeting)
 
@@ -133,11 +133,11 @@ async def create_meeting_message(
     # Verify meeting exists
     meeting = await repo.get_meeting(meeting_id)
     if meeting is None:
-        msg = f"会议 '{meeting_id}' 不存在"
+        msg = f"Meeting '{meeting_id}' not found"
         raise NotFoundError(msg)
     # A14: Concluded meetings cannot receive messages
     if meeting.status == MeetingStatus.CONCLUDED:
-        raise HTTPException(400, "会议已结束，无法发送消息")
+        raise HTTPException(400, "The meeting has concluded; messages can no longer be sent")
     # Auto-add speaker to participants list
     if body.agent_name not in (meeting.participants or []):
         updated_participants = list(meeting.participants or []) + [body.agent_name]
@@ -185,7 +185,7 @@ async def create_meeting_message(
             "impersonation": is_impersonation,
         },
     )
-    resp_msg = "消息发送成功（已标记代打审计）" if is_impersonation else "消息发送成功"
+    resp_msg = "Message sent successfully (sent on behalf of another; flagged as impersonation for audit)" if is_impersonation else "Message sent successfully"
     return APIResponse(data=message, message=resp_msg)
 
 
@@ -206,7 +206,7 @@ async def conclude_meeting(
     """
     meeting = await repo.get_meeting(meeting_id)
     if meeting is None:
-        msg = f"会议 '{meeting_id}' 不存在"
+        msg = f"Meeting '{meeting_id}' not found"
         raise NotFoundError(msg)
 
     # Attendance validation
@@ -222,10 +222,10 @@ async def conclude_meeting(
             raise HTTPException(
                 status_code=400,
                 detail={
-                    "error": "参与者未全员发言，无法结束会议",
+                    "error": "Not all participants have spoken; the meeting cannot be concluded",
                     "missing": missing,
                     "spoken": list(spoken_names),
-                    "hint": "设置 force=true 可强制结束，但会记录到事件日志",
+                    "hint": "Set force=true to force-conclude, but it will be recorded in the event log",
                 },
             )
 
@@ -256,14 +256,14 @@ async def conclude_meeting(
         },
     )
 
-    # 会议结论**不再自动写记忆**（2026-07-31 裁定）。
-    # 原实现每次结会往 team 域 memories 塞一条 "[会议决策] ..."，是记忆层唯一的
-    # 自动写入口：无人审、无失效轴管理、按会议数线性增长，且与决策的正道重复——
-    # 结论的权威落点是 decision 事件 + 任务墙条目（Council 纪律④，现行制度）。
-    # 历史条目冻结保留（不删不失效不迁移），仅停止新增。
+    # Meeting conclusions are **no longer automatically written to memory** (ruling 2026-07-31).
+    # The original implementation stuffed a "[Meeting decision] ..." entry into the team-scope memories at every conclusion — the memory layer's only
+    # automatic write entry point: no review, no invalidation-axis management, growing linearly with the meeting count, and duplicating the proper path for decisions —
+    # the authoritative landing spot for conclusions is the decision event + task wall entry (Council discipline 4, the current system).
+    # Historical entries are kept frozen (not deleted, not invalidated, not migrated); only new additions stop.
     return APIResponse(
         data=updated,
-        message="会议已结束。结论请落 decision 事件 + 任务墙条目（不再自动写入记忆层）",
+        message="The meeting has concluded. Please land conclusions in a decision event + a task wall entry (no longer automatically written to the memory layer)",
     )
 
 
@@ -271,7 +271,7 @@ async def attendance_check_logic(meeting_id: str, repo: StorageRepository) -> di
     """Core attendance check logic — extracted for testability."""
     meeting = await repo.get_meeting(meeting_id)
     if meeting is None:
-        raise NotFoundError(f"会议 '{meeting_id}' 不存在")
+        raise NotFoundError(f"Meeting '{meeting_id}' not found")
 
     meta = meeting.meta_json or {}
     expected = meta.get("expected_participants", meeting.participants)
@@ -337,7 +337,7 @@ async def update_meeting(
     meeting = await repo.get_meeting(meeting_id)
     if meeting is None:
         from aiteam.api.exceptions import NotFoundError
-        msg = f"会议 '{meeting_id}' 不存在"
+        msg = f"Meeting '{meeting_id}' not found"
         raise NotFoundError(msg)
     # Remove protected fields that should not be updated via this generic endpoint
     body.pop("id", None)
@@ -346,6 +346,6 @@ async def update_meeting(
     body.pop("concluded_at", None)
     if not body:
         from fastapi import HTTPException
-        raise HTTPException(status_code=400, detail="无更新字段")
+        raise HTTPException(status_code=400, detail="No fields to update")
     updated = await repo.update_meeting(meeting_id, **body)
-    return APIResponse(data=updated, message="会议更新成功")
+    return APIResponse(data=updated, message="Meeting updated successfully")

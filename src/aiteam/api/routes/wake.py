@@ -1,12 +1,12 @@
 """AI Team OS — Wake actionable route.
 
-唤醒体系 v2（docs/wake-loop-v2-design.md §7.1）的单一只读判据端点。
-事件 watcher（scripts/os-watch.sh）轮询它、turn-end guard（hooks/turn_end_guard.py）
-停机时查它，共用同一判据。判据逻辑集中在 wake_actionable.py（可单测），本文件仅做薄
-HTTP 包装。
+The single read-only criterion endpoint of wake system v2 (docs/wake-loop-v2-design.md §7.1).
+The event watcher (scripts/os-watch.sh) polls it, and the turn-end guard (hooks/turn_end_guard.py)
+queries it at shutdown; both share the same criterion. The criterion logic is centralized in wake_actionable.py (unit-testable); this file is only a thin
+HTTP wrapper.
 
-用 get_repository（不带项目 scope）：判据模块内部按 team_id/session_id/project_id 显式
-过滤，避免 ambient _project_scope 造成的双重过滤。
+Uses get_repository (without project scope): the criterion module filters explicitly by team_id/session_id/project_id internally,
+avoiding double filtering caused by the ambient _project_scope.
 """
 
 from __future__ import annotations
@@ -28,15 +28,15 @@ async def get_wake_actionable(
     since: str = "",
     repo: StorageRepository = Depends(get_repository),
 ) -> dict:
-    """判断 Leader 会话当前是否有"值得被唤醒处理"的事件。
+    """Determine whether the Leader session currently has events "worth waking up to handle".
 
-    Query params（全部可选）：
-    - session_id: 归属 workflow_runs 的启动会话
-    - team_id: 归属 agents 的团队
-    - project_id: 归属 task_memos/briefings 的项目（缺省从 team 解析）
-    - since: ISO8601 时间水位（带偏移或不带均可；不带偏移按 UTC 读），只统计其后的增量事件
+    Query params (all optional):
+    - session_id: the startup session the workflow_runs belong to
+    - team_id: the team the agents belong to
+    - project_id: the project the task_memos/briefings belong to (resolved from the team by default)
+    - since: ISO8601 time watermark (with or without offset; read as UTC when no offset), only incremental events after it are counted
 
-    返回见 wake_actionable.compute_actionable。绝不 500：内部任何失败降级为保守值。
+    See wake_actionable.compute_actionable for the return value. Never returns 500: any internal failure degrades to a conservative value.
     """
     return await wake_actionable.compute_actionable(
         repo,

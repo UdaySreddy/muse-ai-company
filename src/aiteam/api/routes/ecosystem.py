@@ -1,4 +1,4 @@
-"""AI Team OS — Claude 生态仓档案 API 路由。"""
+"""AI Team OS — Claude ecosystem repo profile API routes."""
 
 from __future__ import annotations
 
@@ -136,10 +136,10 @@ def _profile_to_dict(
     stage_status: str | None = None,
     research_count: int = 0,
 ) -> dict[str, Any]:
-    """序列化 profile。
+    """Serialize a profile.
 
-    v1.5.1：透出 stage_status（取自 latest deep_review；无 review 时调用方传 "queued"）。
-    research_count = 该 repo 关联的 deep_review 行数（前端用于 RepoCard 研究次数徽章）。
+    v1.5.1: expose stage_status (taken from the latest deep_review; when there is no review, the caller passes "queued").
+    research_count = the number of deep_review rows associated with this repo (the frontend uses it for the RepoCard research-count badge).
     """
     return {
         "id": p.id,
@@ -153,7 +153,7 @@ def _profile_to_dict(
         "homepage": p.homepage,
         "last_commit_at": p.last_commit_at.isoformat() if p.last_commit_at else None,
         "needs_deep_review": p.needs_deep_review,
-        # v1.6.1: relevance_category/relevance_score 弃用（硬编码启发式无参考价值），不再透出
+        # v1.6.1: relevance_category/relevance_score deprecated (the hardcoded heuristic has no reference value); no longer exposed
         "one_line_summary": p.one_line_summary,
         "last_scanned_at": p.last_scanned_at.isoformat(),
         "first_seen_at": p.first_seen_at.isoformat(),
@@ -161,7 +161,7 @@ def _profile_to_dict(
         "is_archived": p.is_archived,
         "scan_run_id": p.scan_run_id,
         "description_excerpt": _make_summary_excerpt(p.description_excerpt, 150) if p.description_excerpt else None,
-        # v1.5.0-A 新增字段（前端 stage 徽章 / 失败提示 / 活跃集 tab 依赖）
+        # Fields added in v1.5.0-A (depended on by the frontend stage badge / failure hint / active-set tab)
         "shallow_summary": p.shallow_summary,
         "last_shallow_refreshed_at": (
             p.last_shallow_refreshed_at.isoformat()
@@ -174,7 +174,7 @@ def _profile_to_dict(
         "fetch_failure_count": p.fetch_failure_count,
         "is_active": p.is_active,
         "active_rank": p.active_rank,
-        # v1.5.1 新增：透出渐进漏斗 stage 状态 + 研究次数（让前端徽章渲染 + 总数统计准确）
+        # Added in v1.5.1: expose the progressive-funnel stage status + research count (so frontend badges render and totals are accurate)
         "stage_status": stage_status or "queued",
         "research_count": research_count,
         # v1.6.0-P1.A manual status fields
@@ -206,7 +206,7 @@ def _profile_to_list_dict(
         "stars": p.stars,
         "language": p.language,
         "topics": p.topics,
-        # v1.6.1: relevance_category/relevance_score 弃用（硬编码启发式无参考价值），不再透出
+        # v1.6.1: relevance_category/relevance_score deprecated (the hardcoded heuristic has no reference value); no longer exposed
         "one_line_summary": p.one_line_summary,
         "description_excerpt": _make_summary_excerpt(p.description, 150),
         "is_archived": p.is_archived,
@@ -214,7 +214,7 @@ def _profile_to_list_dict(
         "manual_status": p.manual_status,
         "canonical_id": p.canonical_id,
         "source_kind": p.source_kind,
-        # v1.6.1 multi-source: 前端卡片用 sources 列表渲染多源徽章
+        # v1.6.1 multi-source: the frontend card renders multi-source badges from the sources list
         "sources": p.sources or [],
         "primary_source": p.primary_source or "github",
         "last_commit_at": p.last_commit_at.isoformat() if p.last_commit_at else None,
@@ -231,18 +231,18 @@ async def _build_stage_map(
     profile_ids: list[str],
     shallow_summary_map: dict[str, str | None] | None = None,
 ) -> tuple[dict[str, str], dict[str, int]]:
-    """批量获取每个 profile 的 latest deep_review.stage_status + 研究次数。
+    """Batch-fetch each profile's latest deep_review.stage_status + research count.
 
-    返回 (stage_map, count_map)：
-    - stage_map[repo_id] = "queued" / "shallow_done" / ...（latest deep_review，无则按
-      v1.6.0 SST 规则：有 shallow_summary -> "shallow_done"；否则 "queued"）
-    - count_map[repo_id] = 该 repo 真正被研究过的次数（v1.5.2: 只数 architecture_done+ 的行，
-      浅扫完成不计入 — 浅扫是预筛动作，不属于"被研究")
+    Returns (stage_map, count_map):
+    - stage_map[repo_id] = "queued" / "shallow_done" / ...(the latest deep_review; when none, per
+      the v1.6.0 SST rule: has shallow_summary -> "shallow_done"; otherwise "queued")
+    - count_map[repo_id] = the number of times this repo has genuinely been researched (v1.5.2: only counts architecture_done+ rows;
+      shallow-scan completion does not count — a shallow scan is a pre-screening action, not "being researched")
 
-    shallow_summary_map: {repo_id: shallow_summary} — 用于无 deep_review 时的 fallback。
-    一次性查询所有 reviews（按 created_at desc），Python 端聚合，避免路由层 N+1。
+    shallow_summary_map: {repo_id: shallow_summary} — used as the fallback when there is no deep_review.
+    Query all reviews in one go (by created_at desc) and aggregate on the Python side, avoiding an N+1 at the route layer.
     """
-    # v1.5.2: "已被研究"的语义边界 — 进入 architecture stage 后才算
+    # v1.5.2: The semantic boundary of "has been researched" — only counts after entering the architecture stage
     _researched_stages = {"architecture_done", "debated", "referenced", "integrated"}
 
     stage_map: dict[str, str] = {}
@@ -250,12 +250,12 @@ async def _build_stage_map(
     if not profile_ids:
         return stage_map, count_map
     id_set = set(profile_ids)
-    # list_deep_reviews 不支持 IN 多 id，但限定 limit 后 Python 过滤已足够（当前 < 数千行）
+    # list_deep_reviews does not support IN with multiple ids, but with a limit applied, Python-side filtering is sufficient (currently < a few thousand rows)
     reviews = await repo.list_deep_reviews(limit=10000)
     for r in reviews:
         if r.repo_id not in id_set:
             continue
-        # 只数真正被研究过的行（不含浅扫 shallow_done / queued / *_failed）
+        # Only count rows that were genuinely researched (excluding shallow-scan shallow_done / queued / *_failed)
         stage_value = (
             r.stage_status.value
             if hasattr(r.stage_status, "value")
@@ -264,7 +264,7 @@ async def _build_stage_map(
         if stage_value in _researched_stages:
             count_map[r.repo_id] = count_map.get(r.repo_id, 0) + 1
         if r.repo_id not in stage_map:
-            # list_deep_reviews 已按 created_at desc，第一条即 latest
+            # list_deep_reviews is already in created_at desc order; the first row is the latest
             stage_map[r.repo_id] = stage_value or "queued"
     # v1.6.0 SST fallback: no deep_review → check shallow_summary before defaulting to "queued"
     for pid in profile_ids:
@@ -283,7 +283,7 @@ async def upsert_profile(
     data: EcosystemProfileCreate,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """Upsert 一个生态仓档案（按 repo_full_name 唯一键）。"""
+    """Upsert an ecosystem repo profile (unique key: repo_full_name)."""
     existing = await repo.get_ecosystem_profile(data.repo_full_name)
     is_new = existing is None
 
@@ -311,7 +311,7 @@ async def search_profiles(
     limit: int = Query(default=20, le=100),
     offset: int = Query(default=0, ge=0),
     facet_counts: bool = Query(default=False),
-    # v1.5.0-E 前端 tab 切换 / failed 筛选依赖（service 层若不识别会忽略）
+    # Depended on by the v1.5.0-E frontend tab switching / failed filtering (ignored by the service layer if unrecognized)
     is_active: bool | None = Query(default=None),
     is_deleted: bool | None = Query(default=None),
     stage_status: str = Query(default=""),
@@ -319,19 +319,19 @@ async def search_profiles(
     detail: bool = Query(default=False),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """检索生态仓档案列表（Stage E 扩展版）。
+    """Search the ecosystem repo profile list (Stage E extended version).
 
-    - tags: 逗号分隔的标签名列表，配合 tag_match_mode (all/any) 实现 AND/OR 过滤
-    - sort: stars / recency (pushed_at desc)  [v1.6.1: relevance 排序已弃用]
-    - facet_counts: True 时附带 category/language/archived 聚合分布
-    - is_active / is_deleted / stage_status: v1.5.0-E 前端筛选（活跃/全量 tab、failed 筛选）
-    - detail=false (default): 返回摘要字段（P1.B 分层返回，不含 shallow_summary 长文本）
-    - detail=true: 返回完整字段（含 shallow_summary）
+    - tags: comma-separated list of tag names; combined with tag_match_mode (all/any) for AND/OR filtering
+    - sort: stars / recency (pushed_at desc)  [v1.6.1: relevance sorting deprecated]
+    - facet_counts: when True, include the category/language/archived aggregate distributions
+    - is_active / is_deleted / stage_status: v1.5.0-E frontend filters (active/full tabs, failed filter)
+    - detail=false (default): return summary fields (P1.B layered return, without the long shallow_summary text)
+    - detail=true: return full fields (including shallow_summary)
     """
     pushed_after_dt = _parse_dt(pushed_after) if pushed_after else None
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
 
-    # v1.5.1: stage_status filter 不依赖 stars limit — 先全 DB 算 stage_map 找 wanted_ids
+    # v1.5.1: The stage_status filter does not depend on the stars limit — first compute stage_map over the whole DB to find wanted_ids
     id_filter: list[str] | None = None
     id_exclude: list[str] | None = None
     if stage_status:
@@ -341,7 +341,7 @@ async def search_profiles(
             full_stage_map: dict[str, str] = {}
             for r in full_reviews:
                 if r.repo_id in full_stage_map:
-                    continue  # latest_only（list_deep_reviews 已 created_at desc）
+                    continue  # latest_only (list_deep_reviews is already created_at desc)
                 stg = (
                     r.stage_status.value
                     if hasattr(r.stage_status, "value")
@@ -353,15 +353,15 @@ async def search_profiles(
             wants_queued = "queued" in wanted_stages
 
             if wants_queued and not other_wanted:
-                # 纯 queued: 排除所有有 review 的仓（无论 stage）
+                # Pure queued: exclude all repos that have reviews (regardless of stage)
                 id_exclude = list(full_stage_map.keys())
             elif other_wanted and not wants_queued:
-                # 纯非-queued: 限定到匹配 stages 的仓
+                # Pure non-queued: limit to repos matching the stages
                 id_filter = [
                     rid for rid, stg in full_stage_map.items() if stg in other_wanted
                 ]
             elif wants_queued and other_wanted:
-                # queued + 其他: 排除"有 review 但 stage 不匹配"的仓
+                # queued + others: exclude repos that "have a review but whose stage does not match"
                 id_exclude = [
                     rid for rid, stg in full_stage_map.items() if stg not in other_wanted
                 ]
@@ -385,9 +385,9 @@ async def search_profiles(
         id_exclude=id_exclude,
     )
 
-    # v1.5.0-E 客户端二次过滤：is_active / is_deleted
-    # DEPRECATED v1.6.0 P1.A: is_active 字段已废弃，请用 last_active_status。
-    # 此参数保留仅作向后兼容，内部 fallback 到 last_active_status='active'。
+    # v1.5.0-E client-side secondary filtering: is_active / is_deleted
+    # DEPRECATED v1.6.0 P1.A: the is_active field is deprecated; use last_active_status.
+    # This parameter is kept only for backward compatibility and falls back internally to last_active_status='active'.
     if is_active is not None:
         def _is_active(p):
             status = getattr(p, 'last_active_status', None)
@@ -398,12 +398,12 @@ async def search_profiles(
     if is_deleted is not None:
         profiles = [p for p in profiles if p.is_deleted == is_deleted]
 
-    # v1.5.1: 一次性批量获取 stage_map + count_map（消除原 N+1 查询）
+    # v1.5.1: Batch-fetch stage_map + count_map in one go (eliminating the original N+1 queries)
     # v1.6.0 SST: pass shallow_summary so repos with summary but no deep_review → "shallow_done"
     _shallow_map = {p.id: p.shallow_summary for p in profiles}
     stage_map, count_map = await _build_stage_map(repo, [p.id for p in profiles], _shallow_map)
 
-    # stage_status 已在 SQL 层用 id_filter / id_exclude 完成；路由层不再后过滤
+    # stage_status is already handled at the SQL layer with id_filter / id_exclude; the route layer no longer post-filters
     if is_active is not None or is_deleted is not None:
         total = len(profiles)
 
@@ -445,9 +445,9 @@ async def get_profile_full(
     deep_reviews_limit: int = Query(default=20, le=100),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """获取仓的全息详情：profile + tags + deep_reviews + relations + scan_run。
+    """Get a repo's full details: profile + tags + deep_reviews + relations + scan_run.
 
-    repo_full_name 形如 "owner/repo"。也支持直接传 repo id（id 形式无 "/"）。
+    repo_full_name looks like "owner/repo". Passing a repo id directly is also supported (the id form has no "/").
     """
     if "/" in repo_full_name:
         result = await repo.get_ecosystem_profile_full(
@@ -456,7 +456,7 @@ async def get_profile_full(
             deep_reviews_limit=deep_reviews_limit,
         )
     else:
-        # 当作主键 id 处理
+        # treat it as a primary-key id
         result = await repo.get_ecosystem_profile_full(
             repo_id=repo_full_name,
             relations_limit=relations_limit,
@@ -545,9 +545,9 @@ async def search_by_capability(
     offset: int = Query(default=0, ge=0),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """通过能力标签反向检索仓库。
+    """Reverse-look-up repos by capability tags.
 
-    tags 逗号分隔。match_mode: all (AND) / any (OR)。
+    tags are comma-separated. match_mode: all (AND) / any (OR).
     """
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
     if not tag_list:
@@ -579,7 +579,7 @@ async def search_by_capability(
 
 
 class DeepReviewRequestBody(BaseModel):
-    """请求一份新的深扫报告（按 repo_id）。"""
+    """Request a new deep-scan report (by repo_id)."""
 
     repo_id: str
     priority: str = "medium"
@@ -588,10 +588,10 @@ class DeepReviewRequestBody(BaseModel):
 
 
 class DeepReviewLinkBody(BaseModel):
-    """Hook 用的 link 入口：把已存在的 report_id 写到 deep_review。
+    """The link entry point used by the hook: write an existing report_id onto the deep_review.
 
-    K5: hook 解析 5 段式 markdown 后，附带结构化字段一起回填到 row。
-    若任一字段为 None，则保留 row 原值（向后兼容旧 hook）。
+    K5: after the hook parses the 5-section markdown, it backfills the structured fields into the row together.
+    If any field is None, the row's original value is kept (backward compatible with old hooks).
     """
 
     report_id: str
@@ -634,7 +634,7 @@ def _deep_review_to_dict(dr: EcosystemDeepReview) -> dict[str, Any]:
         "completed_at": dr.completed_at.isoformat() if dr.completed_at else None,
         "duration_seconds": dr.duration_seconds,
         "created_at": dr.created_at.isoformat() if dr.created_at else None,
-        # v1.5.0-A 新增字段（前端研究历程 timeline 依赖）
+        # Fields added in v1.5.0-A (depended on by the frontend research-history timeline)
         "stage_status": (
             dr.stage_status.value
             if hasattr(dr.stage_status, "value")
@@ -668,10 +668,10 @@ async def request_deep_review(
     body: DeepReviewRequestBody,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """入队一份深扫报告，返回 stage_status=queued 行 + 派遣 prompt。
+    """Enqueue a deep-scan report; returns the stage_status=queued row + the dispatch prompt.
 
-    D5 收敛：status 列为 stage_status 的派生只读视图，新行 status='queued'
-    （历史行为返回 'running'，v1.6.2 起停写）。
+    D5 convergence: the status column is a derived read-only view of stage_status; new rows have status='queued'
+    (historical behavior returned 'running'; no longer written since v1.6.2).
     """
     reviewer = _get_reviewer(repo)
     try:
@@ -692,7 +692,7 @@ async def list_deep_reviews(
     limit: int = Query(default=20, le=100),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """按 status 过滤列出深扫报告（newest-first）。"""
+    """List deep-scan reports filtered by status (newest-first)."""
     reviewer = _get_reviewer(repo)
     rows = await reviewer.list_reviews(status=status, limit=limit)
     return {
@@ -706,7 +706,7 @@ async def deep_review_status(
     repo_id: str,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """获取指定仓的最新一份深扫报告状态；找不到返回 404。"""
+    """Get the status of the latest deep-scan report for the specified repo; returns 404 if not found."""
     reviewer = _get_reviewer(repo)
     review = await reviewer.status(repo_id=repo_id)
     if review is None:
@@ -719,7 +719,7 @@ async def cancel_deep_review(
     deep_review_id: str,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """取消一份排队 / 进行中的深扫报告。"""
+    """Cancel a queued / in-progress deep-scan report."""
     reviewer = _get_reviewer(repo)
     review = await reviewer.cancel(deep_review_id)
     if review is None:
@@ -755,7 +755,7 @@ async def backfill_deep_review(
         if body.integration_md is not None:
             sep = "\n\n" if learnings else ""
             learnings = (
-                f"{learnings}{sep}## 5. 集成建议\n{body.integration_md.strip()}"
+                f"{learnings}{sep}## 5. Integration suggestions\n{body.integration_md.strip()}"
             )
         update_fields["learnings_md"] = learnings
     if body.demo_log_excerpt is not None:
@@ -777,10 +777,10 @@ async def link_deep_review_report(
     body: DeepReviewLinkBody,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """把 report_id 关联到 deep_review_id，并将状态推进到 completed。
+    """Associate report_id with deep_review_id and advance the status to completed.
 
-    供 PostToolUse hook 使用。重复调用幂等：若已绑定 report_id 直接返回。
-    Hook 同时回填 5 段式解析后的字段（summary_md / architecture_md / ...）。
+    Used by the PostToolUse hook. Repeated calls are idempotent: if report_id is already bound, return directly.
+    The hook also backfills the fields parsed from the 5 sections (summary_md / architecture_md / ...).
     """
     reviewer = _get_reviewer(repo)
     review = await reviewer.link_report(
@@ -807,9 +807,9 @@ def _serialize_full(payload: dict[str, Any]) -> dict[str, Any]:
     scan_run = payload.get("scan_run")
 
     # v1.6.0 SST: derive stage_status using same logic as list endpoint (_build_stage_map)
-    # 优先级: deep_review.stage_status > shallow_summary 非空 → 'shallow_done' > 'queued'
+    # Priority: deep_review.stage_status > non-empty shallow_summary → 'shallow_done' > 'queued'
     stage_status = "queued"
-    latest_dr = deep_reviews[0] if deep_reviews else None  # repository 返回应按时间倒序
+    latest_dr = deep_reviews[0] if deep_reviews else None  # the repository return should be in reverse chronological order
     if latest_dr and getattr(latest_dr, "stage_status", None):
         stage_status = latest_dr.stage_status
     elif profile.shallow_summary and profile.shallow_summary.strip():
@@ -1020,17 +1020,17 @@ async def execute_scan_run(
 
 
 class EcosystemRefreshBody(BaseModel):
-    """按需增量刷新请求体。"""
+    """On-demand incremental refresh request body."""
 
     notes: str = ""
     triggered_by: str = "manual"
 
 
 async def _default_repo_fetcher(full_name: str) -> dict[str, Any]:
-    """gh CLI 单仓探测，产出 EcosystemRefresher 约定的 GhFetcher 响应。
+    """Probe a single repo via the gh CLI, producing the GhFetcher response agreed with EcosystemRefresher.
 
-    返回 {http_status, pushed_at, stars, is_archived[, error_message,
-    rate_limit_remaining]}；gh 不可用/超时归为 http_status=0（transient）。
+    Returns {http_status, pushed_at, stars, is_archived[, error_message,
+    rate_limit_remaining]}; gh unavailable/timeout is classified as http_status=0 (transient).
     """
     import asyncio
     import json as _json
@@ -1038,7 +1038,7 @@ async def _default_repo_fetcher(full_name: str) -> dict[str, Any]:
 
     def _run() -> dict[str, Any]:
         try:
-            proc = subprocess.run(  # noqa: S603, S607 — 固定命令，参数仅仓名
+            proc = subprocess.run(  # noqa: S603, S607 — fixed command; the only argument is the repo name
                 ["gh", "api", f"repos/{full_name}"],
                 capture_output=True,
                 text=True,
@@ -1079,12 +1079,12 @@ async def run_shallow_refresh(
     body: EcosystemRefreshBody,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """按需增量刷新活跃集（2026-07-10 用户裁定：周期 cron 退役，改手动触发）。
+    """Incrementally refresh the active set on demand (user ruling 2026-07-10: the periodic cron is retired in favor of manual triggering).
 
-    对项目活跃集（top_n by stars）逐仓 gh 探测：写状态快照；
-    pushed_at 有更新的重排 Stage 0 浅扫；404/403 标记 deleted/private。
-    原 `_ensure_ecosystem_weekly_cron` 注册的每周 emit_event 无消费者，
-    刷新能力此前实际不可达——本端点是它的第一个真实入口。
+    Probe each repo in the project's active set (top_n by stars) via gh: write status snapshots;
+    repos with an updated pushed_at get their Stage 0 shallow scan re-queued; 404/403 are marked deleted/private.
+    The weekly emit_event registered by the original `_ensure_ecosystem_weekly_cron` had no consumer,
+    and the refresh capability was actually unreachable before — this endpoint is its first real entry point.
     """
     from aiteam.services.ecosystem_refresher import EcosystemRefresher
     from aiteam.services.ecosystem_shallow_queue import EcosystemShallowQueueWorker
@@ -1109,9 +1109,9 @@ async def run_shallow_refresh(
     }
     if r.refreshed:
         resp["hint"] = (
-            f"{r.refreshed} 个仓有新推送已重排浅扫队列。"
-            "浅扫执行请开启 ultracode 用 Workflow 编排，"
-            "产物回写 ecosystem_apply_shallow_summary（模板见 skill /os-workflow）。"
+            f"{r.refreshed} repos have new pushes and have been re-queued for shallow scan."
+            "To run shallow scans, enable ultracode and orchestrate with a Workflow;"
+            "write the results back via ecosystem_apply_shallow_summary (see the skill /os-workflow for the template)."
         )
     return resp
 
@@ -1133,15 +1133,15 @@ def _tag_to_dict(t: EcosystemTag) -> dict[str, Any]:
 
 
 class TagApplyBatchRequest(BaseModel):
-    repo_ids: list[str] = Field(default_factory=list, description="留空则对全库 profile 打标")
+    repo_ids: list[str] = Field(default_factory=list, description="Leave empty to tag all profiles in the database")
     repo_full_names: list[str] = Field(default_factory=list)
     agent_id: str | None = "ecosystem-tagger"
     limit: int = Field(default=200, ge=1, le=1000)
     replace_auto: bool = Field(
         default=False,
         description=(
-            "True 时先删除每仓 source∈{github_topic,auto_rule} 的旧标签再插入新计算结果。"
-            "保留 manual/auto_llm 不动。用于规则升级后清理陈旧假阳性。默认 False (追加模式) 保持向后兼容。"
+            "When True, first delete each repo's old tags with source in {github_topic, auto_rule}, then insert the newly computed results."
+            "manual/auto_llm tags are left untouched. Used to clean up stale false positives after a rule upgrade. Defaults to False (append mode) for backward compatibility."
         ),
     )
 
@@ -1174,7 +1174,7 @@ async def list_tags(
     limit: int = Query(default=200, le=500),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """列出全部标签字典；可按 category 过滤。"""
+    """List the full tag dictionary; can be filtered by category."""
     tags = await repo.list_tags(category=category, limit=limit)
     return {"tags": [_tag_to_dict(t) for t in tags], "total": len(tags)}
 
@@ -1184,7 +1184,7 @@ async def upsert_tag(
     payload: dict[str, Any],
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """新增或更新标签（按 name 唯一键）。"""
+    """Add or update a tag (unique key: name)."""
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
@@ -1224,7 +1224,7 @@ async def list_repo_tags(
     repo_id: str,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """列出某仓的所有标签关联，附带 tag 详情。"""
+    """List all tag associations of a repo, with tag details."""
     rows = await repo.list_repo_tags(repo_id=repo_id, limit=200)
     out: list[dict[str, Any]] = []
     for r in rows:
@@ -1277,10 +1277,10 @@ async def apply_tags_batch(
     req: TagApplyBatchRequest,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """对一批仓执行 Layer 1+2 自动打标 (GitHub topics + 规则)。
+    """Run Layer 1+2 automatic tagging on a batch of repos (GitHub topics + rules).
 
-    - 若 repo_ids 与 repo_full_names 均为空，处理全库前 limit 条 profile。
-    - 返回每仓命中分布 + 哪些仓需要 Layer 3 LLM 兜底。
+    - If both repo_ids and repo_full_names are empty, process the first `limit` profiles in the database.
+    - Returns the per-repo hit distribution + which repos need the Layer 3 LLM fallback.
     """
     profiles = await _resolve_profiles_for_batch(
         repo, req.repo_ids, req.repo_full_names, req.limit
@@ -1313,7 +1313,7 @@ async def build_llm_dispatch_plan(
     req: LLMDispatchPlanRequest,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """为指定仓集生成 Layer 3 LLM 子 agent 派遣计划。"""
+    """Generate a Layer 3 LLM sub-agent dispatch plan for the specified repo set."""
     profiles: list[EcosystemRepoProfile] = []
     for rid in req.repo_ids:
         p = await repo.get_ecosystem_profile_by_id(rid)
@@ -1357,7 +1357,7 @@ async def apply_llm_tag_result(
     req: TagApplyLLMResultRequest,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """sub-agent 提交 Layer 3 LLM 打标结果。"""
+    """A sub-agent submits Layer 3 LLM tagging results."""
     profile = await repo.get_ecosystem_profile_by_id(req.repo_id)
     if profile is None:
         raise HTTPException(status_code=404, detail="repo not found")
@@ -1377,7 +1377,7 @@ async def manual_tag(
     req: ManualTagRequest,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """手动给某仓打标。"""
+    """Manually tag a repo."""
     profile = await repo.get_ecosystem_profile_by_id(req.repo_id)
     if profile is None:
         raise HTTPException(status_code=404, detail="repo not found")
@@ -1408,7 +1408,7 @@ async def remove_tag(
     tag_name: str,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """移除某仓的某标签关联。"""
+    """Remove a tag association from a repo."""
     tagger = EcosystemTagger(repo)
     removed = await tagger.remove_tag(repo_id, tag_name)
     if not removed:
@@ -1431,9 +1431,9 @@ async def summary_weekly(
     top_movers_limit: int = Query(default=5, ge=1, le=20),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """生成过去 N 天的生态简报 markdown。
+    """Generate the ecosystem briefing markdown for the past N days.
 
-    返回 {markdown: str, window_days, generated_at}。MCP 层负责 report_save。
+    Returns {markdown: str, window_days, generated_at}. The MCP layer is responsible for report_save.
     """
     summarizer = _get_summarizer(repo)
     md = await summarizer.weekly_summary(
@@ -1455,7 +1455,7 @@ async def summary_by_tag(
     limit: int = Query(default=200, ge=1, le=500),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """按 tag 列出该方向所有仓 markdown。"""
+    """List the markdown of all repos in a direction, by tag."""
     summarizer = _get_summarizer(repo)
     md = await summarizer.by_tag_summary(
         tag,
@@ -1477,7 +1477,7 @@ async def summary_top_n(
     sort: str = Query(default="stars"),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """Top N 排行 markdown 表格。sort: stars / pushed_at / scan_freshness。"""
+    """Top N ranking markdown table. sort: stars / pushed_at / scan_freshness."""
     if sort not in TOP_N_SORT_OPTIONS:
         raise HTTPException(
             status_code=400,
@@ -1498,7 +1498,7 @@ async def summary_top_n(
 async def summary_health(
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """平台自检 markdown：仓数 / 扫描 / 深扫 / 标签覆盖 / 失活率。"""
+    """Platform self-check markdown: repo count / scans / deep scans / tag coverage / inactivation rate."""
     summarizer = _get_summarizer(repo)
     md = await summarizer.health_summary()
     return {
@@ -1585,9 +1585,9 @@ async def apply_shallow_summary(
 
     review = None
     if body.deep_review_id:
-        # D5 收敛：stage_status 是唯一权威轴；update_deep_review_stage 的
-        # choke point 会派生 status=completed、补 completed_at 并释放认领，
-        # v1.6.1 的 status 补写补丁块已随之删除。
+        # D5 convergence: stage_status is the single authoritative axis; update_deep_review_stage's
+        # choke point derives status=completed, fills in completed_at, and releases the claim,
+        # and the v1.6.1 status backfill patch block was deleted along with it.
         review = await repo.update_deep_review_stage(
             body.deep_review_id,
             EcosystemStageStatus.SHALLOW_DONE,
@@ -1655,7 +1655,7 @@ class ApplyArchitectureMdBody(BaseModel):
     deep_review_id: str
     architecture_md: str = ""
     agent_id: str | None = None
-    error_message: str = ""  # 非空时进入 architecture_failed 路径
+    error_message: str = ""  # when non-empty, enter the architecture_failed path
 
 
 class TriggerDebateBody(BaseModel):
@@ -1771,8 +1771,8 @@ async def lifecycle_apply_architecture_md(
         review = await repo.get_deep_review(body.deep_review_id)
         if review is None:
             raise HTTPException(status_code=404, detail="deep_review not found")
-        # D5: 只追加 risks_md 注记；status=failed / completed_at 由随后的
-        # ARCHITECTURE_FAILED stage 推进派生补齐。
+        # D5: only appends a risks_md note; status=failed / completed_at are filled in by the subsequent
+        # ARCHITECTURE_FAILED stage advancement derivation.
         await repo.update_deep_review(
             body.deep_review_id,
             risks_md=(review.risks_md or "")
@@ -1834,15 +1834,15 @@ async def lifecycle_trigger_debate(
         "suggested_judge": intent.suggested_judge,
         "project_id": intent.project_id,
         "next_action": (
-            "调 debate_start(topic=suggested_topic, advocate=..., critic=..., "
-            "judge=...) 创建会议，然后再调 /lifecycle/link_debate_meeting "
-            "把 meeting.id 写回 review_ids。"
+            "Call debate_start(topic=suggested_topic, advocate=..., critic=..., "
+            "judge=...) to create a meeting, then call /lifecycle/link_debate_meeting "
+            "to write meeting.id back into review_ids."
         ),
     }
 
 
 # ============================================================
-# v1.7.0: 浅扫批次管理 endpoints
+# v1.7.0: shallow-scan batch management endpoints
 # ============================================================
 
 
@@ -1860,10 +1860,10 @@ async def create_shallow_batch(
     body: CreateShallowBatchBody,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """创建新浅扫批次 — 发现候选仓并固化快照，状态=pending_approval，等待人工审批。
+    """Create a new shallow-scan batch — discover candidate repos and freeze a snapshot; status=pending_approval, awaiting human approval.
 
-    候选仓逻辑：活跃仓（is_deleted=False, last_active_status != 'archived'）中
-    shallow_summary 为空或过期（> 30 天未刷新）的仓。
+    Candidate repo logic: among active repos (is_deleted=False, last_active_status != 'archived'),
+    repos whose shallow_summary is empty or stale (not refreshed for > 30 days).
     """
     import json
     import uuid
@@ -1878,17 +1878,17 @@ async def create_shallow_batch(
     now = utc_now()
     cutoff = now - timedelta(days=30)
 
-    # 发现候选仓：读所有活跃档案，筛选需要浅扫的仓
+    # Discover candidate repos: read all active profiles and filter those needing a shallow scan
     all_profiles = await repo.search_ecosystem_profiles(limit=1000)
 
     candidates = []
     for p in all_profiles:
-        # 排除已删除 / 私有 / 归档
+        # Exclude deleted / private / archived
         if p.is_deleted or p.is_private_now:
             continue
         if p.last_active_status in ("archived", "manual_archived"):
             continue
-        # 候选条件：无浅扫摘要 或 摘要超过 30 天
+        # Candidate condition: no shallow-scan summary, or the summary is over 30 days old
         ts = ensure_utc(p.last_shallow_refreshed_at)
         needs_refresh = not p.shallow_summary or ts is None or ts < cutoff
         if needs_refresh:
@@ -1911,7 +1911,7 @@ async def create_shallow_batch(
         "batch_id": created.id,
         "candidates_count": created.candidates_count,
         "status": created.status,
-        "message": f"批次已创建，发现 {created.candidates_count} 个候选仓，等待审批",
+        "message": f"Batch created; found {created.candidates_count} candidate repos, awaiting approval",
     }
 
 
@@ -1921,7 +1921,7 @@ async def list_shallow_batches(
     offset: int = Query(0, ge=0),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """列出浅扫批次（按 created_at 倒序）。"""
+    """List shallow-scan batches (by created_at descending)."""
     batches, total = await repo.list_shallow_batches(limit=limit, offset=offset)
     return {
         "batches": [_batch_to_dict(b) for b in batches],
@@ -1936,7 +1936,7 @@ async def get_shallow_batch(
     batch_id: str,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """查询单个浅扫批次详情。"""
+    """Query the details of a single shallow-scan batch."""
     batch = await repo.get_shallow_batch(batch_id)
     if batch is None:
         raise HTTPException(status_code=404, detail="batch not found")
@@ -1948,7 +1948,7 @@ async def get_shallow_batch_items(
     batch_id: str,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """查询批次内候选仓清单。"""
+    """Query the candidate repo list within a batch."""
     batch = await repo.get_shallow_batch(batch_id)
     if batch is None:
         raise HTTPException(status_code=404, detail="batch not found")
@@ -1966,14 +1966,14 @@ async def approve_shallow_batch(
     body: ApproveBatchBody,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """审批通过批次 — 为快照里的候选仓建 DR 行并**返回派遣指令**。
+    """Approve a batch — create DR rows for the candidate repos in the snapshot and **return the dispatch intents**.
 
-    派遣指令（含 sub-agent prompt）是这条链路的产物：批准本身不会让任何 agent
-    跑起来，调用方拿到 ``intents`` 才能真正把 Stage 0 派出去。历史实现在这里
-    手搓 ``EcosystemDeepReview`` 插入，建出的行没有 ``dispatch_prompt``，随后
-    ``tick()`` 又因为"该仓已有 queued 行"整批跳过——批准完谁也跑不起来，
-    且 tick 的返回值被整个丢弃。现在统一交给
-    ``EcosystemShallowQueueWorker.dispatch_batch``（建行 + 渲染 prompt + 去重）。
+    The dispatch intents (including sub-agent prompts) are the product of this chain: approval itself does not make any agent
+    run; only once the caller receives ``intents`` can Stage 0 actually be dispatched. The historical implementation here
+    hand-rolled ``EcosystemDeepReview`` inserts; the created rows had no ``dispatch_prompt``, and the subsequent
+    ``tick()`` then skipped the whole batch because "this repo already has a queued row" — after approval nothing could run,
+    and tick's return value was discarded entirely. Now everything is uniformly delegated to
+    ``EcosystemShallowQueueWorker.dispatch_batch`` (row creation + prompt rendering + deduplication).
     """
     import json
 
@@ -1988,8 +1988,8 @@ async def approve_shallow_batch(
 
     now = utc_now()
 
-    # 读候选快照。快照损坏必须显式失败：静默当空批准会把批次推进到 running
-    # 却一个仓都没派，等于永久丢单。
+    # Read the candidate snapshot. A corrupted snapshot must fail explicitly: silently treating it as empty and approving would advance the batch to running
+    # while dispatching no repo at all — equivalent to permanently losing the order.
     candidate_ids: list[str] = []
     if batch.candidates_snapshot_json:
         try:
@@ -2027,7 +2027,7 @@ async def approve_shallow_batch(
             batch_id,
         )
 
-    # 更新批次状态
+    # Update the batch status
     updated = await repo.update_shallow_batch(
         batch_id,
         status="running",
@@ -2054,9 +2054,9 @@ async def approve_shallow_batch(
             for i in intents
         ],
         "message": (
-            f"批次已批准，创建 {len(intents)} 个浅扫任务"
-            + (f"，跳过 {len(skipped)} 个（在飞或不可用）" if skipped else "")
-            + "，派遣指令见 intents"
+            f"Batch approved; created {len(intents)} shallow-scan tasks"
+            + (f", skipped {len(skipped)} (in-flight or unavailable)" if skipped else "")
+            + "; see intents for the dispatch instructions"
         ),
     }
 
@@ -2066,7 +2066,7 @@ async def cancel_shallow_batch(
     batch_id: str,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """取消批次 — 将 DR 行（如果有）标记为 cancelled。"""
+    """Cancel a batch — mark the DR rows (if any) as cancelled."""
     batch = await repo.get_shallow_batch(batch_id)
     if batch is None:
         raise HTTPException(status_code=404, detail="batch not found")
@@ -2076,7 +2076,7 @@ async def cancel_shallow_batch(
             detail=f"batch is already '{batch.status}', cannot cancel",
         )
 
-    # 更新批次状态
+    # Update the batch status
     updated = await repo.update_shallow_batch(batch_id, status="cancelled")
     if updated is None:
         raise HTTPException(status_code=500, detail="failed to cancel batch")
@@ -2085,7 +2085,7 @@ async def cancel_shallow_batch(
         "success": True,
         "batch_id": batch_id,
         "status": "cancelled",
-        "message": "批次已取消",
+        "message": "Batch cancelled",
     }
 
 
@@ -2094,11 +2094,11 @@ async def rollback_shallow_batch(
     batch_id: str,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """回滚批次 — approve 的逆操作。
+    """Roll back a batch — the inverse operation of approve.
 
-    删除该批次中尚未开工的浅扫任务行（stage_status='queued' 且未被认领），
-    已认领/已完成的行保留；批次置 cancelled。被移除的仓在下次创建批次时
-    会被重新发现（候选按"30 天未刷新"规则实时计算）。
+    Delete this batch's shallow-scan task rows that have not started yet (stage_status='queued' and not claimed),
+    claimed/completed rows are kept; the batch is set to cancelled. Removed repos will be rediscovered the next time a batch is created
+    (candidates are computed in real time by the "not refreshed for 30 days" rule).
     """
     batch = await repo.get_shallow_batch(batch_id)
     if batch is None:
@@ -2110,12 +2110,12 @@ async def rollback_shallow_batch(
         "batch_id": batch_id,
         "deleted_queued": deleted,
         "status": "cancelled",
-        "message": f"批次已回滚，移除 {deleted} 个未开工任务",
+        "message": f"Batch rolled back; removed {deleted} not-yet-started tasks",
     }
 
 
 def _batch_to_dict(b: Any) -> dict:
-    """将 EcosystemShallowBatch 转为 JSON-safe dict。"""
+    """Convert an EcosystemShallowBatch into a JSON-safe dict."""
     return {
         "id": b.id,
         "project_id": b.project_id,
@@ -2166,18 +2166,18 @@ async def shallow_queue_claim(
     body: ShallowQueueClaimBody,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """认领下一个待浅扫仓（stage_status='queued'，claimed_by IS NULL）。
+    """Claim the next repo awaiting shallow scan (stage_status='queued', claimed_by IS NULL).
 
-    原子操作：SELECT + UPDATE WHERE claimed_by IS NULL，并发安全。
-    v1.7.0: 补充 repo_full_name/topics/description/owner/stars/last_commit_at，
-            省去 worker 每仓一次 ecosystem_repo_get 调用。
+    Atomic operation: SELECT + UPDATE WHERE claimed_by IS NULL; concurrency-safe.
+    v1.7.0: additionally returns repo_full_name/topics/description/owner/stars/last_commit_at,
+            saving the worker one ecosystem_repo_get call per repo.
     Returns claimed deep_review row or {"claimed": false} when queue is empty.
     """
     review = await repo.claim_next_shallow_repo(worker_id=body.worker_id)
     if review is None:
         return {"claimed": False}
 
-    # 拉 repo profile 基础字段
+    # Fetch the repo profile's basic fields
     profile = await repo.get_ecosystem_profile_by_id(review.repo_id)
     extra: dict[str, Any] = {}
     if profile is not None:
@@ -2208,9 +2208,9 @@ async def review_queue_claim(
     body: ReviewQueueClaimBody,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """认领下一个待质量审查行（stage_status='shallow_done'，quality_score IS NULL，claimed_by IS NULL）。
+    """Claim the next row awaiting quality review (stage_status='shallow_done', quality_score IS NULL, claimed_by IS NULL).
 
-    同时返回关联 repo profile 的 shallow_summary 供审查者评估。
+    Also returns the associated repo profile's shallow_summary for the reviewer to assess.
     Returns claimed review + profile or {"claimed": false} when queue is empty.
     """
     result = await repo.claim_next_review_repo(
@@ -2240,10 +2240,10 @@ async def review_queue_apply(
     body: ApplyQualityReviewBody,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """写入质量审查结果并释放认领锁。
+    """Write the quality review result and release the claim lock.
 
-    写入 quality_score / quality_notes / reviewed_by / reviewed_at，
-    清空 claimed_by 释放认领锁。
+    Writes quality_score / quality_notes / reviewed_by / reviewed_at,
+    and clears claimed_by to release the claim lock.
     """
     review = await repo.apply_quality_review(
         dr_id=body.dr_id,
@@ -2269,9 +2269,9 @@ async def claims_release(
     body: ReleaseClaimBody,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """释放认领锁（worker 放弃），清空 claimed_by 让其他 worker 可重新认领。
+    """Release the claim lock (the worker gives up); clear claimed_by so other workers can claim it again.
 
-    reason 记录到 quality_notes 便于追踪。
+    The reason is recorded into quality_notes for traceability.
     """
     review = await repo.release_claim(dr_id=body.dr_id, reason=body.reason)
     if review is None:
@@ -2335,7 +2335,7 @@ async def lifecycle_mark_as_reference(
     body: MarkAsReferenceBody,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """Stage 3 reference: 加 lifecycle:reference tag + 推进 referenced。"""
+    """Stage 3 reference: add the lifecycle:reference tag + advance to referenced."""
     service = _get_lifecycle_service(repo)
     review = await service.mark_as_reference(
         body.deep_review_id,
@@ -2388,8 +2388,8 @@ async def lifecycle_start_integration(
         },
         "project_id": intent.project_id,
         "next_action": (
-            "调 POST /api/projects/{project_id}/tasks 创建任务，然后再调 "
-            "/lifecycle/link_integration_task 把 task.id 写回 review。"
+            "Call POST /api/projects/{project_id}/tasks to create a task, then call "
+            "/lifecycle/link_integration_task to write task.id back into the review."
         ),
     }
 
@@ -2416,12 +2416,12 @@ async def lifecycle_link_integration_task(
 
 
 # ============================================================
-# Project Settings (v1.5.0-E 决策 12.1: 项目详情页 Ecosystem 设置 tab)
+# Project Settings (v1.5.0-E decision 12.1: the Ecosystem settings tab of the project details page)
 # ============================================================
 
 
 class ProjectSettingsBody(BaseModel):
-    """项目级 ecosystem 配置 (PUT 入参)。"""
+    """Project-level ecosystem configuration (PUT input)."""
 
     min_stars: int = Field(default=1000, ge=0)
     top_n: int = Field(default=200, ge=1, le=1000)
@@ -2458,7 +2458,7 @@ async def get_project_settings(
     project_id: str,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """获取项目的 ecosystem 配置（不存在则按默认值创建）。"""
+    """Get a project's ecosystem configuration (create it with defaults if it does not exist)."""
     settings = await repo.ensure_ecosystem_project_settings(project_id)
     return _settings_to_dict(settings)
 
@@ -2469,7 +2469,7 @@ async def update_project_settings(
     body: ProjectSettingsBody,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """更新项目的 ecosystem 配置。"""
+    """Update a project's ecosystem configuration."""
     from aiteam.types import EcosystemProjectSettings as _Settings
 
     payload = _Settings(
@@ -2489,12 +2489,12 @@ async def update_project_settings(
 
 
 # ============================================================
-# Failed repo retry (v1.5.0-E 决策: 失败仓立即重试按钮)
+# Failed repo retry (v1.5.0-E decision: the failed-repo immediate-retry button)
 # ============================================================
 
 
 class RetryFailedRepoBody(BaseModel):
-    """重置仓的失败状态以触发下一轮 Stage 0 浅扫。"""
+    """Reset a repo's failure state to trigger the next round of Stage 0 shallow scan."""
 
     reason: str = "manual_retry"
 
@@ -2505,15 +2505,15 @@ async def retry_failed_repo(
     body: RetryFailedRepoBody,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """重置 fetch_failure_count + last_fetch_error，让仓重新进入浅扫队列。
+    """Reset fetch_failure_count + last_fetch_error so the repo re-enters the shallow-scan queue.
 
-    用于前端 "立即重试" 按钮。
+    Used by the frontend "Retry now" button.
     """
     profile = await repo.get_ecosystem_profile_by_id(repo_id)
     if profile is None:
         raise HTTPException(status_code=404, detail="ecosystem repo not found")
 
-    # 清失败计数 + 错误消息（不动 is_deleted/is_private_now，由 scanner 重新判定）
+    # Clear the failure count + error message (do not touch is_deleted/is_private_now; the scanner re-determines them)
     profile.fetch_failure_count = 0
     profile.last_fetch_error = ""
     await repo.upsert_ecosystem_profile(profile)
@@ -2522,7 +2522,7 @@ async def retry_failed_repo(
         "repo_id": repo_id,
         "repo_full_name": profile.repo_full_name,
         "reason": body.reason,
-        "next_action": "Stage 0 浅扫队列下次 tick 会重新派遣 agent",
+        "next_action": "The Stage 0 shallow-scan queue will re-dispatch an agent on the next tick",
     }
 
 
@@ -2811,13 +2811,13 @@ async def index_update(
         raise HTTPException(status_code=400, detail="X-Project-Id header required")
 
     # ── Step 1: resolve scan config from settings ─────────────────────────────
-    # v1.6.1 否决多源扩张后 data_sources / scan_profiles 两张表已归零（写入口
-    # 早已是 no-op），本端点却仍硬校验二者存在，于是永远只回 missing_setup ——
-    # 连带 index_diff_latest / diff / queries_recap 这几个吃它产出的下游一起
-    # 瘫掉。配置真源改为 ecosystem_project_settings（Q5 裁定，与单源决议一致）：
-    #   min_stars               → 入库星数门槛
-    #   alert_max_new_per_scan  → 单次新增告警阈值（v1.6.1 已从 scan_profile 迁来）
-    #   focus_topics            → 查询集，空则回落 DEFAULT_QUERIES
+    # After v1.6.1 rejected multi-source expansion, the data_sources / scan_profiles tables were zeroed out (their write entry points
+    # had long been no-ops), yet this endpoint still hard-validated their existence, so it forever returned only missing_setup —
+    # dragging down index_diff_latest / diff / queries_recap, the downstream consumers of its output,
+    # with it. The configuration source of truth is changed to ecosystem_project_settings (Q5 ruling, consistent with the single-source decision):
+    #   min_stars               → star threshold for archiving
+    #   alert_max_new_per_scan  → per-scan new-additions alert threshold (migrated from scan_profile in v1.6.1)
+    #   focus_topics            → query set; when empty, falls back to DEFAULT_QUERIES
     settings = await repo.ensure_ecosystem_project_settings(project_id)
 
     # ── Step 2: check gh CLI auth ─────────────────────────────────────────────
@@ -3276,13 +3276,13 @@ def _event_to_summary(ev: EcosystemRepoEvent) -> str:
     t = ev.event_type
     p = ev.payload_json or {}
     if t == "discovered":
-        return "首次入档浅扫"
+        return "First-archival shallow scan"
     if t == "rescanned":
-        return "浅扫无变化"
+        return "Shallow scan: no change"
     if t == "topics_changed":
         before = p.get("before", [])
         after = p.get("after", [])
-        return f"topics 变化: {len(before)} → {len(after)}"
+        return f"topics changed: {len(before)} → {len(after)}"
     if t == "stars_jumped":
         before = p.get("before", p.get("old_stars", "?"))
         after = p.get("after", p.get("new_stars", "?"))
@@ -3294,13 +3294,13 @@ def _event_to_summary(ev: EcosystemRepoEvent) -> str:
         to_s = p.get("to", ev.to_status or "?")
         return f"{from_s} → {to_s}"
     if t == "manual_pinned":
-        return "人工锁定"
+        return "Manually locked"
     if t == "manual_unpinned":
-        return "取消人工锁定"
+        return "Manual lock removed"
     if t == "archived":
-        return "已归档"
+        return "Archived"
     if t == "removed_from_query":
-        return "已从查询结果中移除"
+        return "Removed from query results"
     return t
 
 
@@ -3310,7 +3310,7 @@ async def get_repo_scan_history(
     limit: int = Query(default=50, le=200),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """合并 events + deep_reviews 按时间倒序，返回扫描研究历程 timeline。
+    """Merge events + deep_reviews in reverse chronological order and return the scan/research-history timeline.
 
     Returns:
         {
@@ -3337,8 +3337,8 @@ async def get_repo_scan_history(
         })
 
     for dr in deep_reviews:
-        # v1.6.0 修：跳过 v1.5 stage tracking 空占位 row（无任何实际内容仅记 stage='shallow_done'）
-        # 这些 row 是 v1.5 浅扫完成时自动创建的 stage 标记，非真深扫。265 老仓都有这种 row。
+        # v1.6.0 fix: Skip the v1.5 stage-tracking empty placeholder rows (no actual content, only stage='shallow_done' recorded)
+        # These rows are stage markers automatically created when a v1.5 shallow scan completes, not real deep scans. All 265 old repos have such rows.
         has_real_content = bool(
             (dr.summary_md or "").strip()
             or (dr.architecture_md or "").strip()
@@ -3353,11 +3353,11 @@ async def get_repo_scan_history(
         stage_val = (
             dr.stage_status.value if hasattr(dr.stage_status, "value") else (dr.stage_status or "unknown")
         )
-        # v1.6.0 修: 根据 stage 区分浅扫/深扫语义，不再都叫"深扫"
-        # shallow_done 阶段（仅 summary_md 有内容）→ 浅扫记录
-        # architecture_done 及之后阶段（有 architecture_md 等）→ 深扫记录
+        # v1.6.0 fix: Distinguish shallow-scan/deep-scan semantics by stage; no longer call everything a "deep scan"
+        # shallow_done stage (only summary_md has content) → shallow-scan record
+        # architecture_done and later stages (with architecture_md etc.) → deep-scan record
         is_deep = bool((dr.architecture_md or "").strip())
-        kind_label = "深扫" if is_deep else "浅扫"
+        kind_label = "Deep scan" if is_deep else "Shallow scan"
         entry_kind = "deep_review" if is_deep else "shallow_scan"
 
         entries.append({

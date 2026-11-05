@@ -38,43 +38,43 @@ router = APIRouter(tags=["tasks"])
 
 DECOMPOSE_TEMPLATES: dict[str, list[dict[str, Any]]] = {
     "web-app": [
-        {"title_suffix": "架构设计", "role_hint": "tech-lead", "order": 0},
-        {"title_suffix": "后端API开发", "role_hint": "backend", "order": 1},
-        {"title_suffix": "前端页面开发", "role_hint": "frontend", "order": 2},
-        {"title_suffix": "集成测试", "role_hint": "qa", "order": 3},
-        {"title_suffix": "部署配置", "role_hint": "devops", "order": 4},
+        {"title_suffix": "Architecture design", "role_hint": "tech-lead", "order": 0},
+        {"title_suffix": "Backend API development", "role_hint": "backend", "order": 1},
+        {"title_suffix": "Frontend page development", "role_hint": "frontend", "order": 2},
+        {"title_suffix": "Integration testing", "role_hint": "qa", "order": 3},
+        {"title_suffix": "Deployment configuration", "role_hint": "devops", "order": 4},
     ],
     "api-service": [
-        {"title_suffix": "接口设计", "role_hint": "tech-lead", "order": 0},
-        {"title_suffix": "数据模型开发", "role_hint": "backend", "order": 1},
-        {"title_suffix": "端点实现", "role_hint": "backend", "order": 2},
-        {"title_suffix": "中间件与认证", "role_hint": "backend", "order": 3},
-        {"title_suffix": "API测试", "role_hint": "qa", "order": 4},
+        {"title_suffix": "Interface design", "role_hint": "tech-lead", "order": 0},
+        {"title_suffix": "Data model development", "role_hint": "backend", "order": 1},
+        {"title_suffix": "Endpoint implementation", "role_hint": "backend", "order": 2},
+        {"title_suffix": "Middleware and authentication", "role_hint": "backend", "order": 3},
+        {"title_suffix": "API testing", "role_hint": "qa", "order": 4},
     ],
     "data-pipeline": [
-        {"title_suffix": "管道架构设计", "role_hint": "tech-lead", "order": 0},
-        {"title_suffix": "数据采集", "role_hint": "data-engineer", "order": 1},
-        {"title_suffix": "数据清洗与转换", "role_hint": "data-engineer", "order": 2},
-        {"title_suffix": "数据加载与存储", "role_hint": "data-engineer", "order": 3},
-        {"title_suffix": "数据质量验证", "role_hint": "qa", "order": 4},
+        {"title_suffix": "Pipeline architecture design", "role_hint": "tech-lead", "order": 0},
+        {"title_suffix": "Data collection", "role_hint": "data-engineer", "order": 1},
+        {"title_suffix": "Data cleaning and transformation", "role_hint": "data-engineer", "order": 2},
+        {"title_suffix": "Data loading and storage", "role_hint": "data-engineer", "order": 3},
+        {"title_suffix": "Data quality validation", "role_hint": "qa", "order": 4},
     ],
     "library": [
-        {"title_suffix": "API设计", "role_hint": "tech-lead", "order": 0},
-        {"title_suffix": "核心实现", "role_hint": "developer", "order": 1},
-        {"title_suffix": "文档编写", "role_hint": "developer", "order": 2},
-        {"title_suffix": "单元测试", "role_hint": "qa", "order": 3},
+        {"title_suffix": "API design", "role_hint": "tech-lead", "order": 0},
+        {"title_suffix": "Core implementation", "role_hint": "developer", "order": 1},
+        {"title_suffix": "Documentation writing", "role_hint": "developer", "order": 2},
+        {"title_suffix": "Unit testing", "role_hint": "qa", "order": 3},
     ],
     "refactor": [
-        {"title_suffix": "影响分析", "role_hint": "tech-lead", "order": 0},
-        {"title_suffix": "代码迁移", "role_hint": "developer", "order": 1},
-        {"title_suffix": "依赖更新", "role_hint": "developer", "order": 2},
-        {"title_suffix": "回归测试", "role_hint": "qa", "order": 3},
+        {"title_suffix": "Impact analysis", "role_hint": "tech-lead", "order": 0},
+        {"title_suffix": "Code migration", "role_hint": "developer", "order": 1},
+        {"title_suffix": "Dependency updates", "role_hint": "developer", "order": 2},
+        {"title_suffix": "Regression testing", "role_hint": "qa", "order": 3},
     ],
     "bugfix": [
-        {"title_suffix": "问题复现", "role_hint": "developer", "order": 0},
-        {"title_suffix": "根因定位", "role_hint": "developer", "order": 1},
-        {"title_suffix": "修复实现", "role_hint": "developer", "order": 2},
-        {"title_suffix": "验证测试", "role_hint": "qa", "order": 3},
+        {"title_suffix": "Issue reproduction", "role_hint": "developer", "order": 0},
+        {"title_suffix": "Root cause localization", "role_hint": "developer", "order": 1},
+        {"title_suffix": "Fix implementation", "role_hint": "developer", "order": 2},
+        {"title_suffix": "Verification testing", "role_hint": "qa", "order": 3},
     ],
 }
 
@@ -143,7 +143,7 @@ async def run_task(
             if dep_task is None:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"依赖任务 {dep_id} 不存在",
+                    detail=f"Dependency task {dep_id} not found",
                 )
             if dep_task.status != TaskStatus.COMPLETED:
                 blocked_by.append(dep_id)
@@ -198,21 +198,21 @@ async def run_task(
             },
         )
 
-    message = "任务已创建，等待Agent领取执行"
+    message = "Task created, waiting for an Agent to claim it"
     if blocked_by:
-        message = f"任务已创建，但被 {len(blocked_by)} 个未完成的依赖阻塞"
+        message = f"Task created, but blocked by {len(blocked_by)} unfinished dependencies"
 
     resp: dict[str, Any] = {
         "success": True,
         "data": task.model_dump(mode="json"),
         "message": message,
-        "_hint": "任务已记录到团队任务列表。CC Agent可通过 team_briefing 查看待办任务并自行领取。",
+        "_hint": "The task has been recorded in the team task list. CC Agents can view pending tasks via team_briefing and claim them themselves.",
     }
     if blocked_by:
         resp["blocked_by"] = blocked_by
     if related_tasks:
         resp["related_tasks"] = related_tasks
-        resp["_warning"] = f"检测到{len(related_tasks)}个相似的运行中任务，请确认是否重复"
+        resp["_warning"] = f"Detected {len(related_tasks)} similar running tasks; please confirm whether this is a duplicate"
     return resp
 
 
@@ -264,7 +264,7 @@ async def decompose_task(
             subtask_specs.append(
                 {
                     "title": f"{body.title} — {tmpl['title_suffix']}",
-                    "description": f"{body.description}\n\n子任务: {tmpl['title_suffix']}"
+                    "description": f"{body.description}\n\nSubtask: {tmpl['title_suffix']}"
                     if body.description
                     else tmpl["title_suffix"],
                     "order": tmpl["order"],
@@ -293,8 +293,8 @@ async def decompose_task(
             "subtasks": [c.model_dump(mode="json") for c in children],
             "total_subtasks": len(children),
         },
-        "message": f"任务已拆解为 {len(children)} 个子任务",
-        "_hint": "子任务已创建，可通过 team_briefing 查看或分配给具体 Agent。",
+        "message": f"Task decomposed into {len(children)} subtasks",
+        "_hint": "Subtasks created; view them via team_briefing or assign them to specific Agents.",
     }
 
 
@@ -309,13 +309,13 @@ async def complete_task(
     """Mark task as completed and cascade-unlock downstream BLOCKED tasks."""
     task = await repo.get_task(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
     if task.status == TaskStatus.COMPLETED:
         return {
             "success": True,
             "data": task.model_dump(mode="json"),
-            "message": "任务已经是完成状态",
+            "message": "The task is already in a completed state",
             "unblocked_tasks": [],
         }
 
@@ -342,7 +342,7 @@ async def complete_task(
 
     if unblocked:
         logger.info(
-            "任务 %s 完成，解锁 %d 个下游任务: %s",
+            "Task %s completed, unblocked %d downstream tasks: %s",
             task_id,
             len(unblocked),
             [t.id for t in unblocked],
@@ -385,7 +385,7 @@ async def complete_task(
     return {
         "success": True,
         "data": task.model_dump(mode="json"),
-        "message": f"任务已完成，解锁了 {len(unblocked)} 个下游任务" if unblocked else "任务已完成",
+        "message": f"Task completed, unblocked {len(unblocked)} downstream tasks" if unblocked else "Task completed",
         "unblocked_tasks": unblocked_info,
     }
 
@@ -445,7 +445,7 @@ async def update_task(
     """
     task = await repo.get_task(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
     old_status = task.status.value if hasattr(task.status, "value") else str(task.status)
 
@@ -458,7 +458,7 @@ async def update_task(
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail=f"无效的 status 值: '{body.status}'，允许: {[s.value for s in TaskStatus]}",
+                detail=f"Invalid status value: '{body.status}', allowed: {[s.value for s in TaskStatus]}",
             )
         update_kwargs["status"] = body.status
         if body.status == TaskStatus.RUNNING.value:
@@ -483,7 +483,7 @@ async def update_task(
         return {
             "success": True,
             "data": task.model_dump(mode="json"),
-            "message": "无字段需要更新",
+            "message": "No fields to update",
         }
 
     task = await repo.update_task(task_id, **update_kwargs)
@@ -503,11 +503,11 @@ async def update_task(
             },
         )
 
-    # 归因 v1 §2.4：只在本次调用**显式给了 assigned_to** 时记边。
-    # 这是三个记账动作里证据最弱的一个：memo / report 的 author 是"谁留的账"，而
-    # assigned_to 是"派给谁"——派了不等于干了。所以刻意不拿"谁调的这个接口"来兜底
-    # （会话内 Leader 与子 agent 共用一个 MCP 进程，那个信号根本分不出人），也不在
-    # 没给 assigned_to 时凭状态变更臆断作者。宁可少一条边。
+    # Attribution v1 §2.4: only record the edge when this call **explicitly provided assigned_to**.
+    # This is the weakest-evidence of the three bookkeeping actions: the author of a memo / report is "who left the record", whereas
+    # assigned_to is "who it was assigned to" — being assigned does not mean having done it. So we deliberately do not fall back on "who called this endpoint"
+    # (the Leader and sub-agents in a session share one MCP process, so that signal cannot distinguish people at all), nor do we
+    # infer the author from a status change when assigned_to was not given. Better one fewer edge.
     if body.assigned_to:
         await try_record_worked_on(
             repo,
@@ -521,7 +521,7 @@ async def update_task(
     return {
         "success": True,
         "data": task.model_dump(mode="json"),
-        "message": "任务已更新",
+        "message": "Task updated",
     }
 
 
@@ -535,7 +535,7 @@ async def get_subtasks(
     """Get all subtasks of a task."""
     parent = await repo.get_task(task_id)
     if parent is None:
-        raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
     # Query all subtasks with this task as parent
     all_tasks = await repo.list_tasks(parent.team_id)
@@ -567,7 +567,7 @@ async def count_running_project_tasks(
     """Lightweight endpoint for hook use — returns count of running tasks under a project."""
     project = await repo.get_project(project_id)
     if not project:
-        raise NotFoundError(f"项目 '{project_id}' 不存在")
+        raise NotFoundError(f"Project '{project_id}' not found")
 
     tasks = await repo.list_tasks_by_project(project_id, status=TaskStatus.RUNNING)
     return {"count": len(tasks)}
@@ -591,7 +591,7 @@ async def create_project_task(
     """
     project = await repo.get_project(project_id)
     if not project:
-        raise NotFoundError(f"项目 '{project_id}' 不存在")
+        raise NotFoundError(f"Project '{project_id}' not found")
 
     if body.cc_task_id:
         known = await repo.find_tasks_by_cc_ids([body.cc_task_id])
@@ -599,7 +599,7 @@ async def create_project_task(
             return {
                 "success": True,
                 "data": known[body.cc_task_id].model_dump(mode="json"),
-                "message": "该 CC 任务已镜像，未重复创建",
+                "message": "This CC task has already been mirrored; not created again",
             }
 
     extra: dict[str, Any] = {}
@@ -615,8 +615,8 @@ async def create_project_task(
         resolved = await repo.find_tasks_by_cc_ids(body.cc_blocked_by)
         extra["depends_on"] = [t.id for t in resolved.values()]
         unresolved = [i for i in body.cc_blocked_by if i not in resolved]
-        # 未镜像的上游原样存证：它们是 CC 的 id，不是 OS 任务 id，混进
-        # depends_on 会让阻塞判定去查一个根本不存在的行。
+        # Unmirrored upstream entries are stored as-is as evidence: they are CC ids, not OS task ids; if they leak into
+        # depends_on, the blocking determination would look up a row that does not exist at all.
         extra["config"] = {"cc_blocked_by": body.cc_blocked_by, "cc_blocked_by_unresolved": unresolved}
 
     task = await repo.create_task(
@@ -629,7 +629,7 @@ async def create_project_task(
         project_id=project_id,
         **extra,
     )
-    return {"success": True, "data": task.model_dump(mode="json"), "message": "任务已创建"}
+    return {"success": True, "data": task.model_dump(mode="json"), "message": "Task created"}
 
 
 # ============================================================
@@ -676,7 +676,7 @@ async def report_issue(
     return {
         "success": True,
         "data": task.model_dump(mode="json"),
-        "message": f"Issue 已上报，优先级: {priority}",
+        "message": f"Issue reported, priority: {priority}",
     }
 
 
@@ -717,18 +717,18 @@ async def update_issue_status(
     """Update issue status: open->investigating->in_progress->resolved->verified."""
     task = await repo.get_task(issue_id)
     if task is None or task.config.get("task_type") != "issue":
-        raise HTTPException(status_code=404, detail="Issue不存在")
+        raise HTTPException(status_code=404, detail="Issue not found")
 
     new_status = body.get("status")
     if not new_status:
-        raise HTTPException(status_code=400, detail="缺少 status 字段")
+        raise HTTPException(status_code=400, detail="Missing status field")
 
     current_status = task.config.get("issue_status", "open")
     allowed = _ISSUE_TRANSITIONS.get(current_status, [])
     if new_status not in allowed:
         raise HTTPException(
             status_code=400,
-            detail=f"不允许从 '{current_status}' 转为 '{new_status}'，允许: {allowed}",
+            detail=f"Transition from '{current_status}' to '{new_status}' is not allowed, allowed: {allowed}",
         )
 
     resolution = body.get("resolution", "")
@@ -756,7 +756,7 @@ async def update_issue_status(
     return {
         "success": True,
         "data": task.model_dump(mode="json"),
-        "message": f"Issue 状态已更新: {current_status} → {new_status}",
+        "message": f"Issue status updated: {current_status} → {new_status}",
     }
 
 
@@ -772,9 +772,9 @@ async def get_execution_trace(
     """
     task = await repo.get_task(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-    # 记忆 v2：直查 task_memos 表（默认过滤失效条目）而非解包 config JSON。
+    # Memory v2: query the task_memos table directly (filtering out invalidated entries by default) instead of unpacking config JSON.
     memos = await repo.list_task_memos(task_id)
 
     timeline: list[dict[str, Any]] = []
@@ -796,7 +796,7 @@ async def get_execution_trace(
                 "timestamp": task.created_at.isoformat(),
                 "type": "task_event",
                 "author": task.assigned_to or "system",
-                "content": f"任务创建: {task.title}",
+                "content": f"Task created: {task.title}",
                 "memo_type": "created",
             }
         )
@@ -806,7 +806,7 @@ async def get_execution_trace(
                 "timestamp": task.started_at.isoformat(),
                 "type": "task_event",
                 "author": task.assigned_to or "system",
-                "content": "任务开始执行",
+                "content": "Task execution started",
                 "memo_type": "started",
             }
         )
@@ -816,7 +816,7 @@ async def get_execution_trace(
                 "timestamp": task.completed_at.isoformat(),
                 "type": "task_event",
                 "author": task.assigned_to or "system",
-                "content": "任务完成",
+                "content": "Task completed",
                 "memo_type": "completed",
             }
         )
@@ -845,7 +845,7 @@ async def get_task_replay(
     """
     task = await repo.get_task(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
     engine = ReplayEngine(repo)
     result = await engine.get_replay(task_id)
@@ -866,12 +866,12 @@ async def what_if_analysis(
     """Perform What-If analysis on a task — generate multi-plan comparison and recommendation."""
     task = await repo.get_task(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
     # Resolve team_id: prefer parameter, fallback to task's own team_id
     resolved_team_id = team_id or (task.team_id or "")
     if not resolved_team_id:
-        raise HTTPException(status_code=400, detail="缺少 team_id，请通过查询参数传入")
+        raise HTTPException(status_code=400, detail="Missing team_id; please pass it as a query parameter")
 
     analyzer = WhatIfAnalyzer(repo)
     result = await analyzer.analyze_task(task_id, resolved_team_id)
@@ -895,7 +895,7 @@ async def diagnose_failure(
     """
     task = await repo.get_task(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
     alchemist = FailureAlchemist(repo)
     result = await alchemist.diagnose_failure(task_id)

@@ -38,4 +38,4 @@ async def get_template(template_id: str) -> dict[str, Any]:
     for t in templates:
         if t["id"] == template_id:
             return {"success": True, "data": t}
-    raise HTTPException(status_code=404, detail=f"模板 '{template_id}' 不存在")
+    raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")

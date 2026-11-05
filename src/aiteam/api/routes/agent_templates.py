@@ -117,7 +117,7 @@ async def get_template(
     """
     # Prevent path traversal
     if not re.match(r"^[\w\-]+$", name):
-        return {"error": "无效的模板名称"}
+        return {"error": "Invalid template name"}
     for label, directory in template_sources(x_project_dir):
         # Fast path: the stem matches.
         path = directory / f"{name}.md"
@@ -137,4 +137,4 @@ async def get_template(
                         "content": candidate.read_text(encoding="utf-8"),
                         "source": label,
                     }
-    return {"error": f"模板 {name} 不存在"}
+    return {"error": f"Template {name} not found"}

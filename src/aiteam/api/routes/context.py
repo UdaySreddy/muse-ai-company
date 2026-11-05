@@ -15,9 +15,11 @@ router = APIRouter(prefix="/api/context", tags=["context"])
 
 class ContextResolveRequest(BaseModel):
     cwd: str
-    # 归属铁律（用户裁定 2026-07-08）：以 session 启动目录为准，匹配不到已注册
-    # 项目就留空，绝不自动立项——默认 True 时代 hook 每次工具调用都可能把
-    # 产出物目录（如 明日会议材料/demo）注册成项目。显式传 True 仍可注册。
+    # Ownership iron rule (user ruling 2026-07-08): the session's startup directory
+    # is authoritative; if it matches no registered project, leave it empty and never
+    # auto-create one — in the default-True era every hook tool call could register
+    # an output directory (e.g. tomorrow's meeting materials/demo) as a project.
+    # Passing True explicitly can still register one.
     auto_create: bool = False
 
 

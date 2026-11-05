@@ -1,11 +1,11 @@
-"""AI Team OS — Memory reconcile 路由（记忆系统 v2 P2）.
+"""AI Team OS — Memory reconcile routes (memory system v2 P2).
 
-设计 §4「按需整理」两端点：
-- GET  /api/memory/reconcile/candidates —— 确定性粗筛（零 LLM）：情景层候选组
-  （簇内 BM25 配对）+ 方向层清单（供逐条陈旧检查）+ 蒸馏素材（promotion 候选）+
-  操作说明。判定交给调用工具的 CC 会话内 agent（OS 无独立 LLM 凭据）。
-- POST /api/memory/reconcile/apply —— 批量应用 agent 确认后的操作
-  （merge/invalidate/score/promote），幂等：对已失效条目重复操作返回 noop。
+Design §4 "reconcile on demand" — two endpoints:
+- GET  /api/memory/reconcile/candidates —— deterministic coarse screening (zero LLM): episodic-layer candidate groups
+  (in-cluster BM25 pairing) + direction-layer inventory (for per-item staleness checks) + distillation material (promotion candidates) +
+  operating instructions. Judgment is left to the in-session CC agent calling the tool (the OS has no independent LLM credentials).
+- POST /api/memory/reconcile/apply —— batch-apply the operations confirmed by the agent
+  (merge/invalidate/score/promote), idempotent: repeating an operation on an already-invalidated entry returns noop.
 """
 
 from __future__ import annotations
@@ -25,26 +25,26 @@ from aiteam.storage.repository import StorageRepository
 
 router = APIRouter(prefix="/api/memory/reconcile", tags=["memory"])
 
-# 候选组超过此数即提示开 ultracode 并发精判（设计 §4 触发条款）。
+# If the number of candidate groups exceeds this count, hint to enable ultracode for concurrent fine judgment (design §4 trigger clause).
 _ULTRACODE_GROUP_HINT = 8
 
 
 @router.get("/candidates")
 async def reconcile_candidates(
     scope_path: str = Query(
-        "", description="仅整理该路径作用域的 memo（留空=全项目有效 memo）"
+        "", description="Only reconcile memos within this path scope (empty = all valid memos in the project)"
     ),
     threshold: float = Query(
-        0.45, ge=0.0, le=1.0, description="簇内 BM25 相似度配对阈值"
+        0.45, ge=0.0, le=1.0, description="In-cluster BM25 similarity pairing threshold"
     ),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict:
-    """粗筛：返回情景层候选组 + 方向层清单 + 蒸馏素材 + 操作说明。"""
+    """Coarse screening: return episodic-layer candidate groups + direction-layer inventory + distillation material + operating instructions."""
     project_id = repo._project_scope
     if not project_id:
         raise HTTPException(
             status_code=400,
-            detail="记忆整理需项目上下文——请在项目内调用（X-Project-Id / X-Project-Dir）",
+            detail="Memory reconcile requires project context — please call it from within a project (X-Project-Id / X-Project-Dir)",
         )
 
     memos = await repo.list_project_task_memos(
@@ -53,7 +53,7 @@ async def reconcile_candidates(
     groups = build_candidate_groups(memos, threshold=threshold)
     promotion = [g for g in groups if g["promotion_candidate"]]
 
-    # 方向层清单：全部有效条目全文，供调用方逐条判"是否仍成立"（陈旧检测）。
+    # Direction-layer inventory: the full text of all valid entries, for the caller to judge item by item whether each "is still true" (staleness detection).
     directions = await repo.list_direction_memories(project_id=project_id)
     direction_inventory = [
         {
@@ -76,8 +76,8 @@ async def reconcile_candidates(
     }
     if len(groups) > _ULTRACODE_GROUP_HINT:
         stats["ultracode_hint"] = (
-            f"候选组 {len(groups)} 个，量大——建议开 ultracode 用 Workflow "
-            "并发精判各组后统一 apply。"
+            f"{len(groups)} candidate groups — a large volume; consider enabling ultracode and using a Workflow "
+            "to fine-judge all groups concurrently and then apply uniformly."
         )
 
     return {
@@ -97,7 +97,7 @@ async def reconcile_apply(
     body: ReconcileApply,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict:
-    """批量应用整理操作（幂等）。返回逐条结果，末尾刷新 last_reconcile_at。"""
+    """Batch-apply reconcile operations (idempotent). Returns per-item results and refreshes last_reconcile_at at the end."""
     project_id = repo._project_scope
     results: list[dict] = []
 
@@ -118,7 +118,7 @@ async def reconcile_apply(
                     missing.append(mid)
                     continue
                 if existing.invalid_at is not None:
-                    noop.append(mid)  # 已失效重复操作 → noop
+                    noop.append(mid)  # already invalidated; a repeated operation → noop
                     continue
                 await repo.invalidate_task_memo(mid)
                 invalidated.append(mid)
@@ -137,10 +137,10 @@ async def reconcile_apply(
             content = (op.content or "").strip()
             if not content:
                 results.append(
-                    {"op": "merge", "status": "error", "error": "merge 需要 content"}
+                    {"op": "merge", "status": "error", "error": "merge requires content"}
                 )
                 continue
-            # 只并入仍有效的 memo；全部已失效 → noop（幂等）
+            # Only merge memos that are still valid; if all are invalidated → noop (idempotent)
             valid = []
             for mid in op.memo_ids:
                 m = await repo.get_task_memo(mid)
@@ -151,7 +151,7 @@ async def reconcile_apply(
                     {
                         "op": "merge",
                         "status": "noop",
-                        "reason": "无有效待并 memo（可能已被整理）",
+                        "reason": "No valid memos to merge (they may already have been reconciled)",
                     }
                 )
                 continue
@@ -182,7 +182,7 @@ async def reconcile_apply(
                     {
                         "op": "score",
                         "status": "error",
-                        "error": "score 需要 memo_id 与 quality_score",
+                        "error": "score requires memo_id and quality_score",
                     }
                 )
                 continue
@@ -191,7 +191,7 @@ async def reconcile_apply(
                     {
                         "op": "score",
                         "status": "error",
-                        "error": "quality_score 取值 1-10",
+                        "error": "quality_score must be between 1 and 10",
                     }
                 )
                 continue
@@ -200,7 +200,7 @@ async def reconcile_apply(
             )
             if scored is None:
                 results.append(
-                    {"op": "score", "status": "error", "error": f"memo {op.memo_id} 不存在"}
+                    {"op": "score", "status": "error", "error": f"memo {op.memo_id} not found"}
                 )
                 continue
             results.append(
@@ -217,7 +217,7 @@ async def reconcile_apply(
             content = (op.content or "").strip()
             if not content:
                 results.append(
-                    {"op": "promote", "status": "error", "error": "promote 需要 content"}
+                    {"op": "promote", "status": "error", "error": "promote requires content"}
                 )
                 continue
             if op.scope not in ("global", "project", "user"):
@@ -225,7 +225,7 @@ async def reconcile_apply(
                     {
                         "op": "promote",
                         "status": "error",
-                        "error": f"promote scope 只能是 global/project/user，收到 {op.scope!r}",
+                        "error": f"promote scope must be one of global/project/user, got {op.scope!r}",
                     }
                 )
                 continue
@@ -234,11 +234,11 @@ async def reconcile_apply(
                     {
                         "op": "promote",
                         "status": "error",
-                        "error": f"kind 只能是 {'/'.join(repo.DIRECTION_KINDS)}，收到 {op.kind!r}",
+                        "error": f"kind must be one of {'/'.join(repo.DIRECTION_KINDS)}, got {op.kind!r}",
                     }
                 )
                 continue
-            # 安全扫描：promote 是方向层的第二道写入口，与 memory_add 同规
+            # Security scan: promote is the direction layer's second write entry point; the same rules as memory_add apply
             finding = scan_direction_content(content)
             if finding is not None:
                 results.append(
@@ -253,23 +253,23 @@ async def reconcile_apply(
                     }
                 )
                 continue
-            # 红线①：单条 ≤ 400 字
+            # Red line 1: a single entry must be ≤ 400 characters
             if len(content) > _MAX_CONTENT_CHARS:
                 results.append(
                     {
                         "op": "promote",
                         "status": "error",
                         "error": (
-                            f"内容 {len(content)} 字超方向层单条上限 {_MAX_CONTENT_CHARS}——"
-                            "请精简或改指针条目"
+                            f"Content is {len(content)} characters, exceeding the direction layer's per-entry limit of {_MAX_CONTENT_CHARS} — "
+                            "please trim it or convert it into a pointer entry"
                         ),
                     }
                 )
                 continue
             scope_id = _resolve_scope_id(op.scope, "", repo)
-            # 红线②：桶字符配额（存储上限 = 注入预算，与 memory_add 同一根轴）。
-            # 这里不回挂全桶清单——整理流程的 direction_inventory 已给过全文，
-            # 每条 promote 失败都复述一遍只会把响应撑爆。
+            # Red line 2: bucket character quota (storage cap = injection budget, the same axis as memory_add).
+            # We do not re-attach the full bucket inventory here — the reconcile flow's direction_inventory already provided the full text,
+            # and repeating it on every failed promote would only bloat the response.
             over_quota = await _bucket_quota_check(
                 repo, op.scope, scope_id, len(content), include_entries=False
             )
@@ -296,10 +296,10 @@ async def reconcile_apply(
             continue
 
         results.append(
-            {"op": kind, "status": "error", "error": f"未知操作 {kind!r}"}
+            {"op": kind, "status": "error", "error": f"Unknown operation {kind!r}"}
         )
 
-    # 刷新整理时间戳（复用 project.config，不建新表）——量阈软提示的基线。
+    # Refresh the reconcile timestamp (reuses project.config, no new table) — the baseline for the volume-threshold soft hint.
     reconciled_at = None
     if project_id:
         applied_any = any(r.get("status") == "applied" for r in results)

@@ -19,38 +19,38 @@ from aiteam.types import Memory
 router = APIRouter(prefix="/api/memory", tags=["memory"])
 
 # ================================================================
-# 方向层记忆（记忆系统 v2 P1）— POST/GET/invalidate 三入口
+# Direction-layer memory (memory system v2 P1) — three entry points: POST/GET/invalidate
 # ================================================================
 
-# 体量红线 —— 单一轴（v2.1，2026-07-31 裁定）：**存储上限 = 注入预算**。
+# Volume red line — a single axis (v2.1, ruling 2026-07-31): **storage cap = injection budget**.
 #
-# 旧口径是两根不同的轴：存储侧「每桶 ≤40 条 × 单条 ≤400 字」允许 16,000 字，
-# 注入侧预算 900 字。差 17 倍的后果不是"存多了没用"，是"存了等于没存"——实测
-# 48 条有效条目里只有头 2-3 条真的进了 agent 的 system prompt，其余被截成一句
-# "另有 46 条"，方向层"派出的 agent 出生即继承"的卖点被自己的红线架空。
+# The old caliber had two different axes: the storage side's "≤40 entries per bucket × ≤400 characters per entry" allowed 16,000 characters,
+# while the injection-side budget was 900 characters. The consequence of the 17x gap is not "storing more is useless" but "stored equals not stored" — measured in practice:
+# of 48 valid entries, only the first 2-3 actually made it into the agent's system prompt; the rest were truncated into a single line
+# "46 more entries", and the direction layer's selling point that "dispatched agents inherit it at birth" was hollowed out by its own red line.
 #
-# 现在只剩一根轴：注入池 = global/system + 当前 project + user 三桶联合 3000 字，
-# 各桶独立配额如下。容量压力被前移到写入那一刻（超限即拒 + 交回全桶清单要求先
-# 整理），注入侧不再常态截断——**存得下就一定传得到**。
-# 单条 400 字上限保留：指针条目哲学（触发条件 + 指向权威文件，正文外置）不变。
-_MAX_CONTENT_CHARS = 400  # 单条内容字数上限
+# Now only one axis remains: the injection pool = the global/system + current project + user buckets jointly capped at 3000 characters,
+# with per-bucket quotas as below. Capacity pressure is moved forward to the moment of writing (reject when over the limit + hand back the full bucket inventory requiring the caller to first
+# reconcile), and the injection side no longer truncates routinely — **if it fits in storage, it is guaranteed to be delivered**.
+# The 400-character per-entry cap is kept: the pointer-entry philosophy (trigger condition + pointing to the authoritative file, body kept externally) is unchanged.
+_MAX_CONTENT_CHARS = 400  # Per-entry content character cap
 _BUCKET_QUOTA_CHARS = {"global": 1200, "project": 1500, "user": 300}
-# 一个会话实际继承的注入池 = 三桶各一份（project 桶按项目各自计配额）。
+# The injection pool a session actually inherits = one share from each of the three buckets (project buckets are quota-counted per project).
 _DIRECTION_TOTAL_BUDGET = sum(_BUCKET_QUOTA_CHARS.values())  # 3000
 
-# scope→默认 scope_id（未显式给定时推导）
+# scope → default scope_id (derived when not given explicitly)
 _DEFAULT_SCOPE_ID = {"global": "system", "user": "user"}
 
 router_memories = APIRouter(prefix="/api/memories", tags=["memory"])
 
 
 def _resolve_scope_id(scope: str, scope_id: str, repo: StorageRepository) -> str:
-    """按 scope 推导 scope_id：project→当前项目/未注册目录临时桶、global→system、user→user。
+    """Derive scope_id from scope: project → current project / unregistered-directory temp bucket, global → system, user → user.
 
-    未注册目录（repo 无 _project_scope）下的 scope=project **不再静默回落 "system"**
-    ——那等于把本目录的项目记忆广播成全局记忆（2026-07-21 串线事故根因）。改用由
-    cwd（X-Project-Dir 头）派生的目录指纹临时桶 "dir:<sha1>"；连 cwd 都拿不到（无
-    header 的裸调用）则抛 422 拒绝，提示带 X-Project-Dir 或改用 scope=global，绝不落 system。
+    Under an unregistered directory (the repo has no _project_scope), scope=project **no longer silently falls back to "system"**
+    — that would broadcast this directory's project memory as global memory (the root cause of the 2026-07-21 cross-wiring incident). Instead it uses a
+    directory-fingerprint temp bucket "dir:<sha1>" derived from the cwd (the X-Project-Dir header); if even the cwd is unavailable (a bare call without the
+    header), it raises a 422 rejection advising to include X-Project-Dir or use scope=global instead, and never lands in system.
     """
     if scope_id:
         return scope_id
@@ -63,9 +63,9 @@ def _resolve_scope_id(scope: str, scope_id: str, repo: StorageRepository) -> str
         raise HTTPException(
             status_code=422,
             detail=(
-                "scope=project 写入需要目录上下文：当前请求既未匹配到已注册项目，"
-                "也缺少 cwd（无 X-Project-Dir 头）。请在带 X-Project-Dir 的会话中写入，"
-                "或改用 scope=global（仅当这条对任意目录的任意会话都成立时）。"
+                "Writing with scope=project requires directory context: the current request neither matched a registered project"
+                "nor has a cwd (no X-Project-Dir header). Please write from a session that carries X-Project-Dir,"
+                "or use scope=global instead (only when this entry holds for any session in any directory)."
             ),
         )
     return _DEFAULT_SCOPE_ID.get(scope, "system")
@@ -80,18 +80,18 @@ async def _bucket_quota_check(
     *,
     include_entries: bool = True,
 ) -> dict | None:
-    """按桶字符配额校验；放得下返回 None，放不下返回**超限协议**响应体。
+    """Validate against the bucket character quota; return None if it fits, otherwise return the **over-limit protocol** response body.
 
-    口径是「应用置换之后的桶总字符」：supersedes 会腾出旧条的字数，所以拿一条
-    长条换一条短条永远不该被拒（无脑加新条字数会误拒，那是旧数量轴留下的思维）。
+    The caliber is "the bucket's total characters after applying the replacement": supersedes frees the old entry's characters, so swapping a
+    long entry for a short one should never be rejected (mindlessly adding the new entry's character count would wrongly reject it — leftover thinking from the old count axis).
 
-    超限协议（Hermes 机制照搬）：不是回一句"先整理再添加"就完事——把该桶**当前
-    全部有效条目**（id / kind / 字数 / 全文）连同用量与缺口一起交回，并明确要求
-    在本轮内先腾空间再重试本次写入。整理必须发生在被拒绝的那一刻，否则调用方
-    只会换个短句子重试，容量压力照样没人处理。
+    Over-limit protocol (copied from the Hermes mechanism): it is not settled by replying "reconcile first, then add" — instead, hand back the bucket's **current
+    full set of valid entries** (id / kind / character count / full text) together with the usage and the shortfall, and explicitly require
+    freeing space within this round before retrying this write. Reconciliation must happen at the very moment of rejection; otherwise the caller
+    will just retry with a shorter sentence, and the capacity pressure would still go unhandled.
     """
     quota = _BUCKET_QUOTA_CHARS.get(scope)
-    if quota is None:  # 非方向层 scope 不受配额约束（team/agent 遗留分区）
+    if quota is None:  # non-direction-layer scopes are not quota-constrained (legacy team/agent partitions)
         return None
 
     entries = await repo.list_memories(scope, scope_id)
@@ -103,22 +103,22 @@ async def _bucket_quota_check(
         return None
 
     over_by = projected - quota
-    replace_note = f"（本次置换可腾出 {freed} 字）" if freed else ""
+    replace_note = f"(this replacement can free {freed} characters)" if freed else ""
     where_entries = (
-        "本响应的 bucket_entries 字段是该桶当前全部有效条目（含 id / kind / 字数 / 全文）："
+        "The bucket_entries field of this response holds all of the bucket's currently valid entries (including id / kind / character count / full text):"
         if include_entries
-        else "该桶全部有效条目见本次整理返回的 direction_inventory（或调 memory_list）："
+        else "For all of the bucket's valid entries, see the direction_inventory returned by this reconcile (or call memory_list):"
     )
     payload: dict = {
         "success": False,
         "error": (
-            f"写入被拒：作用域 {scope}/{scope_id} 的方向层配额是 {quota} 字，"
-            f"当前已用 {used} 字（{len(entries)} 条），本次新增 {incoming_chars} 字"
-            f"{replace_note}，落库后将达 {projected} 字，超出 {over_by} 字。\n"
-            "方向层的存储上限就是注入预算——存得下的才传得到，所以这里不能加塞。\n"
-            f"{where_entries}请在**本轮之内**逐条判断哪些已陈旧或可合并，用 "
-            "memory_invalidate（可传 content_match 子串定位）或 "
-            f"memory_reconcile_apply 腾出至少 {over_by} 字，然后重试本次写入。"
+            f"Write rejected: the direction-layer quota for scope {scope}/{scope_id} is {quota} characters,"
+            f"with {used} characters currently used ({len(entries)} entries), this addition is {incoming_chars} characters"
+            f"{replace_note}; once stored it would reach {projected} characters, exceeding the limit by {over_by} characters.\n"
+            "The direction layer's storage cap is exactly the injection budget — only what fits in storage gets delivered, so nothing can be squeezed in here.\n"
+            f"{where_entries}Within **this round**, judge item by item which entries are stale or can be merged, and use "
+            "memory_invalidate (you may pass a content_match substring to locate them) or "
+            f"memory_reconcile_apply to free at least {over_by} characters, then retry this write."
         ),
         "quota": {
             "scope": scope,
@@ -133,7 +133,7 @@ async def _bucket_quota_check(
             "total_injection_budget": _DIRECTION_TOTAL_BUDGET,
         },
         "next_action": (
-            f"先失效/合并该桶中至少 {over_by} 字的陈旧条目，再重试本次写入。"
+            f"First invalidate/merge at least {over_by} characters of stale entries in this bucket, then retry this write."
         ),
     }
     if include_entries:
@@ -155,26 +155,26 @@ async def create_direction_memory(
     body: MemoryCreate,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict:
-    """写一条方向层记忆（体量红线在此强制，超限拒绝并提示先整理）。"""
+    """Write one direction-layer memory (the volume red line is enforced here; over-limit writes are rejected with a prompt to reconcile first)."""
     if body.scope not in ("global", "project", "user"):
         raise HTTPException(
             status_code=422,
-            detail=f"方向层 scope 只能是 global/project/user，收到 {body.scope!r}",
+            detail=f"Direction-layer scope must be one of global/project/user, got {body.scope!r}",
         )
     if body.kind not in repo.DIRECTION_KINDS:
         raise HTTPException(
             status_code=422,
             detail=(
-                f"kind 只能是 {'/'.join(repo.DIRECTION_KINDS)}，收到 {body.kind!r}"
+                f"kind must be one of {'/'.join(repo.DIRECTION_KINDS)}, got {body.kind!r}"
             ),
         )
 
     content = (body.content or "").strip()
     if not content:
-        raise HTTPException(status_code=422, detail="content 不能为空")
+        raise HTTPException(status_code=422, detail="content must not be empty")
 
-    # 写入安全扫描（v2.1）：方向层条目进每个派出 agent 的 system prompt，
-    # memory_add 因此是注入放大器——不可见字符/提示注入句式/凭据形态在此拦下。
+    # Write-time security scan (v2.1): direction-layer entries enter the system prompt of every dispatched agent,
+    # so memory_add is an injection amplifier — invisible characters / prompt-injection phrasing / credential shapes are intercepted here.
     finding = scan_direction_content(content)
     if finding is not None:
         return {
@@ -183,22 +183,22 @@ async def create_direction_memory(
             "safety": {"category": finding.category, "pattern": finding.pattern},
         }
 
-    # 体量红线①：单条 > 400 字 → 拒绝（超限内容应降级为「指针条目」，正文外置）
+    # Volume red line 1: a single entry > 400 characters → reject (over-limit content should be demoted to a "pointer entry" with the body kept externally)
     if len(content) > _MAX_CONTENT_CHARS:
         return {
             "success": False,
             "error": (
-                f"内容 {len(content)} 字超过方向层单条上限 {_MAX_CONTENT_CHARS} 字。"
-                "方向层价值在小而准：请精简，或改为「触发条件 + 指向权威文件」的指针条目，"
-                "大体量正文放情景层/报告由检索按需拉取。"
+                f"Content is {len(content)} characters, exceeding the direction layer's per-entry limit of {_MAX_CONTENT_CHARS} characters."
+                "The direction layer's value lies in being small and precise: please trim it, or convert it into a pointer entry of 'trigger condition + pointer to the authoritative file', "
+                "and place large bodies in the episodic layer / reports, to be pulled by retrieval on demand."
             ),
         }
 
     scope_id = _resolve_scope_id(body.scope, body.scope_id, repo)
 
-    # supersedes 必须真实置换才算置换（审查 major：不存在/已失效/跨桶的
-    # supersedes id 曾可绕过红线且不失效任何旧条 → 无限净增）。校验通过后，
-    # 旧条的字数在配额口径里被计为"腾出"。
+    # supersedes must actually replace something to count as a replacement (review major: a nonexistent / already-invalidated / cross-bucket
+    # supersedes id could once bypass the red line without invalidating any old entry → unbounded net growth). After validation passes,
+    # the old entry's character count is counted as "freed" in the quota caliber.
     replaced: Memory | None = None
     if body.supersedes is not None:
         old = await repo.get_memory(body.supersedes)
@@ -206,21 +206,21 @@ async def create_direction_memory(
             return {
                 "success": False,
                 "error": (
-                    f"supersedes 指向的记忆 {body.supersedes} 不存在或已失效，"
-                    "无法作为置换写入。如为新增请去掉 supersedes 参数。"
+                    f"The memory {body.supersedes} pointed to by supersedes does not exist or has been invalidated,"
+                    "so it cannot be written as a replacement. If this is a new entry, remove the supersedes parameter."
                 ),
             }
         if old.scope.value != body.scope or old.scope_id != scope_id:
             return {
                 "success": False,
                 "error": (
-                    f"supersedes 目标属于 {old.scope.value}/{old.scope_id}，"
-                    f"与本条 {body.scope}/{scope_id} 不同桶，禁止跨桶置换。"
+                    f"The supersedes target belongs to {old.scope.value}/{old.scope_id},"
+                    f"a different bucket from this entry's {body.scope}/{scope_id}; cross-bucket replacement is forbidden."
                 ),
             }
         replaced = old
 
-    # 体量红线②：桶字符配额（存储上限 = 注入预算）→ 超限走 Hermes 超限协议
+    # Volume red line 2: bucket character quota (storage cap = injection budget) → over-limit cases go through the Hermes over-limit protocol
     over_quota = await _bucket_quota_check(
         repo, body.scope, scope_id, len(content), replaced
     )
@@ -243,17 +243,17 @@ async def invalidate_direction_memory_by_match(
     body: MemoryInvalidateByMatch,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict:
-    """按内容子串定位并失效一条方向层记忆（Hermes replace/remove 的定位协议）。
+    """Locate a direction-layer memory by content substring and invalidate it (the Hermes replace/remove locating protocol).
 
-    整理常发生在「刚被超限协议顶回来」的那一刻，此时调用方手里有的是条目原文，
-    先查一次 id 再失效纯属多一跳。子串必须**唯一**命中：命中 0 条或多条都不动
-    数据，多条时把候选交回要求给出更精确的子串——绝不猜。
+    Reconciliation often happens at the very moment of "being bounced back by the over-limit protocol", when what the caller has in hand is the entry's original text;
+    looking up the id first and then invalidating would be a needless extra hop. The substring must match **uniquely**: on 0 or multiple matches, touch no
+    data; on multiple matches, hand the candidates back and require a more precise substring — never guess.
 
-    检索面与 memory_list / 注入同源：global + user + 当前项目的 project 桶。
+    The search surface shares its source with memory_list / injection: global + user + the current project's project bucket.
     """
     needle = (body.content_match or "").strip()
     if not needle:
-        raise HTTPException(status_code=422, detail="content_match 不能为空")
+        raise HTTPException(status_code=422, detail="content_match must not be empty")
 
     project_id = repo._project_scope or dir_bucket_scope_id(repo._unresolved_dir) or None
     candidates = await repo.list_direction_memories(project_id=project_id)
@@ -263,16 +263,16 @@ async def invalidate_direction_memory_by_match(
         return {
             "success": False,
             "error": (
-                f"未匹配到包含子串「{needle}」的有效方向层条目。"
-                "先用 memory_list 核对原文（子串区分大小写与标点）。"
+                f"No valid direction-layer entry containing the substring '{needle}' was matched."
+                "First check the original text with memory_list (substrings are case- and punctuation-sensitive)."
             ),
         }
     if len(matched) > 1:
         return {
             "success": False,
             "error": (
-                f"子串「{needle}」命中 {len(matched)} 条，无法确定要失效哪一条。"
-                "请给出更长的唯一子串，或直接传 memory_id。"
+                f"The substring '{needle}' matched {len(matched)} entries; it is impossible to determine which one to invalidate."
+                "Please provide a longer unique substring, or pass memory_id directly."
             ),
             "matches": [
                 {"id": m.id, "kind": m.kind, "excerpt": m.content[:80]} for m in matched
@@ -291,26 +291,26 @@ async def invalidate_direction_memory(
     body: MemoryInvalidate | None = None,
     repo: StorageRepository = Depends(get_repository),
 ) -> dict:
-    """显式失效一条方向层记忆（不删除，Zep 失效语义）。"""
+    """Explicitly invalidate one direction-layer memory (no deletion; Zep invalidation semantics)."""
     invalidated_by = body.invalidated_by if body else None
     memory = await repo.invalidate_memory(memory_id, invalidated_by=invalidated_by)
     if memory is None:
-        raise HTTPException(status_code=404, detail=f"记忆 {memory_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found")
     return {"success": True, "data": memory.model_dump(mode="json")}
 
 
 @router_memories.get("", response_model=APIListResponse[Memory])
 async def list_direction_memories(
-    kind: str = Query("", description="按 kind 过滤：constraint/design/directive/preference"),
-    include_invalidated: bool = Query(False, description="是否含已失效条目"),
+    kind: str = Query("", description="Filter by kind: constraint/design/directive/preference"),
+    include_invalidated: bool = Query(False, description="Whether to include invalidated entries"),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> APIListResponse[Memory]:
-    """列方向层有效条目（valid-only 默认），按 kind 优先级 + 时间倒序。
+    """List valid direction-layer entries (valid-only by default), ordered by kind priority + time descending.
 
-    自动纳入 global + user 全局条目，及当前项目（X-Project-Id / X-Project-Dir）
-    的 project 级条目——双 hook 常驻注入的数据源。未注册目录（无 _project_scope
-    但带 X-Project-Dir）读回的是本目录指纹临时桶 "dir:<sha1>"，与写路径对称：
-    存自己的、继承自己的，读不到其他目录的临时桶（2026-07-21 串线事故根治）。
+    Automatically includes global + user global entries, as well as the current project's (X-Project-Id / X-Project-Dir)
+    project-level entries — the data source for the dual hooks' standing injection. For an unregistered directory (no _project_scope,
+    but carrying X-Project-Dir), reads return this directory's fingerprint temp bucket "dir:<sha1>", symmetric with the write path:
+    you store your own and inherit your own, and cannot read other directories' temp buckets (root fix for the 2026-07-21 cross-wiring incident).
     """
     project_id = repo._project_scope or dir_bucket_scope_id(repo._unresolved_dir) or None
     memories = await repo.list_direction_memories(
@@ -327,25 +327,25 @@ async def search_memories(
     scope_id: str = Query(
         "",
         description=(
-            "Scope ID；留空则按 scope 推导（global→system、user→user、"
-            "project→当前项目 id 或未注册目录指纹临时桶）"
+            "Scope ID; leave empty to derive it from scope (global→system, user→user,"
+            "project→current project id or the unregistered-directory fingerprint temp bucket)"
         ),
     ),
     query: str = Query("", description="Search keywords"),
     limit: int = Query(10, ge=1, le=100, description="Return count limit"),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> APIListResponse[Memory]:
-    """Search memories（scope_id 缺省时按上下文推导，与 list/写路径同规）。
+    """Search memories (when scope_id is omitted, it is derived from context under the same rules as the list/write paths).
 
-    2026-07-21 事故 follow-up：本端点原用非 scoped repo + 显式 scope_id（默认 system），
-    完全不走 X-Project-Dir 链路——未注册目录下 memory_search 查不到自己刚写的临时桶。
-    现改依赖 get_scoped_repository：project 作用域下 scope_id 缺省（含旧 MCP 默认占位
-    "system"）时，按 scoped repo 解析出当前项目 id 或未注册目录的指纹桶；连 cwd 都没有
-    则 422。**显式传入的 scope_id 一律尊重**（M4 巡检等显式传参路径不受影响）。
+    2026-07-21 incident follow-up: this endpoint originally used a non-scoped repo + an explicit scope_id (default system),
+    completely bypassing the X-Project-Dir chain — under an unregistered directory, memory_search could not find the temp bucket it had just written.
+    It now depends on get_scoped_repository: under the project scope, when scope_id is omitted (including the old MCP default placeholder
+    "system"), the scoped repo resolves the current project id or the unregistered directory's fingerprint bucket; if there is not even a cwd,
+    it returns 422. **An explicitly passed scope_id is always respected** (explicit-parameter paths such as the M4 patrol are unaffected).
     """
     effective_scope_id = scope_id
     if scope == "project" and effective_scope_id == "system":
-        # project 下的 "system" 是旧 memory_search MCP 默认占位，无意义 → 视为未指定
+        # Under project, "system" is the old memory_search MCP default placeholder and is meaningless → treated as unspecified
         effective_scope_id = ""
     resolved_scope_id = _resolve_scope_id(scope, effective_scope_id, repo)
     if query:

@@ -37,7 +37,7 @@ async def ws_events(websocket: WebSocket) -> None:
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
-                await websocket.send_text(WSError(message="无效的JSON格式").model_dump_json())
+                await websocket.send_text(WSError(message="Invalid JSON format").model_dump_json())
                 continue
 
             msg_type = msg.get("type", "")
@@ -64,7 +64,7 @@ async def ws_events(websocket: WebSocket) -> None:
 
             else:
                 await websocket.send_text(
-                    WSError(message=f"未知消息类型: {msg_type}").model_dump_json()
+                    WSError(message=f"Unknown message type: {msg_type}").model_dump_json()
                 )
 
     except WebSocketDisconnect:

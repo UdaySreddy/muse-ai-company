@@ -1,19 +1,19 @@
-"""AI Team OS — token 用量归因只读端点（docs/token-attribution-v1-design.md 阶段 2 / 5）。
+"""AI Team OS — Read-only endpoints for token usage attribution (docs/token-attribution-v1-design.md stages 2 / 5).
 
-覆盖率与归因两个端点、一个 MCP 工具、``os_health_check`` 的摘要行，全部走
+The coverage and attribution endpoints, one MCP tool, and the ``os_health_check`` summary line all go through
 ``StorageRepository.aggregate_token_attribution`` / ``usage_coverage_report``
-这同一对方法。分母一旦有第二个实现，两处就会在某次改动之后悄悄给出不同的覆盖率，
-而且没有任何东西会报错。
+this same pair of methods. If the denominator ever gains a second implementation, the two places will quietly give different coverage numbers after some change,
+and nothing will raise an error about it.
 
-阶段 5 追加两条，都是 `/usage` 页的结构性需要，不是顺手加的便利接口：
+Stage 5 adds two more; both are structural needs of the `/usage` page, not convenience endpoints tacked on:
 
-* ``/scopes`` —— 下钻候选枚举（§5.2 ③）。只回派工数，**一个 token 数都不回**：
-  列表带上用量就成了一张没有分母的排行榜。
-* ``/probe`` —— 单次实测卡（§5.2 ④）的唯一取数口。它现场解析一份 transcript，
-  **不读 agents 表的 token 五列** —— 那张卡豁免于覆盖率闸，代价就是数据只能来自
-  单次解析；从聚合视图取数会让豁免变成绕过闸门的后门。
+* ``/scopes`` —— drill-down candidate enumeration (§5.2 ③). It only returns dispatch counts, **not a single token number**:
+  a list carrying usage figures would become a leaderboard without a denominator.
+* ``/probe`` —— the sole data source for the single-measurement card (§5.2 ④). It parses a transcript on the spot,
+  **does not read the agents table's five token columns** — that card is exempt from the coverage gate, and the price is that its data can only come from
+  a single parse; taking data from an aggregated view would turn the exemption into a backdoor around the gate.
 
-**只读**：本模块不写任何表，也不触发任何采集。按需触发、零新增守护（P3）。
+**Read-only**: this module writes no table and triggers no collection. Triggered on demand, with zero new daemons (P3).
 """
 
 from __future__ import annotations
@@ -41,10 +41,10 @@ router = APIRouter(prefix="/api/usage", tags=["usage"])
 
 
 def _window(days: int) -> tuple[object, object]:
-    """把 days 折成 (since, until)；0 = 不设窗（全部历史）。
+    """Fold days into (since, until); 0 = no window (all history).
 
-    窗口落在 ``created_at`` 上（见 repository._apply_created_window）—— 按测量时间
-    落窗会让没测过的行从分母里消失，覆盖率恒等于 100%。
+    The window lands on ``created_at`` (see repository._apply_created_window) — windowing by measurement time
+    would make unmeasured rows disappear from the denominator and coverage would always equal 100%.
     """
     if days <= 0:
         return None, None
@@ -54,14 +54,14 @@ def _window(days: int) -> tuple[object, object]:
 
 @router.get("/coverage")
 async def get_usage_coverage(
-    days: int = Query(0, ge=0, le=3650, description="回看天数；0 = 全部历史"),
+    days: int = Query(0, ge=0, le=3650, description="Lookback days; 0 = all history"),
     repo: StorageRepository = Depends(get_repository),
 ) -> dict:
-    """覆盖率向量 —— 矩阵各行 + 各跳 C_hop。零 token 数值，只有分子分母。
+    """Coverage vector — the matrix rows + the per-hop C_hop. Zero token values, only numerators and denominators.
 
-    刻意**不吃隐式项目作用域**：agents 表是跨项目共享的，而覆盖率要回答的是"这套
-    观测链健不健康"，按当前 cwd 悄悄裁一刀会让同一个问题在不同目录下得到不同答案。
-    要按项目看，走 ``/attribution?scope=project&scope_id=...``。
+    Deliberately **does not consume the implicit project scope**: the agents table is shared across projects, while coverage answers the question "is this
+    observation chain healthy"; quietly slicing by the current cwd would give different answers to the same question in different directories.
+    To view by project, use ``/attribution?scope=project&scope_id=...``.
     """
     since, until = _window(days)
     report: UsageCoverageReport = await repo.usage_coverage_report(since=since, until=until)
@@ -72,24 +72,24 @@ async def get_usage_coverage(
 async def get_token_attribution(
     metric: str = Query(
         TokenMetric.USAGE_SUM.value,
-        description="token 口径；当前只支持 usage_sum（ctx_last 无四层分解）",
+        description="Token caliber; currently only usage_sum is supported (ctx_last has no four-layer breakdown)",
     ),
     scope: str = Query(
         AttributionScope.PROJECT.value,
-        description="归因层级：project / session / workflow_run / agent / task",
+        description="Attribution level: project / session / workflow_run / agent / task",
     ),
-    scope_id: str = Query("", description="该层级的 id；留空 = 不按此维度过滤（全库）"),
+    scope_id: str = Query("", description="The id of that level; leave empty = do not filter by this dimension (whole database)"),
     population: str = Query(
         DispatchPopulation.SUBAGENT.value,
-        description="派工路径：subagent / leader_session（两者量级差数量级，必须分列）",
+        description="Dispatch path: subagent / leader_session (the two differ by orders of magnitude and must be listed separately)",
     ),
-    days: int = Query(0, ge=0, le=3650, description="回看天数；0 = 全部历史"),
+    days: int = Query(0, ge=0, le=3650, description="Lookback days; 0 = all history"),
     repo: StorageRepository = Depends(get_repository),
 ) -> dict:
-    """按 scope 聚合四层用量，与分子、分母、未归因分类同层返回。
+    """Aggregate the four-layer usage by scope, returned at the same level as the numerator, denominator, and unattributed categories.
 
-    响应体里**没有合计字段**，任何参数组合下都拿不到孤立总量：四层实测 95.6% 是
-    cache_read，只报总量等于只报缓存读取量（§1.2 / §2.5）。
+    The response body **has no total field**; under no parameter combination can an isolated total be obtained: 95.6% of the measured four layers is
+    cache_read, so reporting only a total would equal reporting only the cache-read amount (§1.2 / §2.5).
     """
     try:
         parsed_metric = TokenMetric(metric)
@@ -109,8 +109,8 @@ async def get_token_attribution(
             until=until,
         )
     except ValueError as exc:
-        # ctx_last / workflow_self_report 这类"结构上进不来"的请求在这里被挡下，
-        # 错误信息本身带着原因 —— 把知识放在拒绝路径上，比放在注释里更难被绕过。
+        # Requests like ctx_last / workflow_self_report, which "structurally cannot get in", are stopped here,
+        # and the error message itself carries the reason — putting knowledge on the rejection path makes it harder to bypass than putting it in a comment.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {"success": True, "data": result.model_dump(mode="json")}
@@ -120,23 +120,23 @@ async def get_token_attribution(
 async def list_usage_scopes(
     scope: str = Query(
         AttributionScope.PROJECT.value,
-        description="要枚举的层级：project / session / workflow_run / agent / task",
+        description="The level to enumerate: project / session / workflow_run / agent / task",
     ),
-    parent_scope: str = Query("", description="父层级；与 parent_id 成对使用，留空 = 不限父级"),
-    parent_id: str = Query("", description="父层级的 id"),
+    parent_scope: str = Query("", description="Parent level; used in pair with parent_id; leave empty = no parent restriction"),
+    parent_id: str = Query("", description="The parent level's id"),
     population: str = Query(
         DispatchPopulation.SUBAGENT.value,
-        description="派工路径：subagent / leader_session（量级差数量级，必须分列）",
+        description="Dispatch path: subagent / leader_session (they differ by orders of magnitude and must be listed separately)",
     ),
-    days: int = Query(0, ge=0, le=3650, description="回看天数；0 = 全部历史"),
-    limit: int = Query(30, ge=1, le=200, description="最多返回多少个候选"),
+    days: int = Query(0, ge=0, le=3650, description="Lookback days; 0 = all history"),
+    limit: int = Query(30, ge=1, le=200, description="Maximum number of candidates to return"),
     repo: StorageRepository = Depends(get_repository),
 ) -> dict:
-    """下钻候选清单 —— 每项只有 id、名字、派工数、已测数，**没有任何 token 数值**。
+    """Drill-down candidate list — each item has only id, name, dispatch count, and measured count, **with no token values at all**.
 
-    四层用量必须对选中的那一个 scope_id 走 ``/attribution`` 单独取，这是结构上的分工
-    而不是省事：一张能排序的列表一旦带上用量，就会被当成排行榜读，而排行榜里没有
-    分母（§2.5）。
+    The four-layer usage for the one selected scope_id must be fetched separately via ``/attribution``; this is a structural division of labor
+    rather than a shortcut: once a sortable list carries usage figures, it will be read as a leaderboard, and a leaderboard has no
+    denominator (§2.5).
     """
     try:
         parsed_scope = AttributionScope(scope)
@@ -165,17 +165,17 @@ async def list_usage_scopes(
 async def sample_unattributed_dispatches(
     population: str = Query(
         DispatchPopulation.SUBAGENT.value,
-        description="派工路径：subagent / leader_session",
+        description="Dispatch path: subagent / leader_session",
     ),
-    days: int = Query(0, ge=0, le=3650, description="回看天数；0 = 全部历史"),
-    scan_limit: int = Query(400, ge=1, le=2000, description="最多扫描多少行未归因派工来取样"),
-    per_reason: int = Query(5, ge=1, le=50, description="每个原因码最多返回几行样例"),
+    days: int = Query(0, ge=0, le=3650, description="Lookback days; 0 = all history"),
+    scan_limit: int = Query(400, ge=1, le=2000, description="Maximum number of unattributed dispatch rows to scan for sampling"),
+    per_reason: int = Query(5, ge=1, le=50, description="Maximum number of sample rows to return per reason code"),
     repo: StorageRepository = Depends(get_repository),
 ) -> dict:
-    """未归因抽屉的下钻样例 —— 每个原因码几行真实的行，用来判断"救不救得回"。
+    """Drill-down samples from the unattributed drawer — a few real rows per reason code, used to judge "whether they can be recovered".
 
-    这里的行数**不是分母**：只扫最近 ``scan_limit`` 行。各类的计数以 ``/coverage``
-    的全量扫描为准，响应里的 ``scanned`` 就是给页面标注这个边界用的。
+    The row counts here are **not the denominator**: only the most recent ``scan_limit`` rows are scanned. The counts per category follow the full scan of ``/coverage``;
+    the ``scanned`` field in the response exists so the page can mark this boundary.
     """
     try:
         parsed_population = DispatchPopulation(population)
@@ -198,25 +198,25 @@ async def sample_unattributed_dispatches(
 
 @router.get("/probe")
 async def probe_single_dispatch(
-    agent_id: str = Query(..., description="要实测的那一次派工（agents.id）"),
+    agent_id: str = Query(..., description="The dispatch to measure (agents.id)"),
     repo: StorageRepository = Depends(get_repository),
 ) -> dict:
-    """单次实测 —— 现场解析这一个 agent 的 transcript，返回四层用量与首尾摘要。
+    """Single measurement — parse this one agent's transcript on the spot and return the four-layer usage plus head/tail summaries.
 
-    **不读 agents 表的 token 五列**：那是台账值（回采或采集时写进去的），而本端点
-    要兑现的承诺是"我刚刚亲自数了一遍"。§5.2 ④ 给这张卡的覆盖率闸豁免，代价正是
-    这一条 —— 数据只能来自单次 transcript 解析。
+    **Does not read the agents table's five token columns**: those are ledger values (written during backfill or collection), whereas this endpoint's
+    promise to keep is "I just counted it myself". The coverage-gate exemption §5.2 ④ grants this card costs exactly
+    this — its data can only come from a single transcript parse.
 
-    响应里没有合计字段，也不会透传解析器内部的 ``total_tokens``（§1.2）。
+    The response has no total field and does not pass through the parser's internal ``total_tokens`` (§1.2).
     """
     agent = await repo.get_agent(agent_id)
     if agent is None:
-        raise HTTPException(status_code=404, detail=f"agent {agent_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"agent {agent_id} not found")
     if not agent.transcript_path:
-        # 这不是错误，是 §3.4 的一个正式原因码。把它说清楚，看的人才知道该找谁救。
+        # This is not an error; it is a formal reason code from §3.4. Stating it clearly lets the reader know who to ask for rescue.
         raise HTTPException(
             status_code=404,
-            detail=f"agent {agent_id} 未登记 transcript 路径（no_transcript_path）—— 无法单次实测",
+            detail=f"agent {agent_id} has no registered transcript path (no_transcript_path) — cannot perform a single measurement",
         )
 
     payload = usage_probe.probe_dispatch(agent.transcript_path)
@@ -224,8 +224,8 @@ async def probe_single_dispatch(
         raise HTTPException(
             status_code=404,
             detail=(
-                f"transcript 已不在磁盘或不含可解析的用量行（transcript_gone）"
-                f"：{agent.transcript_path}"
+                f"the transcript is no longer on disk or contains no parseable usage lines (transcript_gone)"
+                f": {agent.transcript_path}"
             ),
         )
     payload["agent_id"] = agent.id

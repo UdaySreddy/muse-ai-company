@@ -1,8 +1,8 @@
 """AI Team OS — Task memo tracking routes.
 
 Provides task memo read and append functionality for recording task progress, decisions, issues, and summaries.
-记忆系统 v2 P0：memo 已从 Task.config["memo"] JSON 数组升为独立 task_memos 表；
-写入接口保持完全兼容，读写均走表（默认过滤失效条目 invalid_at IS NULL）。
+Memory system v2 P0: memos have been promoted from the Task.config["memo"] JSON array to a standalone task_memos table;
+the write API remains fully compatible, and reads/writes all go through the table (invalidated entries are filtered out by default, invalid_at IS NULL).
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["task-memo"])
 
-# 记忆 v2 P2：上次整理后本项目新增有效 memo 超此数即在写入响应附整理 hint。
+# Memory v2 P2: when the number of new valid memos added to this project since the last reconcile exceeds this count, attach a reconcile hint to the write response.
 _RECONCILE_HINT_THRESHOLD = 150
 
 
@@ -30,10 +30,10 @@ async def get_task_memo(
     task_id: str,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict:
-    """Get task memo record list（直查 task_memos 表，默认只返回有效条目）。"""
+    """Get task memo record list (queries the task_memos table directly; only valid entries are returned by default)."""
     task = await repo.get_task(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     memos = await repo.list_task_memos(task_id)
     return {"success": True, "data": [_task_memo_to_legacy(m) for m in memos]}
 
@@ -45,14 +45,14 @@ async def add_task_memo(
     request: Request,
     repo: StorageRepository = Depends(get_repository),
 ) -> dict:
-    """Append a memo record（写入 task_memos 表；supersedes 给定则置换旧条）。"""
+    """Append a memo record (writes to the task_memos table; when supersedes is given, the old entry is replaced)."""
     task = await repo.get_task(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-    # 写入安全扫描（v2.1）：情景层**只扫不可见 Unicode**。memo 是高频路径，且不进
-    # 任何 agent 的 system prompt——注入句式在这里只是被记录的文本，不是被执行的
-    # 指令；但肉眼不可见的内容无论进哪一层都不该入库（检索会把它捞回模型眼前）。
+    # Write-time security scan (v2.1): the episodic layer **only scans for invisible Unicode**. The memo path is high-frequency and does not enter
+    # any agent's system prompt — injection-style phrasing here is merely recorded text, not an executed
+    # instruction; but content invisible to the naked eye should not be stored in any layer (retrieval would surface it back before the model's eyes).
     finding = scan_invisible(body.content or "")
     if finding is not None:
         return {
@@ -71,8 +71,8 @@ async def add_task_memo(
     )
     entry = _task_memo_to_legacy(memo)
 
-    # 知识层 P1a：抽取跨域引用建边（零 LLM 正则，best-effort 绝不阻塞写入）。
-    # 挂路由层 = MCP 工具与 REST 双入口的汇聚点。from_id 用真 memo id。
+    # Knowledge layer P1a: extract cross-domain references to build edges (zero-LLM regex, best-effort, never blocks the write).
+    # Attached at the route layer = the convergence point of the MCP tool and REST dual entry points. from_id uses the real memo id.
     try:
         from aiteam.api.link_extract import extract_refs
         from aiteam.types import KnowledgeLink
@@ -95,8 +95,8 @@ async def add_task_memo(
     except Exception:  # noqa: BLE001
         logger.warning("memo link extraction failed", exc_info=True)
 
-    # 归因 v1 §2.4：在这个**已经必然发生**的记账动作里顺手记下 agent→task 边。
-    # 参数里天然同时带着 task_id 与 author，不需要谁多调一次工具。
+    # Attribution v1 §2.4: within this bookkeeping action that **already necessarily happens**, also record the agent→task edge.
+    # The parameters naturally carry both task_id and author, so nobody needs to make an extra tool call.
     await try_record_worked_on(
         repo,
         task_id=task_id,
@@ -108,17 +108,17 @@ async def add_task_memo(
 
     result: dict = {"success": True, "data": entry}
 
-    # 记忆 v2 P2 量阈软提示：上次整理后本项目新增有效 memo > 150 → 附 hint
-    # 提示调用 memory_reconcile 整理（Generative Agents 重要度过阈的极简化：按量计数）。
+    # Memory v2 P2 volume-threshold soft hint: new valid memos in this project since the last reconcile > 150 → attach a hint
+    # prompting a memory_reconcile pass (a minimal take on Generative Agents' importance-over-threshold: counting by volume).
     if task.project_id:
         try:
             since = await repo.get_last_reconcile_at(task.project_id)
             new_count = await repo.count_valid_task_memos_since(task.project_id, since)
             if new_count > _RECONCILE_HINT_THRESHOLD:
                 result["hint"] = (
-                    f"本项目上次整理后已新增 {new_count} 条有效 memo（阈值 "
-                    f"{_RECONCILE_HINT_THRESHOLD}）——建议调用 memory_reconcile_candidates "
-                    "按需整理（量大可开 ultracode 并发）。"
+                    f"This project has gained {new_count} new valid memos since the last reconcile (threshold "
+                    f"{_RECONCILE_HINT_THRESHOLD}) — consider calling memory_reconcile_candidates "
+                    "to reconcile on demand (for large volumes, enable ultracode concurrency)."
                 )
         except Exception:  # noqa: BLE001
             logger.warning("reconcile hint computation failed", exc_info=True)

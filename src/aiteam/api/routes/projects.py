@@ -44,7 +44,7 @@ async def create_project(
         description="Default initial phase",
         order=0,
     )
-    return APIResponse(data=project, message="项目创建成功")
+    return APIResponse(data=project, message="Project created successfully")
 
 
 @router.get("", response_model=APIListResponse[Project])
@@ -64,7 +64,7 @@ async def get_project(
     """Get project details, including phases list."""
     project = await repo.get_project(project_id)
     if project is None:
-        raise HTTPException(status_code=404, detail=f"项目 {project_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     phases = await repo.list_phases(project_id)
     data = project.model_dump()
     data["phases"] = [p.model_dump() for p in phases]
@@ -80,11 +80,11 @@ async def update_project(
     """Update a project."""
     updates = body.model_dump(exclude_none=True)
     if not updates:
-        raise HTTPException(status_code=400, detail="无更新字段")
+        raise HTTPException(status_code=400, detail="No fields to update")
     project = await repo.update_project(project_id, **updates)
     if project is None:
-        raise HTTPException(status_code=404, detail=f"项目 {project_id} 不存在")
-    return APIResponse(data=project, message="项目更新成功")
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+    return APIResponse(data=project, message="Project updated successfully")
 
 
 @router.delete("/{project_id}", response_model=APIResponse[bool])
@@ -95,8 +95,8 @@ async def delete_project(
     """Delete a project."""
     result = await repo.delete_project(project_id)
     if not result:
-        raise HTTPException(status_code=404, detail=f"项目 {project_id} 不存在")
-    return APIResponse(data=True, message="项目删除成功")
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+    return APIResponse(data=True, message="Project deleted successfully")
 
 
 @router.get("/{project_id}/summary")
@@ -107,7 +107,7 @@ async def project_summary(
     """Quick project summary: status, active teams, top pending tasks."""
     project = await repo.get_project(project_id)
     if project is None:
-        raise HTTPException(status_code=404, detail=f"项目 {project_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
 
     # Get all teams for this project
     teams = await repo.list_teams_by_project(project_id)
@@ -130,17 +130,17 @@ async def project_summary(
     leader_info: dict | None = None
     leaders_info: list[dict] = []
 
-    # Leader 身份 = 此项目目录下的 CC 主会话（文件真相源直读，零注册依赖）。
-    # 用户裁定（2026-07-07）：模型/活跃状态由后端自动检测，不经 hook 注册链——
-    # 注册链此前两度断裂（leader 行寄生 workflow 队被跨项目迁走、compact 合成行污染）。
-    # 用户裁定（2026-07-10）：多会话并行时逐个展示为 CEO-<英文名>，不再只出最新一个。
+    # Leader identity = the CC main session under this project directory (read directly from the file source of truth, zero registration dependency).
+    # User ruling (2026-07-07): model/active status is auto-detected by the backend, not via the hook registration chain —
+    # the registration chain broke twice before (the leader row parasitized a workflow team and was migrated across projects; compact synthesized rows polluted it).
+    # User ruling (2026-07-10): when multiple sessions run in parallel, show each one as CEO-<English name>, no longer just the latest one.
     for probe in session_probe.detect_live_sessions(
         getattr(project, "root_path", "") or ""
     ):
-        # 在飞任务（fleet 层 P2 观测，见 docs/fleet-layer-design.md §6.1）：
-        # 本 session 名下 agent（leader + 其派出的子 agent）所属团队的 running 任务数。
-        # 无 owner_session_id（那是 fleet P1 的地基，本批次未做）时的最佳努力口径——
-        # 探测失败或该 session 尚无任何 agent 落库，均如实记 0，不猜测、不报错中断。
+        # In-flight tasks (fleet layer P2 observation, see docs/fleet-layer-design.md §6.1):
+        # the number of running tasks in the teams of the agents under this session (leader + the sub-agents it dispatched).
+        # Best-effort caliber when there is no owner_session_id (that is the fleet P1 foundation, not done in this batch) —
+        # if probing fails or the session has no agents persisted yet, honestly record 0; do not guess and do not abort with an error.
         in_flight_tasks = 0
         try:
             session_agents = await repo.find_agents_by_session(probe["session_id"])
@@ -159,8 +159,8 @@ async def project_summary(
             "current_task": "",
             "last_active_at": probe["last_active_at"],
             "live": bool(probe["live"]),
-            # CC 会话注册表并行读数（C13 双轨观察）——只展示，不参与上面的
-            # status/live 判定。cc_status 是 CC 自己的 idle/busy。
+            # CC session registry parallel reading (C13 dual-track observation) — display only, does not participate in the
+            # status/live determination above. cc_status is CC's own idle/busy.
             "cc_pid": probe.get("cc_pid"),
             "cc_status": probe.get("cc_status", ""),
             "cc_process_alive": probe.get("cc_process_alive"),
@@ -174,7 +174,7 @@ async def project_summary(
         last_activity_at = leaders_info[0]["last_active_at"]
         leader_info = leaders_info[0]
 
-    # DB leader 行仅作补充（current_task 等 hook 链才有的字段）与探测不可用时的兜底。
+    # The DB leader row only supplements (fields only the hook chain has, such as current_task) and serves as a fallback when probing is unavailable.
     try:
         leaders = await repo.find_agents_by_role("leader")
         now = utc_now()
@@ -215,8 +215,8 @@ async def project_summary(
                     or "",
                     "last_active_at": last_activity_at,
                     "live": live_session,
-                    # 无文件探测数据时（DB 兜底路径），水位未知，如实留空——
-                    # 绝不把 agents 表的子 agent 水位口径误套到主会话行上。
+                    # When there is no file-probe data (DB fallback path), the watermark is unknown; honestly leave it empty —
+                    # never misapply the agents table's sub-agent watermark caliber to the main session row.
                     "ctx_tokens": None,
                     "ctx_window": None,
                     "ctx_pct": None,
@@ -224,7 +224,7 @@ async def project_summary(
                 }
                 leaders_info.append(leader_info)
             else:
-                # current_task 只有 hook 链才有——按 session_id 补给对应会话条目
+                # current_task only exists in the hook chain — supply it to the corresponding session entry by session_id
                 db_sid = getattr(freshest_leader, "session_id", "")
                 for li in leaders_info:
                     if li["session_id"] == db_sid:
@@ -247,15 +247,15 @@ async def project_summary(
         key=lambda t: priority_order.get(str(t.priority), 99),
     )[:3]
 
-    # 该项目下出现过的去重 CC 会话数（agents.session_id 足迹）
+    # Number of distinct CC sessions that have appeared under this project (agents.session_id footprint)
     try:
         session_count = await repo.count_project_sessions(project_id)
     except Exception:  # noqa: BLE001 — summary must not fail on this metric
         session_count = 0
 
-    # Worktree 观测（docs/worktree-governance-design.md §4/(c)）：按需扫描，
-    # 不做后台守护——每次 summary 请求触发一次只读 git 探测，与本函数其它探测段落
-    # 同一原则（探测失败静默降级，绝不让 summary 整体报错）。
+    # Worktree observation (docs/worktree-governance-design.md §4/(c)): scanned on demand,
+    # no background daemon — each summary request triggers one read-only git probe, following the same principle as the other probe sections in this function
+    # (probe failures degrade silently and never make the whole summary error out).
     try:
         worktrees = worktree_probe.detect_worktrees(getattr(project, "root_path", "") or "")
     except Exception:  # noqa: BLE001 — summary must not fail on this metric
@@ -296,7 +296,7 @@ async def create_phase(
     """Create a phase."""
     project = await repo.get_project(project_id)
     if project is None:
-        raise HTTPException(status_code=404, detail=f"项目 {project_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
     phase = await repo.create_phase(
         project_id=project_id,
         name=body.name,
@@ -304,7 +304,7 @@ async def create_phase(
         order=body.order,
         config=body.config,
     )
-    return APIResponse(data=phase, message="阶段创建成功")
+    return APIResponse(data=phase, message="Phase created successfully")
 
 
 @router.get("/{project_id}/phases", response_model=APIListResponse[Phase])
@@ -347,19 +347,19 @@ async def update_phase_status(
         valid = [s.value for s in PhaseStatus]
         raise HTTPException(
             status_code=400,
-            detail=f"无效状态 '{body.status}'，可选: {valid}",
+            detail=f"Invalid status '{body.status}', options: {valid}",
         )
 
     # Get current phase
     phase = await repo.get_phase(phase_id)
     if phase is None:
-        raise HTTPException(status_code=404, detail=f"阶段 {phase_id} 不存在")
+        raise HTTPException(status_code=404, detail=f"Phase {phase_id} not found")
 
     # Verify phase belongs to this project
     if phase.project_id != project_id:
         raise HTTPException(
             status_code=400,
-            detail=f"阶段 {phase_id} 不属于项目 {project_id}",
+            detail=f"Phase {phase_id} does not belong to project {project_id}",
         )
 
     # Check status transition validity
@@ -368,15 +368,15 @@ async def update_phase_status(
     if target_status not in allowed:
         raise HTTPException(
             status_code=400,
-            detail=f"不允许从 {current_status.value} 转为 {target_status.value}，"
-            f"允许: {[s.value for s in allowed]}",
+            detail=f"Transition from {current_status.value} to {target_status.value} is not allowed,"
+            f"allowed: {[s.value for s in allowed]}",
         )
 
     # If target is active, first set other active phases in the project to completed
     if target_status == PhaseStatus.ACTIVE:
         deactivated = await repo.deactivate_phases(project_id)
         if deactivated > 0:
-            msg = f"已将 {deactivated} 个旧 active 阶段设为 completed"
+            msg = f"Set {deactivated} old active phases to completed"
         else:
             msg = ""
     else:
@@ -384,9 +384,9 @@ async def update_phase_status(
 
     updated = await repo.update_phase(phase_id, status=target_status)
     if updated is None:
-        raise HTTPException(status_code=500, detail="更新失败")
+        raise HTTPException(status_code=500, detail="Update failed")
 
-    message = f"阶段状态更新为 {target_status.value}"
+    message = f"Phase status updated to {target_status.value}"
     if msg:
-        message += f"（{msg}）"
+        message += f" ({msg})"
     return APIResponse(data=updated, message=message)

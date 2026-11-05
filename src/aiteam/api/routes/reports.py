@@ -134,7 +134,7 @@ async def create_report(
     )
     await repo.create_report(report)
 
-    # 知识层 P1a：报告正文抽取跨域引用建边（best-effort，见 task_memo 同款）
+    # Knowledge layer P1a: extract cross-domain references from the report body to build edges (best-effort, same approach as task_memo)
     try:
         from aiteam.api.link_extract import extract_refs
         from aiteam.types import KnowledgeLink
@@ -161,7 +161,7 @@ async def create_report(
             "report link extraction failed", exc_info=True
         )
 
-    # 归因 v1 §2.4：报告显式关联了 task 时，顺手记 agent→task 边。
+    # Attribution v1 §2.4: when a report explicitly links a task, also record the agent→task edge.
     if body.task_id:
         from aiteam.api.task_edge import try_record_worked_on
 

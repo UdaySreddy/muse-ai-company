@@ -60,7 +60,7 @@ async def add_agent(
     existing_agents = await repo.list_agents(team.id)
     existing = next((a for a in existing_agents if a.name == body.name), None)
 
-    # If role contains " — "，auto-split into role + current_task
+    # If role contains " — ", auto-split into role + current_task
     effective_role = body.role
     auto_task: str | None = None
     if body.role and " — " in body.role:
@@ -99,8 +99,8 @@ async def add_agent(
             update_kwargs["current_task"] = auto_task
         await repo.update_agent(agent.id, **update_kwargs)
 
-    # 模型治理软提示（普通模式专用，绝不拦截——用户 2026-07-10 裁定）：
-    # model 不在文件真相源清单时附提示；ultracode/workflow agent 不走此端点，天然零约束。
+    # Model-governance soft hint (normal mode only, never blocks — user ruling 2026-07-10):
+    # when the model is not in the file source-of-truth list, attach a hint; ultracode/workflow agents do not pass through this endpoint and are naturally unconstrained.
     model_hint = ""
     if body.model:
         try:
@@ -109,8 +109,8 @@ async def add_agent(
             known = {m["model"] for m in scan_available_models()}
             if known and body.model not in known:
                 model_hint = (
-                    f"提示：模型 '{body.model}' 未在本机任何 CC 会话中出现过"
-                    f"（可用清单见 /api/models/available），请确认拼写或账号权限。已照常注册，不拦截。"
+                    f"Hint: model '{body.model}' has never appeared in any CC session on this machine"
+                    f" (see /api/models/available for the available list); please verify the spelling or account permissions. Registered as usual; not blocked."
                 )
         except Exception:  # noqa: BLE001
             pass
@@ -140,7 +140,7 @@ async def add_agent(
     return {
         "success": True,
         "data": agent.model_dump(mode="json"),
-        "message": "Agent添加成功" + (f"（{model_hint}）" if model_hint else ""),
+        "message": "Agent added successfully" + (f" ({model_hint})" if model_hint else ""),
         "model_hint": model_hint,
         "teammates": teammates,
         "team_snapshot": {
@@ -274,7 +274,7 @@ async def remove_agent(
     if agent is None:
         from aiteam.api.exceptions import NotFoundError
 
-        msg = f"Agent '{agent_id}' 不存在"
+        msg = f"Agent '{agent_id}' not found"
         raise NotFoundError(msg)
     result = await repo.delete_agent(agent_id)
     if result:
@@ -283,7 +283,7 @@ async def remove_agent(
             f"agent:{agent_id}",
             {"agent_id": agent_id, "team_id": agent.team_id, "name": agent.name},
         )
-    return APIResponse(data=True, message="Agent移除成功")
+    return APIResponse(data=True, message="Agent removed successfully")
 
 
 @router.put(
@@ -306,4 +306,4 @@ async def update_agent_status(
         f"agent:{agent_id}",
         {"agent_id": agent_id, "team_id": agent.team_id, "status": body.status},
     )
-    return APIResponse(data=agent, message="Agent状态更新成功")
+    return APIResponse(data=agent, message="Agent status updated successfully")

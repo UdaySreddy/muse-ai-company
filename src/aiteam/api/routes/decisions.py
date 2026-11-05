@@ -57,7 +57,7 @@ async def list_decisions(
             for sub in type.split(".", 1)[1:]
             if sub
         ):
-            # Namespace without sub-name (e.g. "decision"）treated as prefix
+            # Namespace without sub-name (e.g. "decision")treated as prefix
             type_prefix = type + "."
         else:
             # Exact type or prefix with sub-name
@@ -84,7 +84,7 @@ async def list_decisions(
         all_events.sort(key=lambda e: e.timestamp, reverse=True)
         events = all_events[:limit]
 
-        # Filter by team_id (source format is "team:{team_id}"）
+        # Filter by team_id (source format is "team:{team_id}")
         if team_id:
             events = [e for e in events if e.source == f"team:{team_id}" or team_id in e.source]
     else:

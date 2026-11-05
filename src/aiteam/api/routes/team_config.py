@@ -33,7 +33,7 @@ class PermanentMember(BaseModel):
 
     name: str
     role: str
-    model: str = ""  # 空=继承默认启动模型（版本更迭免维护）
+    model: str = ""  # empty = inherit the default startup model (maintenance-free across version changes)
     enabled: bool = True
 
 
@@ -92,7 +92,7 @@ async def update_team_defaults(body: TeamDefaultsConfig) -> dict[str, Any]:
     """Update configuration (full replacement)."""
     data = body.model_dump()
     _write_config(data)
-    return {"success": True, "data": data, "message": "常驻成员配置已更新"}
+    return {"success": True, "data": data, "message": "Resident member configuration updated"}
 
 
 @router.post("/team-defaults/members", status_code=201)
@@ -104,12 +104,12 @@ async def add_member(body: PermanentMember) -> dict[str, Any]:
     # Check if name already exists
     for m in members:
         if m["name"] == body.name:
-            raise HTTPException(status_code=409, detail=f"成员 '{body.name}' 已存在")
+            raise HTTPException(status_code=409, detail=f"Member '{body.name}' already exists")
 
     members.append(body.model_dump())
     config["permanent_members"] = members
     _write_config(config)
-    return {"success": True, "data": body.model_dump(), "message": f"常驻成员 '{body.name}' 已添加"}
+    return {"success": True, "data": body.model_dump(), "message": f"Resident member '{body.name}' added"}
 
 
 @router.delete("/team-defaults/members/{name}")
@@ -122,11 +122,11 @@ async def remove_member(name: str) -> dict[str, Any]:
     members = [m for m in members if m["name"] != name]
 
     if len(members) == original_len:
-        raise HTTPException(status_code=404, detail=f"成员 '{name}' 不存在")
+        raise HTTPException(status_code=404, detail=f"Member '{name}' not found")
 
     config["permanent_members"] = members
     _write_config(config)
-    return {"success": True, "message": f"常驻成员 '{name}' 已删除"}
+    return {"success": True, "message": f"Resident member '{name}' deleted"}
 
 
 @router.patch("/team-defaults/members/{name}")
@@ -142,9 +142,9 @@ async def update_member(name: str, body: MemberUpdate) -> dict[str, Any]:
             break
 
     if target is None:
-        raise HTTPException(status_code=404, detail=f"成员 '{name}' 不存在")
+        raise HTTPException(status_code=404, detail=f"Member '{name}' not found")
 
     updates = body.model_dump(exclude_none=True)
     target.update(updates)
     _write_config(config)
-    return {"success": True, "data": target, "message": f"常驻成员 '{name}' 已更新"}
+    return {"success": True, "data": target, "message": f"Resident member '{name}' updated"}

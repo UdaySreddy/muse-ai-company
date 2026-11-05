@@ -25,120 +25,120 @@ _AUTOMATED_RULES: list[dict] = [
     {
         "id": "A1",
         "category": "agent-lifecycle",
-        "name": "Agent落库入口",
-        "description": "POST /api/agents 落库的 agent 标 source=api 并默认置 busy。无对应 MCP 工具——子 agent 不必自注册，由 A2 自动收编",
+        "name": "Agent persistence entry point",
+        "description": "Agents persisted via POST /api/agents are marked source=api and set to busy by default. There is no corresponding MCP tool — sub-agents need not register themselves; A2 enrolls them automatically",
         "enforced_by": "src/aiteam/api/routes/agents.py — add_agent",
     },
     {
         "id": "A2",
         "category": "agent-lifecycle",
-        "name": "Hook自动兜底",
-        "description": "SubagentStart事件自动更新已注册Agent状态为busy",
+        "name": "Hook automatic fallback",
+        "description": "The SubagentStart event automatically updates a registered Agent's status to busy",
         "enforced_by": "src/aiteam/api/hook_translator.py — _on_subagent_start",
     },
     {
         "id": "A3",
         "category": "agent-lifecycle",
-        "name": "SubagentStop→等待",
-        "description": "SubagentStop事件将Agent设为waiting（等待输入，非关闭）。三状态：busy(工作中)/waiting(等待)/offline(关闭)",
+        "name": "SubagentStop→waiting",
+        "description": "The SubagentStop event sets the Agent to waiting (waiting for input, not closed). Three states: busy (working) / waiting (waiting) / offline (closed)",
         "enforced_by": "src/aiteam/api/hook_translator.py — _on_subagent_stop",
     },
     {
         "id": "A4",
         "category": "agent-lifecycle",
-        "name": "SessionEnd→关闭",
-        "description": "会话结束时所有agent设为offline（关闭）并清除session_id",
+        "name": "SessionEnd→offline",
+        "description": "When a session ends, all agents are set to offline (closed) and their session_id is cleared",
         "enforced_by": "src/aiteam/api/hook_translator.py — _on_session_end",
     },
     {
         "id": "A5",
         "category": "agent-lifecycle",
-        "name": "Stop→关闭",
-        "description": "CC进程终止时hook-source的agent设为offline",
+        "name": "Stop→offline",
+        "description": "When the CC process terminates, hook-source agents are set to offline",
         "enforced_by": "src/aiteam/api/hook_translator.py — _on_stop",
     },
     {
         "id": "A6",
         "category": "agent-lifecycle",
-        "name": "状态自愈",
-        "description": "WAITING Agent收到工具事件时自动修正为BUSY",
+        "name": "Status self-healing",
+        "description": "When a WAITING Agent receives a tool event, it is automatically corrected to BUSY",
         "enforced_by": "src/aiteam/api/hook_translator.py — _self_heal_agent",
     },
     {
         "id": "A8",
         "category": "session",
-        "name": "Session-Leader复用",
-        "description": "SessionStart时按项目查找已有Leader复用，避免创建幽灵agent",
+        "name": "Session-Leader reuse",
+        "description": "At SessionStart, look up the existing Leader by project and reuse it, avoiding the creation of ghost agents",
         "enforced_by": "src/aiteam/api/hook_translator.py — _on_session_start",
     },
     {
         "id": "A9",
         "category": "session",
-        "name": "自动创建项目",
-        "description": "SessionStart时无匹配项目则按cwd自动创建",
+        "name": "Automatic project creation",
+        "description": "At SessionStart, if no project matches, one is automatically created from the cwd",
         "enforced_by": "src/aiteam/api/hook_translator.py — _on_session_start",
     },
     {
         "id": "A10",
         "category": "conflict-detection",
-        "name": "文件编辑冲突检测",
-        "description": "同一文件被多个Agent编辑时发出file.edit_conflict事件",
+        "name": "File edit conflict detection",
+        "description": "When the same file is edited by multiple Agents, a file.edit_conflict event is emitted",
         "enforced_by": "src/aiteam/api/hook_translator.py — _check_file_edit_conflict",
     },
     {
         "id": "A11",
         "category": "conflict-detection",
-        "name": "热点文件追踪",
-        "description": "内存追踪器统计被多Agent编辑的热点文件，供team_briefing使用",
+        "name": "Hot file tracking",
+        "description": "An in-memory tracker counts hot files edited by multiple Agents, for use by team_briefing",
         "enforced_by": "src/aiteam/api/hook_translator.py — _FileEditTracker",
     },
     {
         "id": "A12",
         "category": "activity-tracking",
-        "name": "工具使用记录",
-        "description": "PreToolUse/PostToolUse事件自动记录到AgentActivity",
+        "name": "Tool usage recording",
+        "description": "PreToolUse/PostToolUse events are automatically recorded to AgentActivity",
         "enforced_by": "src/aiteam/api/hook_translator.py — _on_pre_tool_use / _on_post_tool_use",
     },
     {
         "id": "A13",
         "category": "activity-tracking",
-        "name": "current_task从role自动提取",
-        "description": "Agent 落库时 role 若含 ' — ' 分隔符，自动拆成 role + current_task（'前端工程师 — Dashboard开发' → role='前端工程师', current_task='Dashboard开发'）",
+        "name": "current_task auto-extracted from role",
+        "description": "When an Agent is persisted, if its role contains the ' — ' separator it is automatically split into role + current_task ('Frontend Engineer — Dashboard development' → role='Frontend Engineer', current_task='Dashboard development')",
         "enforced_by": "src/aiteam/api/hook_translator.py — _on_subagent_start + routes/agents.py — add_agent",
     },
     {
         "id": "A14",
         "category": "activity-tracking",
-        "name": "last_active_at自动更新",
-        "description": "每次工具调用自动更新Agent最后活跃时间",
+        "name": "last_active_at auto-update",
+        "description": "Every tool call automatically updates the Agent's last active time",
         "enforced_by": "src/aiteam/api/hook_translator.py — _on_pre_tool_use / _on_post_tool_use",
     },
     {
         "id": "A15",
         "category": "event-system",
-        "name": "事件总线广播",
-        "description": "所有状态变更通过EventBus发出事件，供WebSocket实时推送",
+        "name": "Event bus broadcast",
+        "description": "All status changes emit events through the EventBus for real-time WebSocket push",
         "enforced_by": "src/aiteam/api/event_bus.py + src/aiteam/api/routes/ws.py",
     },
     {
         "id": "A16",
         "category": "type-safety",
-        "name": "共享类型定义",
-        "description": "所有数据模型集中定义在types.py，各模块只读引用",
+        "name": "Shared type definitions",
+        "description": "All data models are defined centrally in types.py; modules only reference them read-only",
         "enforced_by": "src/aiteam/types.py",
     },
     {
         "id": "A17",
         "category": "task-management",
-        "name": "任务依赖自动阻塞",
-        "description": "有未完成依赖的任务自动标记为blocked状态",
-        "enforced_by": "TaskStatus.BLOCKED + depends_on字段",
+        "name": "Task dependency auto-blocking",
+        "description": "Tasks with unfinished dependencies are automatically marked as blocked",
+        "enforced_by": "TaskStatus.BLOCKED + depends_on field",
     },
     {
         "id": "A18",
         "category": "hooks",
-        "name": "Hook脚本统一入口",
-        "description": "CC hook 事件经 send_event.py 统一 POST 到 /api/hooks/event（覆盖面以 plugin/hooks/hooks.json 为准）",
+        "name": "Unified hook script entry point",
+        "description": "CC hook events are uniformly POSTed via send_event.py to /api/hooks/event (coverage is as defined in plugin/hooks/hooks.json)",
         "enforced_by": "plugin/hooks/send_event.py",
     },
 ]
@@ -148,153 +148,153 @@ _ADVISORY_RULES: list[dict] = [
     {
         "id": "B-1",
         "category": "memory",
-        "name": "记忆分层职责",
-        "description": "用户给出偏好/纠正/设计意图时 Leader 当场 memory_add 落方向层；任务过程记录走 task_memo_add；两者别混",
-        "advice": "写入检验：这条能影响多少未来任务？只影响单个任务的去 task_memo。方向层存储上限=注入预算（桶字符配额 global 1200 / project 1500 / user 300，单条 ≤400 字），超限当轮先失效或合并腾位再重试；偏好被改用 supersedes 置换不物删",
+        "name": "Layered memory responsibilities",
+        "description": "When the user gives a preference/correction/design intent, the Leader immediately memory_adds it to the direction layer; task process records go through task_memo_add; do not mix the two",
+        "advice": "Write test: how many future tasks can this entry affect? If it affects only a single task, send it to task_memo. The direction layer's storage cap = injection budget (bucket character quotas: global 1200 / project 1500 / user 300, each entry ≤400 characters); if over the limit, first invalidate or merge within the same round to free space and then retry; when a preference changes, use supersedes replacement instead of physically deleting",
     },
     {
         "id": "B0.1",
         "category": "meeting",
-        "name": "会议触发条件",
-        "description": "凡提案涉及刻意决策修订／砍工具删表／改机检红线，必须先过会（Council 纪律④，用户批准）。其余情况自行判断——任务墙空不等于该开会，不为有事干而开会",
-        "advice": "会议以决策上墙收尾：结论转成 decision 记录或任务墙条目，否则视同没开",
+        "name": "Meeting trigger conditions",
+        "description": "Any proposal involving deliberate decision revision / cutting tools or dropping tables / changing machine-check red lines must go through a meeting first (Council discipline 4, user-approved). Judge other cases yourself — an empty task wall does not mean a meeting is needed; do not hold meetings just to have something to do",
+        "advice": "A meeting closes with decisions put on the wall: conclusions are turned into decision records or task wall entries, otherwise the meeting counts as never held",
     },
     {
         "id": "B0.3",
         "category": "leadership",
-        "name": "成员工具受限由Leader解决",
-        "description": "成员报工具/权限受限时由 Leader 安装或改配置，不让成员自行绕过",
-        "advice": "MCP 工具不可用时用 /mcp → Reconnect 刷新",
+        "name": "Member tool restrictions are resolved by the Leader",
+        "description": "When a member reports a tool/permission restriction, the Leader installs or changes configuration; members must not bypass it themselves",
+        "advice": "When an MCP tool is unavailable, use /mcp → Reconnect to refresh",
     },
     {
         "id": "B0.4",
         "category": "leadership",
-        "name": "派发不传 team_name",
-        "description": "Agent 的 team_name 参数已废弃且被忽略，勿传；每个会话自带唯一隐式团队，派出的 agent 由 SubagentStart hook 自动收编进 session-<sid8> 容器队",
+        "name": "Do not pass team_name when dispatching",
+        "description": "The Agent team_name parameter is deprecated and ignored; do not pass it. Every session carries its own unique implicit team, and dispatched agents are automatically enrolled by the SubagentStart hook into the session-<sid8> container team",
     },
     {
         "id": "B0.5",
         "category": "leadership",
-        "name": "任务墙灵活领取——不局限短期",
-        "description": "可直接领取中/长期任务，不必只做短期。拆分后暂不实施的要撤回，避免僵尸任务",
+        "name": "Claim task-wall tasks flexibly — not limited to short-term",
+        "description": "You may claim mid/long-term tasks directly; you need not only do short-term ones. After decomposing, withdraw the parts not being implemented yet, to avoid zombie tasks",
     },
     {
         "id": "B0.6",
         "category": "leadership",
-        "name": "项目记忆维护——确保可恢复",
-        "description": "阶段性目标完成即落记忆（做了什么/决策原因/当前状态/下一步），保证 compact 或重启后能恢复上下文；任务墙、会议记录、记忆三方保持一致",
+        "name": "Project memory maintenance — ensure recoverability",
+        "description": "As soon as a milestone goal is completed, record it in memory (what was done / why the decision was made / current state / next steps) so context can be recovered after a compact or restart; keep the task wall, meeting records, and memory consistent",
     },
     {
         "id": "B0.7",
         "category": "leadership",
-        "name": "不空等——派出后继续领任务",
-        "description": "等成员结果时不空闲，回任务墙找可并行的活；并行短期任务不超过 3 个",
+        "name": "Do not idle-wait — keep claiming tasks after dispatching",
+        "description": "While waiting for member results, do not sit idle; go back to the task wall for work that can run in parallel; no more than 3 parallel short-term tasks",
     },
     {
         "id": "B0.8",
         "category": "leadership",
-        "name": "行为变更同步QA",
-        "description": "改动影响系统行为或前端显示时，主动告知 QA 要观测什么；纯文档/规则变更不通知",
+        "name": "Sync behavior changes to QA",
+        "description": "When a change affects system behavior or frontend display, proactively tell QA what to observe; pure documentation/rule changes are not notified",
     },
     {
         "id": "B0.9",
         "category": "leadership",
-        "name": "Leader专注统筹，不做具体实施",
-        "description": "Leader 只做任务分配、决策、推进。需要读多个文件/写代码/调试的任务一律派给成员；改一行配置这类极小改动才自己做",
-        "advice": "用户裁定：Leader 陷入具体实施会导致项目整体停滞",
+        "name": "The Leader focuses on coordination, not concrete implementation",
+        "description": "The Leader only does task assignment, decisions, and driving progress. Tasks requiring reading multiple files / writing code / debugging are always dispatched to members; only tiny changes like editing one line of config are done personally",
+        "advice": "User ruling: a Leader sinking into concrete implementation stalls the whole project",
     },
     {
         "id": "B0.11",
         "category": "leadership",
-        "name": "Leader设定agent当前任务",
-        "description": "派出 agent 后用 agent_update_status 设 current_task（role 放简短角色名，current_task 放具体任务）——Dashboard 按此展示成员在干什么",
+        "name": "The Leader sets the agent's current task",
+        "description": "After dispatching an agent, use agent_update_status to set current_task (role holds a short role name, current_task holds the concrete task) — the Dashboard shows what members are doing based on this",
     },
     {
         "id": "B0.12",
         "category": "leadership",
-        "name": "任务Memo追踪",
-        "description": "领任务前 task_memo_read 读历史；执行中 task_memo_add 记关键进展与决策；完成后 task_memo_add(type='summary') 写总结",
+        "name": "Task memo tracking",
+        "description": "Before claiming a task, task_memo_read the history; during execution, task_memo_add key progress and decisions; after completion, task_memo_add(type='summary') to write the summary",
     },
     {
         "id": "B2",
         "category": "agent-lifecycle",
-        "name": "常驻成员 vs 临时成员",
-        "description": "QA、bug-fixer 属常驻成员，项目期间保留；研究/单次实施类属临时成员，交付后回收。团队保持到项目完成",
+        "name": "Resident members vs temporary members",
+        "description": "QA and bug-fixer are resident members, kept for the project's duration; research / one-off implementation types are temporary members, reclaimed after delivery. The team is kept until the project completes",
     },
     {
         "id": "B3",
         "category": "memory",
-        "name": "记忆权威层级",
-        "description": "信息冲突时: CLAUDE.md > auto-memory > OS MemoryStore > claude-mem",
-        "advice": "只记不可推导的人类意图，技术细节交给代码和git",
+        "name": "Memory authority hierarchy",
+        "description": "On information conflicts: CLAUDE.md > auto-memory > OS MemoryStore > claude-mem",
+        "advice": "Only record human intent that cannot be derived; leave technical details to the code and git",
     },
     {
         "id": "B4",
         "category": "context",
-        "name": "上下文管理-WARNING",
-        "description": "收到[CONTEXT WARNING]时完成当前最小原子任务后保存进度",
-        "advice": "记录已完成/进行中/下一步计划，提醒用户 /compact",
+        "name": "Context management - WARNING",
+        "description": "On receiving [CONTEXT WARNING], finish the current minimal atomic task and then save progress",
+        "advice": "Record what is completed / in progress / the next-step plan, and remind the user to /compact",
     },
     {
         "id": "B5",
         "category": "context",
-        "name": "上下文管理-CRITICAL",
-        "description": "收到[CONTEXT CRITICAL]时立即停止，不开新任务，紧急落盘所有进度并提醒用户 /compact",
+        "name": "Context management - CRITICAL",
+        "description": "On receiving [CONTEXT CRITICAL], stop immediately, start no new tasks, urgently persist all progress, and remind the user to /compact",
     },
     {
         "id": "B0.14",
         "category": "leadership",
-        "name": "行动项必须上墙",
-        "description": "对话/会议中产生的行动项必须 task_create 上墙——口头承诺不算",
+        "name": "Action items must go on the wall",
+        "description": "Action items arising in conversations/meetings must be put on the wall via task_create — verbal promises do not count",
     },
     {
         "id": "B0.16",
         "category": "leadership",
-        "name": "Leader自主运转模式",
-        "description": "按任务墙优先级自主推进，不逐步等用户确认。战术决策自主做主，仅项目方向/重大架构这类战略决策请示用户；被阻塞时切别的任务继续推进",
-        "advice": "用户发言时统一汇报进度 + 列出待决策事项",
+        "name": "Leader autonomous operation mode",
+        "description": "Advance autonomously by task-wall priority without waiting for user confirmation at each step. Make tactical decisions autonomously; only escalate strategic decisions such as project direction / major architecture to the user; when blocked, switch to another task and keep advancing",
+        "advice": "When the user speaks, report progress uniformly + list the items awaiting decision",
     },
     {
         "id": "B0.16b",
         "category": "leadership",
-        "name": "待决事项必须入队，不许只留在报告里",
+        "name": "Pending decisions must be queued, not left only in reports",
         "description": (
-            "子 agent 完工报告里凡写着「留给用户/Leader 裁定」的事项，派发方（Leader）"
-            "必须当场 briefing_add 入待决队列。写在报告正文里的裁定项等于没提交——"
-            "用户看的是简报队列，不会去翻每份完工报告"
+            "For anything in a sub-agent's completion report marked 'left for the user/Leader to decide', the dispatcher (Leader)"
+            "must immediately briefing_add it into the pending-decision queue. A decision item written in a report body equals not submitted —"
+            "the user reads the briefing queue and will not dig through every completion report"
         ),
-        "advice": "收割报告时逐条扫「待裁定/待确认/建议由用户决定」，每条一个 briefing_add（带 tags 便于按主题筛）",
+        "advice": "When harvesting reports, scan item by item for 'awaiting decision / awaiting confirmation / recommend the user decide'; one briefing_add per item (with tags for filtering by topic)",
     },
     {
         "id": "B0.17",
         "category": "leadership",
-        "name": "先研究再实施",
-        "description": "系统级新功能设计先做外部研究+竞品分析再动手，不能只看内部代码闭门造车",
+        "name": "Research before implementing",
+        "description": "For system-level new feature design, do external research + competitive analysis before acting; do not build in isolation by only looking at internal code",
     },
     {
         "id": "B6",
         "category": "meeting",
-        "name": "会议讨论规则",
-        "description": "Round 1提出观点，Round 2+引用并回应前人发言，最后一轮汇总",
-        "advice": "先读取前人消息再发言，避免重复或脱节",
+        "name": "Meeting discussion rules",
+        "description": "Round 1 states viewpoints, Round 2+ cites and responds to previous speakers, and the final round summarizes",
+        "advice": "Read previous speakers' messages before speaking, to avoid duplication or disconnects",
     },
     {
         "id": "B6.2",
         "category": "meeting",
-        "name": "会议参与者通知",
-        "description": "meeting_create 不会自动通知任何人——必须逐一 SendMessage 告知 meeting_id 与议题，否则会议无人到场",
+        "name": "Meeting participant notification",
+        "description": "meeting_create does not automatically notify anyone — you must SendMessage each participant the meeting_id and the topic, otherwise nobody will show up to the meeting",
     },
     {
         "id": "B0.18",
         "category": "execution",
-        "name": "2-Action持久化规则",
-        "description": "每执行2个实质性操作（编辑文件/运行命令/创建资源）后，用 task_memo_add 记录进展——上下文随时可能被压缩，落盘是唯一防线",
+        "name": "2-Action persistence rule",
+        "description": "After every 2 substantive operations (editing files / running commands / creating resources), record progress with task_memo_add — the context can be compacted at any time, and persisting to disk is the only line of defense",
     },
     {
         "id": "B0.19",
         "category": "execution",
-        "name": "3次失败升级协议",
-        "description": "同一任务同一方法连续失败 3 次即换路：改方法、请其他 Agent 协助或上报 Leader；上报会触发 failure_analysis 沉淀",
+        "name": "3-failures escalation protocol",
+        "description": "If the same method on the same task fails 3 times in a row, change course: change the method, ask another Agent for help, or escalate to the Leader; escalation triggers failure_analysis deposition",
     },
 ]
 
@@ -325,7 +325,7 @@ async def get_rule(rule_id: str) -> dict:
         if rule["id"] == rule_id_upper:
             rule_type = "automated" if rule_id_upper.startswith("A") else "advisory"
             return {"rule": rule, "type": rule_type}
-    return {"error": f"规则 {rule_id} 不存在"}
+    return {"error": f"Rule {rule_id} not found"}
 
 
 def _wal_checkpoint_best_effort() -> None:
@@ -364,9 +364,9 @@ async def _delayed_exit() -> None:
     inside the request task and could be swallowed by the server.
     """
     await asyncio.sleep(0.5)
-    # 让出治理租约（2026-07-27 首考失败后补位）：本端点用 os._exit 硬退，lifespan
-    # 收尾（StateReaper.stop 里的 release）永远不跑——释放必须放在这条真实退出路径上，
-    # 否则新实例被死 pid 的租约挡满 TTL（180s），治理静默三分钟。best-effort，绝不拦退出。
+    # Release the governance lease (added after the first exam failure on 2026-07-27): this endpoint hard-exits with os._exit, so the lifespan
+    # teardown (the release in StateReaper.stop) never runs — the release must live on this real exit path,
+    # otherwise a new instance is blocked by the dead pid's lease for the full TTL (180s) and governance silently stalls for three minutes. Best-effort; never block the exit.
     try:
         from aiteam.api import deps as _deps
 
@@ -375,7 +375,7 @@ async def _delayed_exit() -> None:
             released = await repo.release_governance_lease(f"api-{os.getpid()}")
             if released:
                 logger.info("Governance lease released on shutdown (pid=%d)", os.getpid())
-    except Exception:  # noqa: BLE001 — 退出路径绝不因此阻塞
+    except Exception:  # noqa: BLE001 — the exit path must never be blocked by this
         logger.debug("Lease release on shutdown failed (TTL will expire it)")
     _wal_checkpoint_best_effort()
     os._exit(0)

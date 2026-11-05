@@ -1,4 +1,4 @@
-"""知识层 P1b — 统一检索路由。"""
+"""Knowledge layer P1b — unified search routes."""
 
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ router = APIRouter(prefix="/api/search", tags=["unified-search"])
 async def search(
     q: str = Query(..., min_length=1, max_length=200),
     limit: int = Query(10, ge=1, le=50),
-    project_id: str = Query("", description="限定项目（空=全部）"),
+    project_id: str = Query("", description="Limit to a project (empty = all)"),
     repo: StorageRepository = Depends(get_repository),
 ) -> dict:
-    """三臂 RRF 统一检索：memo/report/task 全文 + 引用图谱 + 精确 ID/标题。"""
+    """Three-arm RRF unified search: memo/report/task full text + reference graph + exact ID/title."""
     results = await unified_search(
         repo, q, limit=limit, project_id=project_id or None
     )

@@ -28,7 +28,7 @@ async def run_watchdog_check(
     return {
         "success": True,
         "data": alerts,
-        "message": f"检查完成，发现 {len(alerts)} 个告警",
+        "message": f"Check complete, found {len(alerts)} alerts",
     }
 
 

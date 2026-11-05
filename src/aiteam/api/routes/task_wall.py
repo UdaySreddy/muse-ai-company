@@ -28,7 +28,7 @@ async def get_task_wall(
     Returns {wall, stats} structure directly, aligned with frontend TaskWallResponse type.
     """
     result = await engine.get_task_wall(team_id, horizon=horizon, priority=priority)
-    # engine.get_task_wall 返回 {"wall": {...}, "stats": {...}}
+    # engine.get_task_wall returns {"wall": {...}, "stats": {...}}
     return result
 
 

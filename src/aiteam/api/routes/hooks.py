@@ -210,7 +210,7 @@ async def diagnose_denial(payload: DiagnoseDenialRequest) -> DiagnoseDenialRespo
 
 
 class CompactCheckpointRequest(BaseModel):
-    """PreCompact 检查点写入请求。"""
+    """PreCompact checkpoint write request."""
 
     session_id: str
     trigger: str = ""
@@ -223,11 +223,11 @@ async def save_compact_checkpoint(
     repo: StorageRepository = Depends(get_repository),
     bus: EventBus = Depends(get_event_bus),
 ) -> dict:
-    """在上下文被压缩前，把这个会话的 OS 侧作战态定格成一条检查点事件。
+    """Before the context is compacted, freeze this session's OS-side operational state into a checkpoint event.
 
-    快照由服务端直接从库里取——hook 只报"我要压缩了"，不负责搜集内容。这样
-    hook 保持纯 stdlib、单次 HTTP，也不会因为 hook 侧少查一样东西就把检查点
-    做残。
+    The snapshot is taken by the server directly from the database — the hook only reports "I am about to compact" and is not responsible for gathering content. This way
+    the hook stays pure stdlib with a single HTTP call, and the checkpoint will not end up incomplete
+    just because the hook side missed checking one thing.
     """
     snapshot = await compact_checkpoint.build_snapshot(repo, payload.session_id, payload.cwd)
     snapshot["trigger"] = payload.trigger
@@ -244,10 +244,10 @@ async def read_compact_checkpoint(
     session_id: str,
     repo: StorageRepository = Depends(get_repository),
 ) -> dict:
-    """取该会话最近一条检查点，附一段可直接注入的渲染文本。
+    """Get the session's most recent checkpoint, along with a rendered text snippet that can be injected directly.
 
-    没有检查点时 found=False、text 为空串——调用方（session_bootstrap）据此
-    什么都不注入，绝不给用户的上下文塞占位噪声。
+    When there is no checkpoint, found=False and text is an empty string — based on this, the caller (session_bootstrap)
+    injects nothing at all, never stuffing placeholder noise into the user's context.
     """
     events = await repo.list_events(
         event_type=compact_checkpoint.CHECKPOINT_EVENT,
@@ -268,10 +268,10 @@ async def read_compact_checkpoint(
 
 @router.get("/background-jobs")
 async def list_background_jobs(root_path: str = "", in_flight_only: bool = True) -> dict:
-    """CC 的 `--bg` 后台会话现状（文件真相源直读，零注册依赖）。
+    """Current state of CC `--bg` background sessions (read directly from the file source of truth, zero registration dependency).
 
-    这类会话不经任何 hook 注册进 OS，可以在前台窗口关掉之后继续跑——不看这里，
-    项目摘要会说"没人在干活"，而实际上有 daemon 在跑。
+    These sessions never register into the OS through any hook and can keep running after the foreground window is closed — without looking here,
+    the project summary would say "nobody is working" while a daemon is actually running.
     """
     jobs = (
         background_jobs.in_flight_jobs(root_path)
