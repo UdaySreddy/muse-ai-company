@@ -11,9 +11,9 @@ import { useAvailableModels } from '@/api/models';
 import { useT } from '@/i18n';
 
 /**
- * 模型选择器 — 下拉清单来自文件真相源自动拉取（本机真实用过的模型），
- * 替换全部硬编码过时清单（claude-opus-4-7 等）。支持自由输入兜底
- * （新模型/未用过的模型），全名直显无别名映射。
+ * Model selector — the dropdown list is auto-discovered from the file source of truth (models actually used on this machine),
+ * replacing all hardcoded stale lists (claude-opus-4-7, etc.). Supports free-text input as a fallback
+ * (new models / models never used); full names shown directly with no alias mapping.
  */
 export function ModelSelect({
   value,
@@ -30,8 +30,8 @@ export function ModelSelect({
   const models = (data?.data ?? []).filter((m) => !m.alias);
   const [custom, setCustom] = useState(false);
   const inList = models.some((m) => m.model === value);
-  // 当前值不在扫描清单（如 settings.json 里的别名/新模型）时，作为附加项
-  // 显示在下拉顶部——绝不因此退化成纯输入框（用户 2026-07-10 实测反馈）。
+  // When the current value is not in the scanned list (e.g. an alias / new model in settings.json), it is shown as an extra item
+  // at the top of the dropdown — it must never degrade into a plain input box because of this (user feedback, tested 2026-07-10).
   const options = value && !inList
     ? [{ model: value, file_count: 0, last_seen_ts: 0, alias: false }, ...models]
     : models;

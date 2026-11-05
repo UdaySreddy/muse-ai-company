@@ -43,9 +43,9 @@ export function ContextWatermarkBar({ pct, tokens, className }: ContextWatermark
       <div className="flex items-center justify-between gap-1 text-[10px] text-muted-foreground">
         <span className="inline-flex items-center gap-1">
           {t.contextWatermark.label}
-          {/* 口径徽标（设计 §5.3）：这个数是 ctx_watermark（复用治理域），既不是
-              用量累加也不是末轮上下文水位。三者互不相加 —— 定义见 /usage 页脚。
-              v1 只标出来，不改数据也不改算法。 */}
+          {/* Metric badge (design §5.3): this number is ctx_watermark (the reuse-governance domain) — it is neither
+              the usage sum nor the last-turn context level. The three never add together — see the definitions in the /usage footer.
+              v1 only labels it; it changes neither the data nor the algorithm. */}
           <MetricBadge metric="ctx_watermark" compact />
         </span>
         <span className={textColorClass(clamped)}>{clamped.toFixed(1)}%</span>
