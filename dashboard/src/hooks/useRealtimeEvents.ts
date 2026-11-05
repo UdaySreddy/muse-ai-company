@@ -14,10 +14,10 @@ export function useRealtimeEvents() {
       try {
         const raw = JSON.parse(event.data as string);
 
-        // 跳过非事件消息（如ack）
+        // Skip non-event messages (e.g. ack)
         if (raw.type !== 'event') return;
 
-        // 用 event_type 作为实际类型
+        // Use event_type as the actual type
         const data: WSEvent = {
           type: raw.event_type ?? raw.type,
           source: raw.channel ?? '',
@@ -50,7 +50,7 @@ export function useRealtimeEvents() {
           void queryClient.invalidateQueries({ queryKey: ['meetings'] });
         }
         if (t.startsWith('workflow')) {
-          // workflow.planned/started/completed → 失效运行列表与详情（前缀匹配）
+          // workflow.planned/started/completed -> invalidate run list and detail (prefix match)
           void queryClient.invalidateQueries({ queryKey: ['workflows'] });
         }
         if (t.startsWith('project')) {
@@ -58,11 +58,11 @@ export function useRealtimeEvents() {
           void queryClient.invalidateQueries({ queryKey: ['project-task-wall'] });
         }
         if (t.startsWith('cc.')) {
-          // CC hook事件：刷新agents和teams（可能有auto-created agent）
+          // CC hook events: refresh agents and teams (may include auto-created agents)
           void queryClient.invalidateQueries({ queryKey: ['teams'] });
           void queryClient.invalidateQueries({ queryKey: ['activities'] });
         }
-        // 所有事件都应刷新事件列表
+        // All events should refresh the event list
         void queryClient.invalidateQueries({ queryKey: ['events'] });
       } catch {
         // ignore malformed messages
