@@ -36,14 +36,14 @@ _TARGET_TOOL_NAMES = {
     "report_save",
 }
 
-# 5-section template headings — match either Chinese template or plain numeric
-# variants ("## 1.", "## 1 ", "## 1 真实定位"). The first capture group is the
+# 5-section template headings — match either the titled template or plain numeric
+# variants ("## 1.", "## 1 ", "## 1 True positioning"). The first capture group is the
 # section number we keep.
 _SECTION_RE = re.compile(
     r"^##\s*(\d)[\.\s].*$",
     re.MULTILINE,
 )
-# Demo metadata lines inside the trailing "## 元数据" block.
+# Demo metadata lines inside the trailing "## Metadata" block.
 _DEMO_RESULT_RE = re.compile(
     r"^[-*]?\s*demo_result\s*[:：]\s*(\w+)",
     re.IGNORECASE | re.MULTILINE,
@@ -52,9 +52,9 @@ _DEMO_LOG_RE = re.compile(
     r"^[-*]?\s*demo_log_excerpt\s*[:：]\s*\|?\s*\n((?:[ \t]+.*\n?)+)",
     re.MULTILINE,
 )
-# 推荐动作 line inside section 5.
+# Recommended action line inside section 5.
 _RECOMMENDATION_RE = re.compile(
-    r"推荐动作[^\n]*?[:：][^\n]*?\*{0,2}(integrate|reference|learn|skip)\*{0,2}",
+    r"Recommended action[^\n]*?[:：][^\n]*?\*{0,2}(integrate|reference|learn|skip)\*{0,2}",
     re.IGNORECASE,
 )
 
@@ -150,7 +150,7 @@ def _split_sections(content: str) -> dict[str, str]:
     ``## N.`` section (heading line excluded). Missing sections are absent
     from the dict — callers must tolerate that.
 
-    The trailing ``## 元数据`` (or any non-numeric ``##`` section after the 5
+    The trailing ``## Metadata`` (or any non-numeric ``##`` section after the 5
     sections) is dropped from the section bodies, so demo metadata never
     bleeds into section 5.
     """
@@ -159,7 +159,7 @@ def _split_sections(content: str) -> dict[str, str]:
         return {}
 
     # Find the first non-numeric ## heading after the last numeric one — that
-    # marks where 元数据 / appendix begins.
+    # marks where Metadata / appendix begins.
     appendix_start = len(content)
     last_numeric_end = matches[-1].end()
     appendix_re = re.compile(r"^##\s+(?!\d[\.\s])\S", re.MULTILINE)
@@ -182,7 +182,7 @@ def _split_sections(content: str) -> dict[str, str]:
 
 
 def _parse_demo_metadata(content: str) -> tuple[str | None, str | None]:
-    """Extract demo_result + demo_log_excerpt from the 元数据 block.
+    """Extract demo_result + demo_log_excerpt from the Metadata block.
 
     Returns (demo_result, demo_log_excerpt). Either or both may be ``None``
     when the report didn't include them.

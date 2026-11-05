@@ -137,9 +137,10 @@ def _cherry_breakdown(cherry_lines: list[str]) -> str:
     if not unmatched:
         return ""
     return (
-        f"git cherry: {matched_n}/{len(cherry_lines)} 个 commit 与主分支内容等价，"
-        f"{len(unmatched)} 个不等价（{', '.join(unmatched)}）——"
-        "请人工核实这些 commit 触及的文件是否已在主分支体现，确认属实再 --force"
+        f"git cherry: {matched_n}/{len(cherry_lines)} commits are content-equivalent to the main branch, "
+        f"{len(unmatched)} are not equivalent ({', '.join(unmatched)}) — "
+        "please manually verify whether the files touched by these commits are already reflected on the main branch, "
+        "and only --force after confirming they are"
     )
 
 
@@ -191,12 +192,12 @@ def _assess_unlanded_work(path: str) -> tuple[bool, str | None, str | None]:
         ahead_code, ahead_out = _run_git_readonly(["rev-list", "@{u}..HEAD"], cwd=path)
         pushed = ahead_code == 0 and not ahead_out
         if pushed:
-            return dirty, None, "已推送到远端但尚未合并到 base 分支"
+            return dirty, None, "pushed to the remote but not yet merged into the base branch"
 
-    reason = "存在本地未推送/未合并的 commit"
+    reason = "There are local unpushed/unmerged commits"
     hint = _cherry_breakdown(cherry_lines)
     if hint:
-        reason = f"{reason}（{hint}）"
+        reason = f"{reason} ({hint})"
     return dirty, reason, None
 
 
@@ -215,11 +216,14 @@ def _get_api_url() -> str:
 _LEADER_CONSECUTIVE_THRESHOLD = 8
 
 # Tool names considered "delegation" actions (calling these resets the counter)
-# Workflow = CC ultracode 编排工具。Leader 调用它就是在委派执行（交给 CC 内置工作流），
-# 与 Agent 直派同属委派动作，应重置 B0.9「连续自己干」计数器，
-# 不再催 Leader「为什么不委派」。任务上墙(task_create)提醒不受影响，照常保留。
-# TeamCreate 于 CC v2.1.219 已不存在（2026-07-25 工具面核对），保留在集合里
-# 无害但已无意义，故移除；派发唯一入口是 Agent。
+# Workflow = CC's ultracode orchestration tool. When the Leader calls it, that is delegating execution (handing it to
+# CC's built-in workflow),
+# which is a delegation action just like direct Agent dispatch, so it should reset the B0.9 "keeps doing it
+# themselves" counter
+# and stop nagging the Leader with "why not delegate". The task-on-wall (task_create) reminder is unaffected and stays
+# as usual.
+# TeamCreate no longer exists as of CC v2.1.219 (tool-surface check 2026-07-25); keeping it in the set is
+# harmless but meaningless, so it was removed; the sole dispatch entry point is Agent.
 _DELEGATION_TOOLS = {"Agent", "SendMessage", "Workflow"}
 
 # Infrastructure tools only Leader can do — don't count toward B0.9 threshold
@@ -272,7 +276,8 @@ def _resolve_project_id() -> str | None:
     try:
         req = urllib.request.Request(
             f"{api_url}/api/context/resolve",
-            data=json.dumps({"cwd": cwd, "auto_create": False}).encode(),  # 归属铁律：绝不自动立项
+            data=json.dumps({"cwd": cwd, "auto_create": False}).encode(),  # ownership iron rule: never auto-create a
+            # project
             headers={"Content-Type": "application/json"},
             method="POST",
         )
@@ -352,27 +357,33 @@ def _get_running_pipeline_subtask(
 def _bind_subtask_running(api_url: str, project_id: str | None = None) -> str | None:
     """Advisory-only detection of the current pipeline stage subtask on agent dispatch.
 
-    pipeline 已退役（设计文档 §7；对齐 pipeline_gate.py:413-419 的退役口径）：不再自动
-    把子任务 PUT running。原写库带 active_teams[0] 启发式错绑风险——派出的 agent 未必
-    属于该 pipeline，却会把不相关子任务标 running。现仅只读探测存量 pipeline，返回提示
-    文本让 Leader 自行决定；无 pipeline 时返回 None。
+    The pipeline has been retired (design doc §7; aligned with pipeline_gate.py:413-419's retirement semantics): no
+    longer automatically
+    PUTs a subtask to running. The original DB write carried the active_teams[0] heuristic mis-binding risk — a
+    dispatched agent does not necessarily
+    belong to that pipeline, yet unrelated subtasks would be marked running. Now it only read-only probes legacy
+    pipelines and returns a hint
+    text for the Leader to decide; returns None when there is no pipeline.
     """
     subtask_id, _parent_task_id, stage_name, _ = _get_running_pipeline_subtask(api_url, project_id=project_id)
     if not subtask_id:
         return None
     return (
-        f"检测到存量 pipeline 子任务 {subtask_id}（阶段: {stage_name}）。"
-        "hook 不会自动置 running，需要跟踪请自己 task_update。"
+        f"Detected a legacy pipeline subtask {subtask_id} (stage: {stage_name})."
+        "The hook will not automatically set it to running; use task_update yourself if you need to track it."
     )
 
 
 def _advance_pipeline_on_completion(api_url: str, project_id: str | None = None) -> str | None:
     """Advisory-only detection of a legacy pipeline when an agent reports completion.
 
-    pipeline 已退役（设计文档 §7；对齐 pipeline_gate.py:413-419 的退役口径）：不再自动把
-    子任务 PUT completed、也不再 POST advance。原写库有双重缺陷——SendMessage 完成关键词
-    误判（Leader 说"完成后汇报"也触发）+ active_teams[0] 启发式错绑；两者叠加会伪造 pipeline
-    推进。现仅只读探测存量 pipeline 并提示；无 pipeline 时返回 None。
+    The pipeline has been retired (design doc §7; aligned with pipeline_gate.py:413-419's retirement semantics): no
+    longer automatically
+    PUTs a subtask to completed, nor POSTs advance. The original DB write had a dual defect — SendMessage
+    completion-keyword
+    misjudgment (a Leader saying "report back when done" also triggered it) + the active_teams[0] heuristic
+    mis-binding; together they could forge pipeline
+    advancement. Now it only read-only probes legacy pipelines and hints; returns None when there is no pipeline.
     """
     subtask_id, parent_task_id, stage_name, next_stage_name = _get_running_pipeline_subtask(
         api_url, project_id=project_id
@@ -382,12 +393,12 @@ def _advance_pipeline_on_completion(api_url: str, project_id: str | None = None)
 
     if next_stage_name:
         return (
-            f"[OS提醒] 检测到存量 pipeline 阶段 '{stage_name}' → '{next_stage_name}'。"
-            "hook 不会自动推进，确认完成请自己 task_update。"
+            f"[OS Reminder] Detected legacy pipeline stage '{stage_name}' → '{next_stage_name}'."
+            "The hook will not automatically advance it; use task_update yourself once you confirm completion."
         )
     return (
-        f"[OS提醒] 检测到存量 pipeline 最后阶段 '{stage_name}'。"
-        "hook 不会自动收尾，确认完成请自己 task_update。"
+        f"[OS Reminder] Detected the legacy pipeline's final phase '{stage_name}'."
+        "The hook will not automatically wrap it up; use task_update yourself once you confirm completion."
     )
 
 
@@ -410,9 +421,11 @@ def _save_supervisor_state(state: dict) -> None:
         pass
 
 
-# 催办类提醒的会话级节流子桶（supervisor-state.json 是跨会话全局文件；催办计数/
-# 已展示标记必须按 session 隔离，否则"每会话最多 N 次"无从谈起）。24h 未触及的
-# 会话桶自动剪枝，避免全局 state 文件随会话数无限膨胀。
+# Session-level throttle sub-buckets for nagging reminders (supervisor-state.json is a cross-session global file;
+# nagging counts /
+# shown flags must be isolated per session, otherwise "at most N times per session" is meaningless). Session buckets
+# untouched for 24h
+# are pruned automatically, so the global state file does not bloat indefinitely with the session count.
 _SESSION_BUCKET_TTL = 24 * 3600
 
 
@@ -437,18 +450,24 @@ def _session_bucket(state: dict, session_id: str) -> dict:
     return bucket
 
 
-# A1'(S5) commit 期分支所有权断言的两条时间线（辩论 503e07f1 议题A 裁决）。
-# 刻意是两个不同的值，不是一个：
-#   ACTIVE — 认领在这个窗口内算"活人还在这条分支上"，别人撞上去硬拦。
-#   PRUNE  — 记录彻底删掉的线，必须显著长于 ACTIVE。若两者取同一个值，过期记录会在
-#            剪枝时一并消失，"他人记录过期→降为警告"就永远发不出来（静默放行），
-#            合法接手者也就失去了"你接的是别人手里的分支"这一句提示。
+# The two timelines of A1'(S5)'s commit-time branch ownership assertion (debate 503e07f1, topic A ruling).
+# Deliberately two different values, not one:
+#   ACTIVE — within this window a claim counts as "a living person is still on this branch", and others running into
+# it are hard-blocked.
+#   PRUNE  — the line at which records are deleted outright; must be significantly longer than ACTIVE. If the two took
+# the same value, expired records would
+#            vanish at pruning time too, and "another's record expired → downgrade to a warning" could never be
+# emitted (a silent pass),
+#            and a legitimate taker-over would also lose the hint "the branch you are taking over was in someone
+# else's hands".
 _BRANCH_OWNERSHIP_ACTIVE_TTL = 24 * 3600
 _BRANCH_OWNERSHIP_PRUNE_TTL = 7 * 24 * 3600
 
-# 只认命令里真正作为命令起头出现的 git commit（行首/管道/分号/子 shell 之后），
-# 避免把 `echo "git commit"` 之类的字面量当成一次提交。`-C <dir>` 与 `-c k=v`
-# 是提交时真会出现的全局参数，一并吃掉才能拿到正确的探测目录。
+# Only recognizes a git commit that truly appears at a command start (after a line start / pipe / semicolon /
+# sub-shell),
+# avoiding literals like `echo "git commit"` being taken for a commit. `-C <dir>` and `-c k=v`
+# are global options that really occur at commit time; consuming them too is required to get the correct probe
+# directory.
 _GIT_COMMIT_RE = re.compile(
     r"(?:\A|[\n;&|(])\s*git\s+(?:-C\s+(?P<cdir>\S+)\s+)?(?:-c\s+\S+\s+)*commit\b"
 )
@@ -544,17 +563,18 @@ def _check_commit_branch_ownership(
     lines = out.splitlines() if out else []
     if code != 0 or len(lines) < 2 or not lines[0].strip() or not lines[1].strip():
         return [
-            f"[安全] 分支所有权检查未能执行：git 探测失败（cwd={probe_cwd}）。"
-            "本次提交既未放行也未拦截——请自己 git rev-parse --abbrev-ref HEAD "
-            "确认当前分支确实是你在用的那条，再决定要不要提交。"
+            f"[Security] The branch ownership check could not be executed: the git probe failed (cwd={probe_cwd})."
+            "This commit has been neither passed nor blocked — run git rev-parse --abbrev-ref HEAD yourself "
+            "to confirm the current branch really is the one you are using, then decide whether to commit."
         ]
 
     checkout, branch = lines[0].strip(), lines[1].strip()
     if branch == "HEAD":
         return [
-            f"[安全] 分支所有权检查未能执行：{checkout} 处于游离 HEAD（detached），"
-            "没有分支名可比对。本次提交既未放行也未拦截——游离态提交不属于任何分支，"
-            "请先确认这是你要的状态。"
+            f"[Security] The branch ownership check could not be executed: {checkout} is in a detached HEAD state, "
+            "with no branch name to compare. This commit has been neither passed nor blocked — a detached commit "
+            "belongs to no branch, "
+            "please confirm this is the state you want first."
         ]
 
     bucket = _ownership_bucket(state, checkout)
@@ -573,25 +593,31 @@ def _check_commit_branch_ownership(
         age_h = age / 3600
         if age <= _BRANCH_OWNERSHIP_ACTIVE_TTL:
             sys.stderr.write(
-                f"[OS BLOCK] 分支所有权冲突：{checkout} 当前 HEAD 是「{branch}」，"
-                f"而这条分支由 agent {other_id} 在 {age_h:.1f} 小时前认领且仍在有效期内。"
-                "你正要把提交落到别人的分支上（2026-07-10 就是这样丢过代码）。"
-                "请先 git worktree add 开自己的隔离工作区，或与对方确认后由本人操作——"
-                "不要重放这条被拦的命令。"
+                f"[OS BLOCK] Branch ownership conflict: {checkout}'s current HEAD is '{branch}', "
+                f"and this branch was claimed by agent {other_id} {age_h:.1f} hours ago and is still within its "
+                f"validity period."
+                "You are about to land a commit on someone else's branch (code was lost exactly this way on "
+                "2026-07-10)."
+                "First open your own isolated workspace with git worktree add, or have the owner operate it after "
+                "confirming with them — "
+                "do not replay this blocked command."
             )
             sys.exit(2)
         warnings.append(
-            f"[安全] 分支所有权提示：{checkout} 的分支「{branch}」原由 agent {other_id} 认领，"
-            f"但该记录已过期（{age_h:.1f} 小时前，超过 {_BRANCH_OWNERSHIP_ACTIVE_TTL // 3600}h）——"
-            "按合法接手处理，不拦。若对方其实还活着，请先确认再提交。"
+            f"[Security] The branch ownership claim on '{branch}' in {checkout} was made by agent {other_id}, "
+            f"but that record has expired ({age_h:.1f} hours ago, over the {_BRANCH_OWNERSHIP_ACTIVE_TTL // 3600}h "
+            f"limit) — "
+            "treated as a legitimate takeover, not blocked. If the other party is actually still alive, confirm "
+            "before committing."
         )
 
     if isinstance(mine, dict):
         warnings.append(
-            f"[安全] 分支所有权警告：你在 {checkout} 首次提交时记录的分支是"
-            f"「{mine.get('branch')}」，当前 HEAD 却是「{branch}」。"
-            "分支在你没留意时被换过（同一 checkout 被多方共用的典型征兆）。"
-            "确认这就是你要提交的分支再继续；不是的话先 git checkout 回去。"
+            f"[Security] Warning on branch ownership: the branch you recorded at your first commit in {checkout} was "
+            f"'{mine.get('branch')}', but the current HEAD is '{branch}'."
+            "The branch was switched without you noticing (the classic symptom of one checkout shared by several "
+            "parties)."
+            "Confirm this is the branch you want to commit to before continuing; if not, git checkout back first."
         )
     else:
         bucket[agent_id] = {"branch": branch, "ts": now}
@@ -603,7 +629,7 @@ def _is_taskwall_tool(tool_name: str) -> bool:
     """True for any OS task-wall operation (task_* / taskwall_*, prefixed or bare).
 
     Operating the task wall — creating / updating / reading / memoing tasks — should
-    reset the "好久没看任务墙" catch-up timer, not only the two explicit view tools.
+    reset the "hasn't looked at the task wall in a while" catch-up timer, not only the two explicit view tools.
     Otherwise a session actively managing the wall via task_create/task_update/… still
     gets nagged indefinitely.
     """
@@ -612,15 +638,18 @@ def _is_taskwall_tool(tool_name: str) -> bool:
 
 
 def _check_agent_team_name(event_data: dict) -> str | None:
-    """Agent 直派检查（2026-07-22 拦截退役版）。Return warning text or None.
+    """Direct Agent dispatch check (2026-07-22 interception-retired version). Return warning text or None.
 
-    历史：曾对无 team_name 的实施型直派无条件 exit(2) 硬拦（"本地 agent 不可追踪，
-    禁止派发"）。2026-07-22 缔造者裁定「全面放开+一律自动追踪」（任务 8705dac2，
-    方向记忆 a67fb0de）：hook_translator._on_subagent_start 现已对无队可归的直派
-    agent 自动收编进 session-<sid8> 容器队——"不可追踪"前提消失，硬拦随之退役。
-    保留两个既有护栏：
-      1. explore/plan + team_name 的误用提醒（内置只读类型不支持 SendMessage）；
-      2. 显式 team_name 的跨项目派发拦截（2026-05-08 泄漏事故防线，不动）。
+    History: it once unconditionally hard-blocked implementation-type direct dispatches without a team_name via
+    exit(2) ("local agents are untrackable,
+    dispatch forbidden"). On 2026-07-22 the Creator ruled "fully open + uniformly auto-tracked" (task 8705dac2,
+    direction memory a67fb0de): hook_translator._on_subagent_start now automatically absorbs direct-dispatch agents
+    with no team to belong to
+    into the session-<sid8> container team — the "untrackable" premise vanished, and the hard block retired with it.
+    Two existing guardrails are kept:
+      1. the misuse reminder for explore/plan + team_name (the built-in read-only types do not support SendMessage);
+      2. the cross-project dispatch interception for an explicit team_name (the 2026-05-08 leak-incident line of
+      defense, untouched).
     """
     tool_name = event_data.get("tool_name", "")
     if tool_name != "Agent":
@@ -633,11 +662,13 @@ def _check_agent_team_name(event_data: dict) -> str | None:
     has_team = bool(tool_input_dict.get("team_name"))
     if subagent_type in readonly_builtins and has_team:
         return (
-            "[OS提醒] Explore/Plan 是 CC 内置只读类型，不支持 SendMessage 团队通讯；"
-            "需要来回沟通请换用其他 subagent_type。"
+            "[OS Reminder] Explore/Plan are CC's built-in read-only types and do not support SendMessage team "
+            "communication; "
+            "if you need back-and-forth communication, use another subagent_type."
         )
 
-    # 显式 team_name → 跨项目护栏（防 Leader 在项目 A 往项目 B 的队里派 agent）。
+    # Explicit team_name → cross-project guardrail (prevents a Leader in project A from dispatching agents into a team
+    # of project B).
     team_name = tool_input_dict.get("team_name")
     if team_name:
         cross_project_warn = _check_team_cross_project(team_name)
@@ -645,7 +676,8 @@ def _check_agent_team_name(event_data: dict) -> str | None:
             sys.stderr.write(cross_project_warn)
             sys.exit(2)
 
-    # 无 team_name（含实施型）一律放行——SubagentStart 自动收编进本会话容器队。
+    # No team_name (including implementation-type) is uniformly passed — SubagentStart automatically absorbs them into
+    # this session's container team.
     return None
 
 
@@ -672,9 +704,9 @@ def _check_team_cross_project(team_name: str) -> str | None:
         team_pid = team.get("project_id")
         if team_pid and team_pid != current_pid:
             return (
-                f"[OS BLOCK] 跨项目派发被拦截: team='{team_name}' 属于项目 {team_pid[:8]}, "
-                f"但当前 cwd 项目是 {current_pid[:8]}。请用本项目的团队，"
-                f"或先 cd 到正确的项目目录。"
+                f"[OS BLOCK] Cross-project dispatch blocked: team='{team_name}' belongs to project {team_pid[:8]}, "
+                f"but the current cwd project is {current_pid[:8]}. Please use a team from this project, "
+                f"or cd to the correct project directory first."
             )
         return None
     except Exception:
@@ -740,8 +772,8 @@ def _check_leader_doing_too_much(event_data: dict, state: dict) -> str | None:
     over = consecutive - _LEADER_CONSECUTIVE_THRESHOLD
     if over == 1 or (over > 1 and over % 10 == 0):
         return (
-            f"[AI Team OS] B0.9提醒：Leader已连续执行{consecutive}次工具调用。"
-            "是否应该委派给团队成员？"
+            f"[AI Team OS] B0.9 reminder: the Leader has executed {consecutive} consecutive tool calls."
+            "Should this be delegated to a team member?"
         )
 
     return None
@@ -759,27 +791,37 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
     # 1. After TeamCreate: remind whether task is on the task wall
     if tool_name == "TeamCreate":
         warnings.append(
-            "[OS提醒] 新团队已创建。此工作方向是否已在任务墙创建对应任务？"
-            "→ 使用 task_run 或 task_create 添加任务"
+            "[OS Reminder] A new team has been created. Has a corresponding task been created on the task wall for "
+            "this work direction?"
+            "→ Use task_run or task_create to add the task"
         )
 
-    # 1b. Workflow (CC ultracode 编排) — 软提醒，让产出回流 OS（治理层定位）。
-    # OS 不拦 Workflow（CC 平台级 runtime），但提醒 Leader：① 总任务仍要上墙；
-    # ② 在 agent prompt 里加 OS 回写指令，让 workflow 成员自己记账。节流 300s 防噪音。
+    # 1b. Workflow (CC ultracode orchestration) — a soft reminder, so output flows back into the OS (the governance
+    # layer's positioning).
+    # The OS does not block Workflow (a CC platform-level runtime), but reminds the Leader: 1) the overall task still
+    # goes on the wall;
+    # ② add an OS write-back instruction in the agent prompts so workflow members do their own bookkeeping. Throttled
+    # to 300s against noise.
     if tool_name == "Workflow":
         last = state.get("workflow_reminder_at", 0)
         if now - last >= 300:
             state["workflow_reminder_at"] = now
             warnings.append(
-                "[OS提醒] Workflow 运行已自动追踪成团队。仍需你做两件事："
-                "① task_create 把总任务上墙；② 在每个 workflow agent 的 prompt 里嵌回写指令"
-                "（ToolSearch 加载 task_memo_add/report_save 后调用），否则内部产出不入 OS。"
-                "模板见 skill /os-workflow。"
+                "[OS Reminder] The Workflow run is being automatically tracked as a team. You still need to do two "
+                "things: "
+                "1) task_create to put the overall task on the wall; 2) embed a write-back instruction in each "
+                "workflow agent's prompt "
+                "(load task_memo_add/report_save via ToolSearch, then call them), otherwise the internal output "
+                "never enters the OS. "
+                "See the skill /os-workflow for the template."
             )
 
-    # 1c. 生态调研/自建 pipeline 入口 — 编排层已迁移 ultracode/Workflow（v1.8.1 决策）。
-    # ultracode 需用户手动开启（非常驻），自建派发层随时可跑但已退役——
-    # 所以在旧入口软提醒：先确认用户开了 ultracode，再用 Workflow 编排。节流 3600s。
+    # 1c. Ecosystem research / self-built pipeline entry points — the orchestration layer has migrated to
+    # ultracode/Workflow (v1.8.1 decision).
+    # ultracode must be enabled manually by the user (not resident); the self-built dispatch layer can run any time
+    # but is retired —
+    # so the old entry points get a soft reminder: first confirm the user has ultracode on, then orchestrate with
+    # Workflow. Throttled to 3600s.
     _ultracode_hint_tools = (
         "ecosystem_claim_shallow",
         "ecosystem_claim_review",
@@ -793,9 +835,9 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
         if now - last >= 3600:
             state["ultracode_hint_at"] = now
             warnings.append(
-                "[OS提醒] 生态调研的产物必须回写 ecosystem 表"
-                "（ecosystem_apply_shallow_summary / ecosystem_apply_quality_review），"
-                "否则台账与 /ecosystem 页面看不到这次调研。"
+                "[OS Reminder] The output of ecosystem research must be written back to the ecosystem tables "
+                "(ecosystem_apply_shallow_summary / ecosystem_apply_quality_review), "
+                "otherwise the ledger and the /ecosystem page cannot see this research."
             )
 
     # 2. Before Agent creation: check task wall, template usage, and historical memos
@@ -859,8 +901,9 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
 
             if not has_active_task:
                 warnings.append(
-                    "[OS提醒] 当前无进行中任务。派 Agent 干活前先 task_create 把这件事上墙，"
-                    "否则产出无处记账。"
+                    "[OS Reminder] There is currently no task in progress. Before dispatching an Agent to work, put "
+                    "this matter on the wall with task_create first, "
+                    "otherwise the output has nowhere to be booked."
                 )
             else:
                 # 2a-TW. Pre-check: verify dispatched work matches a task wall item
@@ -877,7 +920,10 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
                             tw_pending = [t for t in tw_tasks if t.get("status") in ("pending", "running")]
                             # Quick keyword match check
                             agent_words = set(agent_prompt.replace("—", " ").replace("-", " ").split())
-                            agent_words -= {"的", "是", "在", "了", "和", "与", "a", "the", "to", "for", "of"}
+                            agent_words -= {
+                                "\u7684", "\u662f", "\u5728", "\u4e86", "\u548c", "\u4e0e", "a", "the",
+                                "to", "for", "of"
+                            }
                             matched_any = False
                             for t in tw_pending:
                                 _raw = (t.get("title") or "").lower().replace("—", " ").replace("-", " ")
@@ -886,14 +932,17 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
                                     matched_any = True
                                     break
                             if not matched_any and tw_pending:
-                                # 节流 3600s（2026-07-14 审计 P1：同条提醒曾对 Leader 连发 24 次）
+                                # Throttled to 3600s (audit P1, 2026-07-14: the same reminder once fired at the Leader
+                                # 24 times in a row)
                                 _wm_last = state.get("wall_match_reminder_at", 0)
                                 if now - _wm_last >= 3600:
                                     state["wall_match_reminder_at"] = now
-                                    tw_titles = "、".join(t.get("title", "?")[:20] for t in tw_pending[:3])
+                                    tw_titles = ", ".join(t.get("title", "?")[:20] for t in tw_pending[:3])
                                     warnings.append(
-                                        f"[OS提醒] 此Agent工作未匹配到任务墙项（墙上有：{tw_titles}）。"
-                                        "确认此工作已在任务墙登记？→ task_create 上墙"
+                                        f"[OS Reminder] This Agent's work is unmatched to any task-wall item (on the "
+                                        f"wall: {tw_titles})."
+                                        "Confirm this work is registered on the task wall? → Put it on the wall with "
+                                        "task_create"
                                     )
                 except Exception:
                     pass  # Advisory only
@@ -904,15 +953,16 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
                     _bind_api_url = _get_api_url()
                     bind_msg = _bind_subtask_running(_bind_api_url, project_id=project_id)
                     if bind_msg:
-                        warnings.append(f"[OS提醒] {bind_msg}")
+                        warnings.append(f"[OS Reminder] {bind_msg}")
                 except Exception:
                     pass  # Binding is optional — never block agent dispatch
 
-            # 2d.（已退役）pipeline 强挂载检查 — pipeline 已定向废弃（设计文档 §7
-            # Phase1 断新增入口）：不再催促/强制 task_type，编排改用 CC Workflow，
-            # 运行追踪走观测层（Dashboard /workflows）。回滚见 git 历史。
+            # 2d.(retired) pipeline strong-mount check — the pipeline has been directionally deprecated (design doc §7
+            # Phase1 cut the new entry points): no longer nagging/forcing task_type; orchestration uses CC Workflow
+            # instead,
+            # and run tracking goes through the observation layer (Dashboard /workflows). See git history for rollback.
             if has_active_task and running_tasks:
-                # 2e. Pipeline pending stage detection（退役期：仅对存量 pipeline 软提醒）
+                # 2e. Pipeline pending stage detection (retirement period: soft reminders for legacy pipelines only)
                 tasks_with_pipeline = [
                     t for t in running_tasks
                     if (t.get("config") or {}).get("pipeline")
@@ -937,20 +987,21 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
                     first_title, first_stage, first_tpl = pending_stage_info[0]
                     if pending_warnings == 0:
                         warnings.append(
-                            f"[OS提醒] Pipeline 阶段 '{first_stage}' 就绪（任务: {first_title}），"
-                            f"推荐 agent_template: {first_tpl}"
+                            f"[OS Reminder] Pipeline stage '{first_stage}' is ready (task: {first_title}), "
+                            f"recommended agent_template: {first_tpl}"
                         )
                         state["pipeline_pending_warnings"] = 1
                     elif pending_warnings == 1:
                         warnings.append(
-                            f"[OS提醒] 请先推进 pipeline（阶段 '{first_stage}' 等待中），"
-                            "再分配其他工作"
+                            f"[OS Reminder] Please advance the pipeline first (stage '{first_stage}' is waiting), "
+                            "before assigning other work"
                         )
                         state["pipeline_pending_warnings"] = 2
                     else:
-                        # 退役期不再硬拦（原 exit(2)）：存量 pipeline 只持续软提醒
+                        # In the retirement period there is no more hard blocking (formerly exit(2)): legacy pipelines
+                        # only get continuous soft reminders
                         warnings.append(
-                            f"[OS提醒] 存量 pipeline 阶段 '{first_stage}' 仍等待推进"
+                            f"[OS Reminder] The legacy pipeline stage '{first_stage}' is still waiting to advance"
                         )
 
                 # 2f. Agent type matching check vs pipeline recommended template.
@@ -982,8 +1033,9 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
                             state["pipeline_pending_warnings"] = 0
                         else:
                             warnings.append(
-                                f"[OS提醒] 当前阶段 '{current_stage_name}' 推荐 {recommended_template}，"
-                                f"但你派出了 {subagent_type_for_check}。确认使用？"
+                                f"[OS Reminder] The current stage '{current_stage_name}' recommends "
+                                f"{recommended_template}, "
+                                f"but you dispatched {subagent_type_for_check}. Confirm using it?"
                             )
 
         # 2b. Template usage reminder (check if subagent_type is a known template)
@@ -992,8 +1044,9 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
             last_tpl = state.get("last_template_reminder", 0)
             if now - last_tpl > 600:  # 10-min cooldown
                 warnings.append(
-                    "[OS提醒] 派通用 Agent 前可看一眼是否有更贴合的模板："
-                    "agent_template_recommend(task描述)"
+                    "[OS Reminder] Before dispatching a general-purpose Agent, take a look at whether a "
+                    "better-fitting template exists: "
+                    "agent_template_recommend(task description)"
                 )
                 state["last_template_reminder"] = now
 
@@ -1002,33 +1055,38 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
             last_memo = state.get("last_memo_reminder", 0)
             if now - last_memo > 300:
                 warnings.append(
-                    "[OS提醒] 分配新成员前：此任务是否有历史工作记录？"
-                    "→ 建议先 task_memo_read 查看前置工作"
+                    "[OS Reminder] Before assigning a new member: does this task have historical work records?"
+                    "→ Consider checking the prior work first with task_memo_read"
                 )
                 state["last_memo_reminder"] = now
 
     # 3. Before SendMessage(shutdown): remind about task completion
     if tool_name == "SendMessage":
         input_str = str(event_data.get("tool_input", {}))
-        if "shutdown" in input_str.lower():
+        if "shutdown" in input_str.lower() or "shut down" in input_str.lower():
             warnings.append(
-                "[OS提醒] 关闭Agent前：此Agent的任务是否已标记完成？"
-                "→ 建议更新任务状态并添加总结memo (task_memo_add type=summary)"
+                "[OS Reminder] Close Agent checklist: has this Agent's task been marked completed?"
+                "→ Update the task status and add a summary memo (task_memo_add type=summary)"
             )
 
     # 4. On TeamDelete: sync-close ONLY the corresponding OS team.
-    # 历史缺陷（2026-07-14 审计 A2，high）：这里曾遍历把所有 status=active 团队盲 PUT
-    # completed，无范围限定——多会话多团队并行（本仓常态，当时 5+ active）下，删任意一个
-    # CC 团队都会把其他会话仍在用的团队全部误标 completed，跨团队状态失真。改为：从
-    # tool_input 精确提取被删团队标识，按 OS↔CC 命名约定（_norm_team_key，与 state_reaper.
-    # _check_team_liveness 的 cc_dir_name 一致）只关那一个；拿不到可靠标识或匹配不到则纯
-    # 提醒不写库——state_reaper._check_team_liveness 会按 CC 配置探活兜底同步关闭，无需盲写。
+    # Historical defect (audit A2, 2026-07-14, high): this code once iterated and blindly PUT all status=active teams to
+    # completed with no scoping — under multi-session, multi-team parallelism (this repo's norm; 5+ active at the
+    # time), deleting any one
+    # CC team would mis-mark all teams still used by other sessions as completed, distorting cross-team state. Changed
+    # to: precisely extract the deleted team's identifier from
+    # tool_input, and close only that one per the OS↔CC naming convention (_norm_team_key, consistent with state_reaper.
+    # _check_team_liveness's cc_dir_name); when no reliable identifier is obtained or nothing matches, only
+    # remind without writing to the DB — state_reaper._check_team_liveness probes liveness from the CC config and
+    # closes in sync as a fallback, so no blind write is needed.
     if tool_name == "TeamDelete":
         target_ident = _extract_team_identifier(event_data.get("tool_input", {}))
         if not target_ident:
             warnings.append(
-                "[OS提醒] 检测到 TeamDelete 但无法从参数解析被删团队标识，未自动同步关闭 OS 团队。"
-                "如 OS 侧仍显示该团队 active，请手动 team_close（state_reaper 配置探活亦会兜底）。"
+                "[OS Reminder] A TeamDelete was detected, but the deleted team's identifier cannot be determined "
+                "from the parameters, so no OS team was automatically closed in sync. "
+                "If the OS side still shows the team as active, close it manually with team_close (the "
+                "state_reaper's config liveness probing will also cover it as a fallback)."
             )
         else:
             try:
@@ -1053,8 +1111,10 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
                 ]
                 if not matched:
                     warnings.append(
-                        f"[OS提醒] TeamDelete 团队「{target_ident}」未匹配到 active 的 OS 团队，未写库"
-                        "（可能已关闭/从未在 OS 建队；state_reaper 配置探活会兜底同步）。"
+                        f"[OS Reminder] The TeamDelete target team '{target_ident}' is unmatched to any active OS "
+                        f"team; nothing was written to the database "
+                        "(it may already be closed, or was never created in the OS; the state_reaper's config "
+                        "liveness probing will sync it as a fallback)."
                     )
                 for t in matched:
                     _close_h = {"Content-Type": "application/json"}
@@ -1085,10 +1145,10 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
             active_teams = [t for t in teams if t.get("status") == "active"]
             # Newly created team is also active, so check if >1 active teams
             if len(active_teams) > 1:
-                other = active_teams[0].get("name", "未知")
+                other = active_teams[0].get("name", "Unknown")
                 warnings.append(
-                    f"[OS提醒] 已存在活跃团队「{other}」。"
-                    "建议：①在已有团队中添加成员 ②先关闭旧团队再创建新的"
+                    f"[OS Reminder] An active team already exists: '{other}'."
+                    "Suggestion: 1) add members to the existing team 2) close the old team before creating a new one"
                 )
         except Exception:
             pass  # Silently skip when API unavailable
@@ -1155,22 +1215,24 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
                                 if matched:
                                     tags_str = ",".join(matched.get("tags") or [])
                                     hint = (
-                                        f"空闲Agent: {agent_name}({idle.get('role', '')}), "
-                                        f"待办: {matched['title']}"
+                                        f"Idle agent: {agent_name}({idle.get('role', '')}), "
+                                        f"To-do: {matched['title']}"
                                         + (f"(tags:{tags_str})" if tags_str else "")
-                                        + " → 建议分配"
+                                        + " → assignment suggested"
                                     )
                                     match_hints.append(hint)
                         except Exception:
                             pass
-                        # 催办类节流：同一会话最多提示 1 次"可并行分配"，之后静默
-                        # （高频催办被系统性无视=纯 token 与注意力税）。
+                        # Nagging throttle: at most 1 "parallel assignment possible" hint per session, then silence
+                        # (high-frequency nagging gets systematically ignored = a pure token and attention tax).
                         _idle_bucket = _session_bucket(state, session_id)
-                        # 只在能给出具体"谁空着 + 哪条待办"时才提醒；给不出配对
-                        # 就不发——"可以并行提高效率"这类空话不带信息量。
+                        # Only remind when a concrete "who is free + which to-do" pairing can be given; when no pairing
+                        # can be given, do not send it — platitudes like "parallel work improves efficiency" carry no
+                        # information.
                         if match_hints and not _idle_bucket.get("idle_member_reminder_shown"):
                             warnings.append(
-                                f"[OS提醒] 仅{busy_count}个成员在工作，空闲成员与待办可配对：\n"
+                                f"[OS Reminder] Only {busy_count} members are working; idle members can be paired "
+                                f"with to-dos:\n"
                                 + "\n".join(f"  • {h}" for h in match_hints)
                             )
                             _idle_bucket["idle_member_reminder_shown"] = True
@@ -1178,9 +1240,11 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
             pass  # Silently skip when API unavailable
 
     # 7. Task-wall catch-up: nag when a session hasn't touched the wall for a while.
-    # 催办类=低频+可静默：①重置计时的事件扩大到全部 task_*/taskwall_* 工具（不再只认
-    # 两个 view 工具，否则用 task_create/task_update 管理任务墙的会话仍被无限催）；
-    # ②间隔 900s→1800s；③同一会话最多催 2 次，之后静默（计数入会话桶）。
+    # Nagging class = low-frequency + silenceable: 1) the timer-resetting events are expanded to all task_*/taskwall_*
+    # tools (no longer recognizing only
+    # the two view tools, otherwise sessions managing the task wall with task_create/task_update would still be nagged
+    # endlessly);
+    # 2) the interval goes 900s→1800s; 3) at most 2 nags per session, then silence (counts go into the session bucket).
     if _is_taskwall_tool(tool_name):
         state["last_taskwall_view"] = now
     else:
@@ -1194,8 +1258,9 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
             if catchup_count < 2:
                 minutes = int((now - last_view) / 60)
                 warnings.append(
-                    f"[OS提醒] 距上次查看任务墙已{minutes}分钟。→ 建议 task_list_project() "
-                    f"查看项目任务墙（只看一支队传 team_id=）"
+                    f"[OS Reminder] It has been {minutes} minutes since the task wall was last viewed. → Consider "
+                    f"task_list_project() "
+                    f"to view the project task wall (pass team_id= to see only one team)"
                 )
                 bucket["taskwall_catchup_count"] = catchup_count + 1
             state["last_taskwall_view"] = now
@@ -1203,10 +1268,10 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
     # 9. Handoff reminder: when Agent reports completion, remind to assign follow-up tasks
     if tool_name == "SendMessage":
         input_str = str(event_data.get("tool_input", {}))
-        completion_keywords = ["完成", "completed", "done", "finished", "汇报"]
+        completion_keywords = ["\u5b8c\u6210", "complete", "done", "finished", "\u6c47\u62a5"]
         is_completion = any(kw in input_str.lower() for kw in completion_keywords)
         # Exclude shutdown messages (already handled by rule 3)
-        is_shutdown = "shutdown" in input_str.lower()
+        is_shutdown = "shutdown" in input_str.lower() or "shut down" in input_str.lower()
         if is_completion and not is_shutdown:
             # 9-CP2. Pipeline auto-advance: mark subtask completed and advance pipeline
             try:
@@ -1242,11 +1307,12 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
                             if t.get("status") == "pending" and not t.get("assigned_to")
                         ]
                         if pending:
-                            pending_titles = "、".join(t["title"] for t in pending[:3])
-                            more = f"等{len(pending)}个" if len(pending) > 3 else ""
+                            pending_titles = ", ".join(t["title"] for t in pending[:3])
+                            more = f" and {len(pending)} in total" if len(pending) > 3 else ""
                             warnings.append(
-                                f"[OS提醒] Agent已完成汇报，仍有待分配任务：{pending_titles}{more}。"
-                                "→ 是否分配给空闲成员继续推进？"
+                                f"[OS Reminder] An Agent has finished reporting, and there are still unassigned "
+                                f"tasks: {pending_titles}{more}."
+                                "→ Assign them to idle members to keep things moving?"
                             )
             except Exception:
                 pass
@@ -1254,14 +1320,16 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
     # 10. After meeting_create: remind to notify participants and use skills
     if tool_name in ("meeting_create", "mcp__ai-team-os__meeting_create"):
         warnings.append(
-            "[OS提醒] 会议已创建，但 OS 不会替你通知任何人——"
-            "逐一 SendMessage 告知 meeting_id 与议题，参与者才会到场。"
+            "[OS Reminder] The meeting has been created, but the OS will not notify anyone for you — "
+            "notify participants one by one via SendMessage with the meeting_id and the agenda, and only then will "
+            "they show up."
         )
 
     # 11. After meeting_conclude: remind to add action items to task wall
     if tool_name in ("meeting_conclude", "mcp__ai-team-os__meeting_conclude"):
         warnings.append(
-            "[OS提醒] 会议已结束。结论里的行动项要 task_create 上墙——只写在纪要里等于没提。"
+            "[OS Reminder] The meeting has ended. The action items in the conclusions must go on the wall via "
+            "task_create — written only in the minutes is the same as never raised."
         )
 
     # 12. When task marked complete: remind QA acceptance testing
@@ -1269,15 +1337,17 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
         input_str = str(event_data.get("tool_input", {}))
         if "completed" in input_str.lower():
             warnings.append(
-                "[OS提醒] 任务已置完成。若改动影响系统行为或前端显示，请告知 QA 要观测什么"
+                "[OS Reminder] The task has been marked completed. If the change affects system behavior or the "
+                "frontend display, please tell QA what to observe"
             )
 
     # 13. Bottleneck detection: remind to hold meeting when all tasks done or many blocked
     # Check every 50 tool calls (throttled)
     bottleneck_count = state.get("bottleneck_check_count", 0) + 1
     state["bottleneck_check_count"] = bottleneck_count
-    # v1.8.1 fix: 按项目级任务墙判断，而非逐 active 团队判空——
-    # 团队维度会漏掉 team_id=null 的项目级任务，某团队清零即误报"全完成"
+    # v1.8.1 fix: judge by the project-level task wall rather than by each active team being empty —
+    # the team dimension misses project-level tasks with team_id=null, and one team emptying would falsely report "all
+    # complete"
     if bottleneck_count % 50 == 0 and project_id:
         try:
             import urllib.request
@@ -1297,32 +1367,36 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
             running_n = by_status.get("running", 0)
             blocked_n = by_status.get("blocked", 0)
             if pending_n + running_n + blocked_n == 0:
-                warnings.append("[OS提醒] 任务墙已清空：无 pending/running/blocked 任务")
+                warnings.append("[OS Reminder] The task wall is clear: no pending/running/blocked tasks")
             elif blocked_n > running_n and blocked_n >= 2:
-                warnings.append(f"[OS提醒] {blocked_n}个任务阻塞中，多于进行中的{running_n}个")
+                warnings.append(f"[OS Reminder] {blocked_n} tasks are blocked, more than the {running_n} in progress")
         except Exception:
             pass
 
     # 14. Report format validation — only for member completion reports.
-    # ⑤ 老实现不分消息方向，Leader 发出的派工/验收消息也被要求"完成内容/修改文件/
-    # 测试结果"格式。改为仅**子agent会话**（成员向 Leader 汇报）触发，排除主/Leader
-    # 会话；并加会话级节流（每会话最多 1 次），替代原全局 3600s 节流。
+    # ⑤ The old implementation did not distinguish message direction: dispatch/acceptance messages sent by the Leader
+    # were also required to follow the "Completed content/Modified files/
+    # Test results" format. Changed to trigger only in **subagent sessions** (members reporting to the Leader),
+    # excluding main/Leader
+    # sessions; and a session-level throttle was added (at most once per session), replacing the original global 3600s
+    # throttle.
     if tool_name == "SendMessage" and _is_subagent_session(session_id):
         input_str = str(event_data.get("tool_input", {}))
-        completion_keywords = ["完成", "completed", "done", "finished", "汇报"]
+        completion_keywords = ["\u5b8c\u6210", "complete", "done", "finished", "\u6c47\u62a5"]
         if (
             any(kw in input_str.lower() for kw in completion_keywords)
-            and "shutdown" not in input_str.lower()
+            and "shutdown" not in input_str.lower() and "shut down" not in input_str.lower()
         ):
-            required_fields = ["完成内容", "修改文件", "测试结果"]
+            required_fields = ["Completed content", "Modified files", "Test results"]
             missing = [f for f in required_fields if f not in input_str]
             if missing and len(input_str) > 100:  # Only check longer reports
                 _rf_bucket = _session_bucket(state, session_id)
                 if not _rf_bucket.get("report_fields_reminder_shown"):
                     _rf_bucket["report_fields_reminder_shown"] = True
                     warnings.append(
-                        f"[OS提醒] 汇报可能缺少标准字段：{', '.join(missing)}。"
-                        "标准格式：完成内容/修改文件/测试结果/建议任务状态/建议memo"
+                        f"[OS Reminder] The report may be missing standard fields: {', '.join(missing)}. "
+                        "Standard format: Completed content/Modified files/Test results/Suggested task "
+                        "status/Suggested memo"
                     )
 
     # ── Safety guardrail rules ──────────────────────────────────────────
@@ -1343,28 +1417,31 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
             sys.exit(2)
         # Recursive delete of other dangerous targets -> warning
         if re.search(r"rm\s+-[^\s]*[rR][^\s]*\s+\*", cmd_for_s1):
-            warnings.append("[安全] 危险：检测到递归删除通配符命令，请确认操作目标")
+            warnings.append("[Security] Danger: a recursive deletion wildcard command was detected; please confirm "
+                            "the operation target")
         # Destructive database operations
         if re.search(r"\b(DROP\s+TABLE|DROP\s+DATABASE|TRUNCATE)\b", cmd_for_s1, re.IGNORECASE):
-            warnings.append("[安全] 危险：检测到数据库破坏性操作（DROP/TRUNCATE），请确认")
+            warnings.append("[Security] Danger: a destructive database operation (DROP/TRUNCATE) was detected; "
+                            "please confirm")
         # force push
         if "push" in cmd_lower and "--force" in cmd_lower:
-            warnings.append("[安全] 注意：检测到force push，可能覆盖远程历史")
+            warnings.append("[Security] Note: a force push was detected; it may overwrite remote history")
         # Overly permissive file permissions
         if "chmod 777" in cmd_for_s1:
-            warnings.append("[安全] 安全：过度开放的文件权限（chmod 777），建议使用更严格的权限")
+            warnings.append("[Security] Security: overly open file permissions (chmod 777); stricter permissions "
+                            "are recommended")
         # S3: Sensitive file commit interception (git add) -> exit(2) hard block
         if "git add" in cmd_lower:
             block_patterns = [".env", "id_rsa", ".pem", ".key"]
             for pat in block_patterns:
                 if pat in cmd_lower:
-                    sys.stderr.write(f"[OS BLOCK] 禁止提交敏感文件（{pat}）")
+                    sys.stderr.write(f"[OS BLOCK] Committing sensitive files is forbidden ({pat})")
                     sys.exit(2)
             # credentials keep as warning (filename is ambiguous, may not be a key file)
             if "credentials" in cmd_lower:
                 warnings.append(
-                    "[安全] 安全：检测到尝试提交credentials文件，"
-                    "请确认该文件不包含密钥信息且已在.gitignore中"
+                    "[Security] Security: an attempt to commit a credentials file was detected; "
+                    "please confirm the file contains no secret information and is already in .gitignore"
                 )
 
         # S4: Worktree teardown protection — never tear down unlanded work.
@@ -1394,27 +1471,28 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
         def _block_on_worktree(target: str, via: str) -> None:
             dirty, unlanded, warn = _assess_unlanded_work(target)
             if dirty or unlanded:
-                reason = "存在未提交/未跟踪变更" if dirty else unlanded
+                reason = "There are uncommitted/untracked changes" if dirty else unlanded
                 sys.stderr.write(
-                    f"[OS BLOCK] 拒绝{via} {target}：{reason}。"
-                    "先合并或推送备份；确认要放弃这些改动需本人手动处理，不要重放这条被拦的命令。"
+                    f"[OS BLOCK] Refusing to {via} {target}: {reason}."
+                    "Merge or push a backup first; abandoning these changes must be handled manually in person — do "
+                    "not replay this blocked command."
                 )
                 sys.exit(2)
             if warn:
-                warnings.append(f"[安全] 注意：worktree {target} {warn}，删除前请确认")
+                warnings.append(f"[Security] Note: worktree {target} {warn}; please confirm before deleting")
 
         if wt_remove_m:
             raw_path = _first_path_token(wt_remove_m.group("rest"))
             cdir = wt_remove_m.group("cdir") or base_cwd
             target = os.path.abspath(os.path.join(cdir, raw_path)) if raw_path else ""
             if target and os.path.isdir(target):
-                _block_on_worktree(target, "删除 worktree")
+                _block_on_worktree(target, "delete worktree")
 
         if rm_worktree_m:
             raw_path = _first_path_token(rm_worktree_m.group("rest"))
             target = os.path.abspath(os.path.join(base_cwd, raw_path)) if raw_path else ""
             if target and os.path.isdir(target):
-                _block_on_worktree(target, "用 rm -rf 删除 worktree 目录")
+                _block_on_worktree(target, "delete the worktree directory with rm -rf")
 
         if branch_d_m:
             branch = _first_path_token(branch_d_m.group("rest"))
@@ -1453,17 +1531,19 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
                             )
                             pushed = ahead_code == 0 and not ahead_out
                         if not pushed:
-                            reason = "存在本地未推送/未合并的 commit"
+                            reason = "There are local unpushed/unmerged commits"
                             hint = _cherry_breakdown(cherry_lines)
                             if hint:
-                                reason = f"{reason}（{hint}）"
+                                reason = f"{reason} ({hint})"
                             sys.stderr.write(
-                                f"[OS BLOCK] 拒绝强删分支 {branch}：{reason}。"
-                                "先合并或推送备份；确认要放弃这些改动需本人手动处理，不要重放这条被拦的命令。"
+                                f"[OS BLOCK] Refused force-deleted branch {branch}: {reason}."
+                                "Merge or push a backup first; abandoning these changes must be handled manually in "
+                                "person — do not replay this blocked command."
                             )
                             sys.exit(2)
                         warnings.append(
-                            f"[安全] 注意：分支 {branch} 已推送到远端但尚未合并到 base 分支，删除前请确认"
+                            f"[Security] Note: branch {branch} has been pushed to the remote but not yet merged into "
+                            f"the base branch; please confirm before deleting"
                         )
 
         # S5: commit-time branch ownership assertion (A1', debate 503e07f1).
@@ -1478,8 +1558,10 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
             )
 
     # 15. Team directory cleanup reminder: check every 100 tool calls.
-    # ② 该提醒在 session_bootstrap 启动侧已发一次；此处（工具时）加会话级节流——
-    # 每会话最多 1 次，避免同一会话内每 100 次工具调用反复重发（启动侧保留不动）。
+    # ② This reminder is already sent once on the session_bootstrap startup side; here (at tool time) a session-level
+    # throttle is added —
+    # at most once per session, avoiding a resend every 100 tool calls within the same session (the startup side stays
+    # untouched).
     team_cleanup_count = state.get("team_cleanup_check_count", 0) + 1
     state["team_cleanup_check_count"] = team_cleanup_count
     if team_cleanup_count % 100 == 0:
@@ -1491,8 +1573,9 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
                     team_dirs = [p for p in teams_dir.iterdir() if p.is_dir()]
                     if len(team_dirs) > 5:
                         warnings.append(
-                            f"[OS提醒] ~/.claude/teams/ 下已累积 {len(team_dirs)} 个历史会话团队目录，"
-                            "可手动删除旧目录（当前会话的勿删）"
+                            f"[OS Reminder] {len(team_dirs)} historical session team directories have accumulated "
+                            f"under ~/.claude/teams/; "
+                            "old directories can be deleted manually (do not delete the current session's)"
                         )
                         _td_bucket["team_dir_reminder_shown"] = True
                 except Exception:
@@ -1510,11 +1593,13 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
             content,
             re.IGNORECASE,
         ):
-            warnings.append("[安全] 安全：检测到可能的硬编码密钥，建议使用环境变量")
+            warnings.append("[Security] Security: a possible hard-coded secret was detected; using environment "
+                            "variables is recommended")
         # .env file write reminder
         file_path = tool_input.get("file_path", "")
         if file_path.endswith(".env") or "/.env" in file_path or "\\.env" in file_path:
-            warnings.append("[安全] 注意：.env文件不应提交到版本库，请确认.gitignore包含.env")
+            warnings.append("[Security] Note: .env files should not be committed to version control; please confirm "
+                            ".gitignore includes .env")
         # Reports data directory hard block: only block writes to the actual reports data
         # dirs under ~/.claude/data/. Any other .md write (README, docs, src) is allowed.
         # Conditions (both must be true):
@@ -1530,15 +1615,18 @@ def _check_workflow_reminders(event_data: dict, state: dict, project_id: str | N
         )
         if _is_report_data_dir and file_path.endswith(".md"):
             warnings.append(
-                "[OS提醒] 报告应通过 report_save 工具保存到数据库（直接写文件不会被系统追踪）。"
-                "→ report_save(author=你的名字, topic=主题, content=markdown内容,"
+                "[OS Reminder] Reports should be saved to the database via the report_save tool (writing a file "
+                "directly is not tracked by the system). "
+                "→ report_save(author=your name, topic=the topic, content=the markdown content,"
                 " report_type=research/design/analysis/meeting-minutes)"
             )
-        # 协作式文件锁的冲突提醒已退役（2026-07-27 批 8b）：锁只能由 file_lock_*
-        # 四个 MCP 工具建立，而那四个工具从没人调过——锁文件实测恒为 {}，这段判定
-        # 因此永远走不进 if。真正在用的冲突检测是 hook_translator 侧的
-        # _check_file_edit_conflict（按最近编辑事件判定，212 条真事件背书）+
-        # get_file_hotspots，两者一行未动。
+        # The cooperative file-lock conflict reminder has been retired (batch 8b, 2026-07-27): locks could only be
+        # established by the file_lock_*
+        # four MCP tools, and those four tools were never called by anyone — the lock file was measured to be
+        # constantly {}, so this judgment
+        # could never enter the if. The conflict detection actually in use is on the hook_translator side:
+        # _check_file_edit_conflict (judged by recent edit events, backed by 212 real events) +
+        # get_file_hotspots; neither was touched by a single line.
 
     return warnings
 
@@ -1596,7 +1684,10 @@ def _post_tool_taskwall_sync(event_data: dict, state: dict, project_id: str | No
                 title_words = set(title.replace("—", " ").replace("-", " ").split())
                 agent_words = set(agent_text.replace("—", " ").replace("-", " ").split())
                 # Remove common stop words
-                stop_words = {"的", "是", "在", "了", "和", "与", "a", "the", "to", "and", "for", "of", "in", "on"}
+                stop_words = {
+                    "\u7684", "\u662f", "\u5728", "\u4e86", "\u548c", "\u4e0e", "a", "the", "to", "and",
+                    "for", "of", "in", "on"
+                }
                 title_words -= stop_words
                 agent_words -= stop_words
 
@@ -1626,25 +1717,26 @@ def _post_tool_taskwall_sync(event_data: dict, state: dict, project_id: str | No
                     # Auto-update to running
                     _api_call("PUT", f"/api/tasks/{task_id}", {"status": "running"}, project_id=project_id)
                     warnings.append(
-                        f"[OS提醒] 已自动关联任务墙：「{task_title}」→ running"
+                        f"[OS Reminder] Automatically linked to the task wall: '{task_title}' → running"
                     )
                 else:
                     warnings.append(
-                        f"[OS提醒] 当前工作关联任务墙：「{task_title}」（状态: {task_status}）"
+                        f"[OS Reminder] Current work is linked to the task wall: '{task_title}' (status: {task_status})"
                     )
 
                 # Save matched task ID for later completion tracking
                 state["last_dispatched_task_id"] = task_id
                 state["last_dispatched_task_title"] = task_title
             elif best_score < 3 and pending_tasks:
-                # No good match - warn to create on wall（节流 3600s，与 PreToolUse 侧共用键）
+                # No good match - warn to create on wall (throttled to 3600s, sharing the key with the PreToolUse side)
                 _wm_last = state.get("wall_match_reminder_at", 0)
                 _wm_now = time.time()
                 if _wm_now - _wm_last >= 3600:
                     state["wall_match_reminder_at"] = _wm_now
                     warnings.append(
-                        "[OS提醒] 此Agent工作未匹配到任务墙项。建议先用 task_create 上墙，确保工作可追踪。"
-                        f"当前任务墙有 {len(pending_tasks)} 个待办任务"
+                        "[OS Reminder] This Agent's work is unmatched to any task-wall item. Consider putting it on "
+                        "the wall with task_create first, so the work is traceable. "
+                        f"The task wall currently has {len(pending_tasks)} to-do tasks"
                     )
 
         except Exception:
@@ -1653,22 +1745,23 @@ def _post_tool_taskwall_sync(event_data: dict, state: dict, project_id: str | No
     # 2. After SendMessage with completion keywords: advisory reminder only.
     # NOTE (2026-07-14): this branch used to auto-PUT the task to completed.
     # That was wrong-direction inference — Leader outbound messages like
-    # "完成后向我汇报" hit the substring match and marked in-progress tasks
+    # "Report back to me once finished" hit the substring match and marked in-progress tasks
     # completed, bypassing Leader acceptance. Hook must never write task
     # status here; it only nudges the Leader to use task_update explicitly.
     if tool_name == "SendMessage":
         input_str = str(event_data.get("tool_input", {}))
-        completion_keywords = ["完成", "completed", "done", "finished", "汇报"]
+        completion_keywords = ["\u5b8c\u6210", "complete", "done", "finished", "\u6c47\u62a5"]
         is_completion = any(kw in input_str.lower() for kw in completion_keywords)
-        is_shutdown = "shutdown" in input_str.lower()
+        is_shutdown = "shutdown" in input_str.lower() or "shut down" in input_str.lower()
 
         if is_completion and not is_shutdown:
             last_task_id = state.get("last_dispatched_task_id")
             last_task_title = state.get("last_dispatched_task_title")
             if last_task_id:
                 warnings.append(
-                    f"[OS提醒] 检测到完成类消息。若「{last_task_title}」确已完成并验收，"
-                    "请用 task_update 将其置 completed（hook 不自动写库）"
+                    f"[OS Reminder] Completion-style message detected. If '{last_task_title}' is truly complete and "
+                    f"accepted, "
+                    "use task_update to set it to completed (the hook does not write to the database automatically)"
                 )
                 # Clear tracking — remind once, then stop nagging
                 state.pop("last_dispatched_task_id", None)
@@ -1722,12 +1815,16 @@ def main() -> None:
 
     # PreToolUse/PostToolUse hooks inject text into conversation via hookSpecificOutput
     #
-    # 绝不填 permissionDecision（2026-07-27 缔造者裁定）：该字段是**可选**的表态位
-    # （allow 直接放行 / deny 拒绝 / ask 询问 / 不给=不表态走 CC 默认流程），旧实现
-    # 把它当成"PreToolUse 必须带的输出格式"每次填 allow，其优先级高于用户选的权限
-    # 模式——default/plan/acceptEdits 一律被覆盖，Agent|Bash|Edit|Write|Workflow 五类
-    # 工具的权限询问全被静音（30 天 43,605 次调用无一询问）。CC 自己有完整的权限模式
-    # 供用户选择，OS 不替它做决定：本 hook 只注入提醒文本，权限交回 CC。
+    # Never fill permissionDecision (Creator ruling, 2026-07-27): that field is an **optional** position slot
+    # (allow = pass directly / deny = reject / ask = inquire / absent = no position, following CC's default flow); the
+    # old implementation
+    # treated it as "an output format PreToolUse must carry" and filled allow every time, with a priority higher than
+    # the permission mode the user chose
+    # — default/plan/acceptEdits were all overridden, and the permission prompts of the five tool classes
+    # Agent|Bash|Edit|Write|Workflow
+    # were all muted (43,605 calls in 30 days without a single prompt). CC has its own complete permission modes
+    # for the user to choose; the OS does not decide for it: this hook only injects reminder text and hands
+    # permissions back to CC.
     output = {"hookSpecificOutput": {"hookEventName": event_name}}
     if warnings:
         output["hookSpecificOutput"]["additionalContext"] = "\n".join(warnings)

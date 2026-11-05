@@ -1,1 +1,1 @@
-"""AI Team OS — Hook集成模块."""
+"""AI Team OS — Hook integration module."""

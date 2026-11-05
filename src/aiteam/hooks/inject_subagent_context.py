@@ -67,40 +67,49 @@ def _api_get(path: str):
         return None
 
 
-# 方向记忆（记忆系统 v2 P1）：kind 标签 + 注入截断优先级（constraint 最先保留）。
+# Direction memories (memory system v2 P1): kind labels + injection truncation priority (constraint is kept first).
 _MEM_KIND_LABEL = {
-    "constraint": "约束/护栏",
-    "design": "设计意图",
-    "directive": "工作方式",
-    "preference": "格式偏好",
+    "constraint": "Constraints / Guardrails",
+    "design": "Design intent",
+    "directive": "Working style",
+    "preference": "Format preferences",
 }
 
-# 方向记忆注入保险丝（记忆 v2.1，2026-07-31）：3000 字方向层总配额 + 格式开销。
-# 语义是**保险丝不是预算**——服务端写入侧已按桶字符配额（1200+1500+300=3000）
-# 卡死存储量，正常情况下这里永远不会触发截断。它只兜一种异常：有人绕过 API 直
-# 改 DB 把方向层撑爆，注入不至于淹掉后面的记账约定与身份块。
-# 旧值 900 是"常态截断线"：存储红线允许 16,000 字，注入只给 900，实测 48 条里
-# 只有头 2-3 条真到得了 agent 手上，其余被截成一句"另有 46 条"。
-# hook 是纯 stdlib 进程，不 import aiteam 包，故常量在此独立定义（两个 hook 各
-# 一份，与 plugin/hooks 逐字节副本同步——I1 机检）。
-_MEM_INJECT_FUSE = 3400
+# Direction-memory injection fuse (memory v2.1, 2026-07-31): the direction layer's 3000-character total quota +
+# formatting overhead.
+# The semantics are **a fuse, not a budget** — the server write side already caps storage by per-bucket character
+# quotas (1200+1500+300=3000),
+# so under normal conditions truncation never triggers here. It covers exactly one anomaly: someone bypassing the API
+# and editing
+# the DB directly to blow up the direction layer — the injection should not drown the bookkeeping conventions and
+# identity block that follow.
+# The old value 900 was a "routine truncation line": the storage red line allowed 16,000 characters while injection
+# gave only 900, and of 48 measured entries
+# only the first 2-3 actually reached the agent; the rest were truncated into one line, "46 more entries".
+# Hooks are pure-stdlib processes that do not import the aiteam package, so the constants are defined independently
+# here (one copy in each of the two hooks,
+# kept in sync with the byte-for-byte copies in plugin/hooks — the I1 machine check).
+_MEM_INJECT_FUSE = 4300
 
 
 def _render_identity(payload: dict) -> list:
-    """"你是谁" 身份块——取代已退役的 os-register 自注册仪式。
+    """"The "who you are" identity block — replacing the retired os-register self-registration ritual.
 
-    agent 由 SubagentStart hook 自动收编，本来就不该再手工 agent_register 一次；
-    它唯一真正缺的只是"我这一行的 agent_id"（开会发言、memo 署名都要）。
-    这里在派单瞬间反查一次：send_event 的 SubagentStart 与本 hook 并行触发，
-    收编可能还没落库，所以查不到属正常——此时给出可自查的兜底指令而不是留空
-    （A+B 双保险的 A 层；B 层是服务端 /api/agents/whoami 的 session+name 反查）。
+    The agent is automatically absorbed by the SubagentStart hook and should never have had to agent_register manually
+    once more;
+    the only thing it truly lacks is "my own row's agent_id" (needed for speaking in meetings and signing memos).
+    Here, at the dispatch instant, one reverse lookup is done: send_event's SubagentStart fires in parallel with this
+    hook,
+    so the absorption may not be persisted yet and finding nothing is normal — at that point give a self-lookup
+    fallback instruction instead of leaving it blank
+    (layer A of the A+B double insurance; layer B is the server side's /api/agents/whoami session+name reverse lookup).
     """
     cc_agent_id = str(payload.get("agent_id") or "")
     agent_name = str(payload.get("agent_type") or "")
     session_id = str(payload.get("session_id") or "")
-    lines = ["## 你的 OS 身份"]
+    lines = ["## Your OS Identity"]
     if agent_name:
-        lines.append(f"- 名字（SendMessage 按名寻址即用此名）: {agent_name}")
+        lines.append(f"- Name (SendMessage addresses by name using this name): {agent_name}")
     resolved = None
     try:
         import urllib.parse as _up
@@ -118,24 +127,27 @@ def _render_identity(payload: dict) -> list:
             lines.append(f"- team_id: {resolved.get('team_id')}")
     else:
         lines.append(
-            "- agent_id: 尚未落库（收编与本次注入并行）。需要时自查 "
-            "GET /api/agents/whoami?name=<你的名字>&session_id=<会话id>；"
-            "无 agent_register 工具，收编是自动的，不必自注册。"
+            "- agent_id: not yet persisted (absorption runs parallel to this injection). When needed, look it up "
+            "yourself via "
+            "GET /api/agents/whoami?name=<your name>&session_id=<session id>; "
+            "there is no agent_register tool — absorption is automatic, no self-registration needed."
         )
     lines.append("")
     return lines
 
 
 def _project_dir() -> str:
-    """当前项目目录：优先 CLAUDE_PROJECT_DIR，回退 cwd（供 X-Project-Dir 解析项目）。"""
+    """The current project directory: CLAUDE_PROJECT_DIR first, falling back to cwd (for X-Project-Dir project
+    resolution)."""
     return os.environ.get("CLAUDE_PROJECT_DIR", "") or os.getcwd()
 
 
 def _fetch_direction_memories() -> list:
-    """查有效方向层条目（API 已按 kind 优先级排序）。不可达返回 []（静默）。
+    """Fetch valid direction-layer entries (the API has ordered them by kind priority). Returns [] when unreachable
+    (silent).
 
-    带 X-Project-Dir 头让 API 解析出当前项目，纳入 project 级方向条目 +
-    global/user 全局条目——这就是"每个派出的 agent 出生即继承方向层"。
+    Passes the X-Project-Dir header so the API resolves the current project, including project-level direction entries +
+    global/user global entries — this is "every dispatched agent inherits the direction layer at birth".
     """
     try:
         import urllib.parse as _up
@@ -151,16 +163,18 @@ def _fetch_direction_memories() -> list:
 
 
 def _sanitize_inline(text: str) -> str:
-    """注入渲染前的单行化清洗（审查 major：memo/记忆内容含换行可伪造
-    『## 章节头』污染其他 agent 的注入上下文）。折叠一切空白为单空格。"""
+    """Single-line sanitization before injection rendering (review major: memo/memory content containing newlines can
+    forge
+    a '## section header' and pollute other agents' injected context). Collapses all whitespace into single spaces."""
     return " ".join((text or "").split())
 
 
 def _render_direction_memories(items: list, budget: int = _MEM_INJECT_FUSE) -> list:
-    """渲染方向层条目；超保险丝才按 kind 优先级截断并注明剩余条数（正常永不触发）。"""
+    """Render direction-layer entries; only when the fuse is exceeded, truncate by kind priority and note the
+    remaining count (never triggers normally)."""
     if not items:
         return []
-    lines = ["## 方向记忆（团队共享·你必须遵守）"]
+    lines = ["## Directional memories (team-shared · you must comply)"]
     used = 0
     truncated = 0
     stop = False
@@ -180,13 +194,14 @@ def _render_direction_memories(items: list, budget: int = _MEM_INJECT_FUSE) -> l
         lines.append(entry)
         used += len(entry)
     if truncated:
-        lines.append(f"- …另有 {truncated} 条，Leader 可用 memory_list 查看")
+        lines.append(f"- …{truncated} more entries; the Leader can view them with memory_list")
     lines.append("")
     return lines
 
 
 def _fetch_recent_task_memos(task_id: str, limit: int = 3) -> list:
-    """查当前任务最近 limit 条有效 memo（Zep 双读之"最近记录"）。不可达返回 []。"""
+    """Fetch the current task's most recent `limit` valid memos (the "recent records" of Zep's dual read). Returns
+    [] when unreachable."""
     if not task_id:
         return []
     try:
@@ -197,7 +212,7 @@ def _fetch_recent_task_memos(task_id: str, limit: int = 3) -> list:
             data = json.loads(resp.read().decode("utf-8"))
         memos = data.get("data", []) if isinstance(data, dict) else []
         recent = memos[-limit:]
-        rendered = ["## 当前任务近期记录（情景层）"]
+        rendered = ["## Recent records of the current task (episodic layer)"]
         for m in recent:
             content = _sanitize_inline(m.get("content") or "")
             if content:
@@ -208,31 +223,35 @@ def _fetch_recent_task_memos(task_id: str, limit: int = 3) -> list:
         return []
 
 
-# P0 重接（2026-07-14 审计）：memo 注入的触发键直接取自本次派单 prompt。
-# 旧实现挂在已退役的 config.pipeline 检测上——恒空（注入从未生效）、每次派发
-# 空扫全部团队（1+N 次 API）、死文案还教 agent 调已退役的管道推进工具。
-# 历史执行模式注入已于 2026-07-27 批 8a 随 pattern_record/pattern_search
-# 一同退役（存储恒空，注入永远是空段）。
+# P0 reconnection (audit, 2026-07-14): the memo injection's trigger key is taken directly from this dispatch's prompt.
+# The old implementation hung on the retired config.pipeline detection — constantly empty (the injection never took
+# effect), and every dispatch
+# empty-scanned all teams (1+N API calls), while dead copy still taught agents to call the retired
+# pipeline-advancement tools.
+# Historical execution-pattern injection was retired in batch 8a on 2026-07-27 together with
+# pattern_record/pattern_search
+# (storage constantly empty; the injection was forever an empty section).
 _TASK_ID_RE = re.compile(
-    r"(?:task_id|任务\s*ID|任务墙|总任务)[^0-9a-fA-F]{0,12}"
+    r"(?:task_id|(?i:task\s+id)|(?i:task\s+wall)|(?i:overall\s+task)|\u4efb\u52a1\s*ID|\u4efb\u52a1\u5899|"
+    r"\u603b\u4efb\u52a1)[^0-9a-fA-F]{0,12}"
     r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
 )
 
 
 def _extract_task_context(payload: dict) -> tuple[str, str]:
-    """从派单上下文提取 (task_id, prompt 文本)。
+    """Extract (task_id, prompt text) from the dispatch context.
 
-    prompt 只认 SubagentStart 载荷自带的派单字段：payload.prompt /
-    payload.description；两者皆空时退回 agent_type + cwd 组合（不可能命中
-    task_id，也不会污染注入）。
+    The prompt recognizes only the dispatch fields the SubagentStart payload itself carries: payload.prompt /
+    payload.description; when both are empty, fall back to the agent_type + cwd combination (which cannot hit a
+    task_id, nor pollute the injection).
 
-    **绝不读 transcript**：载荷里的 transcript_path 指向父会话（Leader 的）
-    transcript，其首条 user 消息是"用户对 Leader 说的话"，不是本次派单 prompt。
-    旧兜底照它工作，导致 task_id 提取与 memo 拉取按错文本运转
-    （2026-07-27 批 3 拿错对象修复）。
+    **Never read the transcript**: the payload's transcript_path points at the parent session's (the Leader's)
+    transcript, whose first user message is "what the user said to the Leader", not this dispatch's prompt.
+    The old fallback worked from it, making task_id extraction and memo fetching run on the wrong text
+    (batch 3 wrong-object fix, 2026-07-27).
 
-    task_id 只认显式样式（task_id=<uuid>、任务ID: <uuid> 等，见 _TASK_ID_RE），
-    避免把 repo_id/deep_review_id 之类的 uuid 误认成任务。
+    task_id recognizes only explicit styles (task_id=<uuid>, Task ID: <uuid>, etc.; see _TASK_ID_RE),
+    avoiding uuids like repo_id/deep_review_id being mistaken for tasks.
     """
     prompt = str(payload.get("prompt") or payload.get("description") or "")
     if not prompt.strip():
@@ -263,36 +282,47 @@ def main():
 
     # Build injection content
     lines = []
-    # 只留"你推不出来的"：OS 记账约定 + 项目书写规范。
-    # 安全规则段已删（2026-07-28）：rm -rf/密钥/git add .env 三条既是常识、又由
-    # workflow_reminder 的 S1/S2/S3 在命令落地前硬拦，写进注入纯属重复。
-    # 汇报格式段已删（2026-07-14 审计 P2）：与方向记忆"完成即汇报"directive
-    # 重复，且对一次性答题类 agent 是误导（曾致纯答题 agent 附全套汇报样板）。
-    lines.append("=== AI Team OS 子Agent环境 ===")
+    # Keep only "what you cannot derive": the OS bookkeeping conventions + the project's writing conventions.
+    # The safety-rules section was deleted (2026-07-28): the three rules rm -rf/secrets/git add .env are both common
+    # sense and already
+    # hard-blocked by workflow_reminder's S1/S2/S3 before the command lands; writing them into the injection would be
+    # pure duplication.
+    # The report-format section was deleted (audit P2, 2026-07-14): it duplicated the direction memory's "report as
+    # soon as done" directive,
+    # and it misled one-shot question-answering agents (it once made a pure Q&A agent attach the full report
+    # boilerplate).
+    lines.append("=== AI Team OS Sub-Agent Environment ===")
     lines.append("")
-    lines.append("## 记账约定（OS 特有）")
-    lines.append("- 接任务先 task_memo_read 读历史进展；完成时 task_memo_add(type=summary) 写总结")
+    lines.append("## Bookkeeping conventions (OS-specific)")
+    lines.append("- When taking a task, first read the historical progress with task_memo_read; on completion, "
+                 "write a summary with task_memo_add(type=summary)")
     lines.append(
-        "- 每 2 个实质操作（编辑文件/运行命令/创建资源）task_memo_add 记一次进展——"
-        "上下文随时可能被压缩，落盘是唯一防线"
+        "- After every 2 substantive operations (editing files/running commands/creating resources), record progress "
+        "with task_memo_add — "
+        "the context can be compacted at any time; persisting to disk is the only line of defense"
     )
     lines.append(
-        "- 研究/调研产出用 report_save 落库，不要 Write 成 .md 文件（直接写不入库、不被追踪）"
+        "- Persist research output with report_save; do not Write it into .md files (writing directly does not enter "
+        "the DB and is not tracked)"
     )
-    lines.append("- 同一方法连续失败 3 次即换路或上报 Leader，不要接着重试")
+    lines.append("- If the same approach fails 3 times in a row, switch approach or escalate to the Leader; do not "
+                 "keep retrying")
     lines.append("")
-    lines.append("## 书写规范")
-    lines.append("- 代码注释与 git commit message 用英文；文档按项目语言（本项目中文）")
+    lines.append("## Writing conventions")
+    lines.append("- Code comments and git commit messages in English; documents in the project language (this "
+                 "project: Chinese)")
     lines.append("")
 
-    # 身份块（os-register 退役后的替代）：静默跳过——API 不可达绝不能让 hook 报错。
+    # Identity block (the replacement after os-register's retirement): silently skipped — an unreachable API must
+    # never make the hook error.
     try:
         lines.extend(_render_identity(payload))
     except Exception:
         pass
 
-    # 方向记忆节（记忆系统 v2 P1）：每个派出 agent 出生即继承团队方向层。
-    # 静默跳过——API 不可达绝不能让 hook 报错。
+    # Direction-memory section (memory system v2 P1): every dispatched agent inherits the team's direction layer at
+    # birth.
+    # Silently skipped — an unreachable API must never make the hook error.
     try:
         lines.extend(
             _render_direction_memories(
@@ -302,27 +332,32 @@ def main():
     except Exception:
         pass
 
-    # 动态注入触发键：直接来自本次派单 prompt（P0 重接，不再依赖退役 pipeline）
+    # Dynamic injection trigger key: directly from this dispatch's prompt (P0 reconnection; no longer depends on the
+    # retired pipeline)
     task_id_for_memos = ""
     try:
         task_id_for_memos, _prompt_text = _extract_task_context(payload)
     except Exception:
         pass
 
-    # 当前任务最近 3 条有效 memo（Zep 双读之"最近记录"；静默跳过）
+    # The current task's 3 most recent valid memos (the "recent records" of Zep's dual read; silently skipped)
     try:
         lines.extend(_fetch_recent_task_memos(task_id_for_memos, limit=3))
     except Exception:
         pass
 
-    # Try to read current team info —— 只注入**本会话**的团队。
+    # Try to read current team info — inject only **this session's** team.
     #
-    # 旧实现遍历 ~/.claude/teams 下的全部目录，把每一个都当"当前团队"注入：CC v2.1.219
-    # 起每个会话都会自建一个 session-<id> 目录，于是 subagent 会同时收到多个会话的团队块
-    # （2026-07-27 活证：一次注入里并排 4 个"当前团队"，其中 3 个属其它会话）。串台的成员
-    # 名单会误导 subagent 去 SendMessage 一个根本不在自己队里的人。
-    # 判据用 leadSessionId == 本次事件的 session_id —— 这是 CC 自己写进 config.json 的
-    # 权威归属，比目录名（内部 id，与 hook 的 session_id 不同源）可靠。
+    # The old implementation iterated all directories under ~/.claude/teams and injected every one as "the current
+    # team": since CC v2.1.219
+    # every session builds its own session-<id> directory, so a subagent would receive several sessions' team blocks
+    # at once
+    # (live proof 2026-07-27: one injection had 4 "current teams" side by side, 3 of them belonging to other
+    # sessions). A crossed-over member
+    # roster would mislead a subagent into SendMessage-ing someone who is not in its team at all.
+    # The criterion uses leadSessionId == this event's session_id — that is the authoritative ownership CC itself
+    # writes into config.json,
+    # more reliable than the directory name (an internal id, not from the same source as the hook's session_id).
     session_id = payload.get("session_id", "") if isinstance(payload, dict) else ""
     teams_dir = os.path.join(os.path.expanduser("~"), ".claude", "teams")
     if session_id and os.path.isdir(teams_dir):
@@ -333,11 +368,11 @@ def main():
                     with open(config_path, encoding="utf-8") as f:
                         data = json.load(f)
                     if data.get("leadSessionId") != session_id:
-                        continue  # 别的会话的团队，不注入
+                        continue  # another session's team; do not inject
                     members = data.get("members", [])
                     if members:
-                        lines.append(f"## 当前团队: {team_dir}")
-                        lines.append(f"成员: {', '.join(m.get('name', '?') for m in members)}")
+                        lines.append(f"## Current Team: {team_dir}")
+                        lines.append(f"Members: {', '.join(m.get('name', '?') for m in members)}")
                         lines.append("")
                 except Exception:
                     pass
@@ -345,14 +380,17 @@ def main():
     # Trim context to avoid overwhelming sub-agent with boilerplate.
     # Keep the mandatory header rules (first ~40 lines) and dynamic sections.
     # If total lines exceed the budget, drop the team-membership section (lowest priority).
-    # 上限随方向层配额抬到 100（记忆 v2.1）：方向层允许 3000 字后，条目行数本身就能
-    # 逼近旧的 60 行阈值，再按旧值裁剪会把团队名单——SendMessage 按名寻址的唯一
-    # 依据——常态性地砍掉。这是配额改轴的连带项，不是放宽注入总量。
+    # The cap was raised to 100 along with the direction-layer quota (memory v2.1): once the direction layer allows
+    # 3000 characters, the entry line count alone can
+    # approach the old 60-line threshold, and trimming by the old value would routinely cut the team roster — the sole
+    # basis for SendMessage's
+    # by-name addressing. This is a knock-on item of the quota axis change, not a relaxation of the total injection
+    # volume.
     _max_lines = 100
     if len(lines) > _max_lines:
-        # Find where team membership blocks start (marked by "## 当前团队:")
+        # Find where team membership blocks start (marked by "## Current Team:")
         team_block_start = next(
-            (i for i, ln in enumerate(lines) if ln.startswith("## 当前团队:")), None
+            (i for i, ln in enumerate(lines) if ln.startswith("## Current Team:")), None
         )
         if team_block_start is not None:
             lines = lines[:team_block_start]

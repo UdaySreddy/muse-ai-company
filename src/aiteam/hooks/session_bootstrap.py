@@ -76,34 +76,45 @@ def _api_get(path: str, timeout: float = 2.0):
         return None
 
 
-# 方向记忆（记忆系统 v2 P1）：kind 标签 + 注入截断优先级（constraint 最先保留）。
+# Direction memories (memory system v2 P1): kind labels + injection truncation priority (constraint is kept first).
 _MEM_KIND_LABEL = {
-    "constraint": "约束/护栏",
-    "design": "设计意图",
-    "directive": "工作方式",
-    "preference": "格式偏好",
+    "constraint": "Constraints / Guardrails",
+    "design": "Design intent",
+    "directive": "Working style",
+    "preference": "Format preferences",
 }
 
-# 方向记忆注入保险丝（记忆 v2.1，2026-07-31）：3000 字方向层总配额 + 格式开销。
-# 语义是**保险丝不是预算**——服务端写入侧已按桶字符配额（1200+1500+300=3000）
-# 卡死存储量，正常情况下这里永远不会触发截断。它只兜一种异常：有人绕过 API 直
-# 改 DB 把方向层撑爆，简报不至于被记忆节淹没。
-# 旧值 900 是"常态截断线"：存储红线允许 16,000 字，注入只给 900，实测 48 条里
-# 只有头 2-3 条真到得了会话手上，其余被截成一句"另有 46 条"。
-# hook 是纯 stdlib 进程，不 import aiteam 包，故常量在此独立定义（两个 hook 各
-# 一份，与 plugin/hooks 逐字节副本同步——I1 机检）。
-_MEM_INJECT_FUSE = 3400
+# Direction-memory injection fuse (memory v2.1, 2026-07-31): the direction layer's 3000-character total quota +
+# formatting overhead
+# (overhead allowance recalibrated for English kind labels, which run ~20 characters longer per entry than the Chinese
+# ones).
+# The semantics are **a fuse, not a budget** — the server write side already caps storage by per-bucket character
+# quotas (1200+1500+300=3000),
+# so under normal conditions truncation never triggers here. It covers exactly one anomaly: someone bypassing the API
+# and editing
+# the DB directly to blow up the direction layer — the briefing should not be drowned by the memory section.
+# The old value 900 was a "routine truncation line": the storage red line allowed 16,000 characters while injection
+# gave only 900, and of 48 measured entries
+# only the first 2-3 actually reached the session; the rest were truncated into one line, "46 more entries".
+# Hooks are pure-stdlib processes that do not import the aiteam package, so the constants are defined independently
+# here (one copy in each of the two hooks,
+# kept in sync with the byte-for-byte copies in plugin/hooks — the I1 machine check).
+_MEM_INJECT_FUSE = 4300
 
 
 def _fetch_direction_memories(
     project_id: str = "", project_dir: str = "", timeout: float = 2.0
 ) -> list:
-    """查有效方向层条目（API 已按 kind 优先级 + 时间倒序）。不可达返回 []（静默）。
+    """Fetch valid direction-layer entries (the API has ordered them by kind priority + time descending). Returns []
+    when unreachable (silent).
 
-    注册项目带 X-Project-Id 直取其 project 桶；未注册目录带 X-Project-Dir 让 API
-    按目录指纹推导临时桶（dir:<sha1>），从而只继承 global/user + 本目录桶，不串入
-    其他项目的 project 记忆（2026-07-21 串线事故根治）。指纹推导权威唯一在 API 侧，
-    hook 只负责把 cwd 传过去——避免把公式复制进 hook 副本造成静默漂移。
+    A registered project passes X-Project-Id to take its project bucket directly; an unregistered directory passes
+    X-Project-Dir so the API
+    derives a temporary bucket from the directory fingerprint (dir:<sha1>), so it inherits only global/user + this
+    directory's bucket and does not leak in
+    other projects' project memories (root fix for the 2026-07-21 cross-wiring incident). The fingerprint derivation's
+    sole authority is on the API side;
+    the hook only passes the cwd over — avoiding copying the formula into the hook copies and causing silent drift.
     """
     try:
         req = urllib.request.Request(f"{API_URL}/api/memories", method="GET")
@@ -120,18 +131,20 @@ def _fetch_direction_memories(
 
 
 def _sanitize_inline(text: str) -> str:
-    """注入渲染前的单行化清洗（审查 major：memo/记忆内容含换行可伪造
-    『## 章节头』污染其他 agent 的注入上下文）。折叠一切空白为单空格。"""
+    """Single-line sanitization before injection rendering (review major: memo/memory content containing newlines can
+    forge
+    a '## section header' and pollute other agents' injected context). Collapses all whitespace into single spaces."""
     return " ".join((text or "").split())
 
 
 def _render_direction_memories(items: list, budget: int = _MEM_INJECT_FUSE) -> list:
-    """渲染方向层条目；超保险丝才按 kind 优先级截断并注明剩余条数（正常永不触发）。"""
+    """Render direction-layer entries; only when the fuse is exceeded, truncate by kind priority and note the
+    remaining count (never triggers normally)."""
     if not items:
         return []
-    header = "=== 方向记忆（团队共享·所有派出 agent 继承） ==="
+    header = "=== Directional memories (team-shared · inherited by all dispatched agents) ==="
     lines = [header]
-    used = len(header)
+    used = 0  # The header is fixed overhead and is not charged to the budget (mirrors inject_subagent_context)
     truncated = 0
     stop = False
     for m in items:
@@ -150,7 +163,7 @@ def _render_direction_memories(items: list, budget: int = _MEM_INJECT_FUSE) -> l
         lines.append(entry)
         used += len(entry)
     if truncated:
-        lines.append(f"  …另有 {truncated} 条见 memory_list（按 kind 优先级已截断）")
+        lines.append(f"  …{truncated} more entries in memory_list (truncated by kind priority)")
     lines.append("")
     return lines
 
@@ -175,20 +188,22 @@ def _build_auto_team_instructions(config: dict) -> list[str]:
     if not enabled_members:
         return []
 
-    # CC v2.1.219 现状（2026-07-25 核对工具面）：TeamCreate 工具已不存在，Agent 的
-    # team_name 参数标注 "Deprecated; ignored. The session has a single implicit team."
-    # ——每个会话自带唯一隐式团队（CC 自建 ~/.claude/teams/session-<内部id>/），
-    # 派 agent 即入队。故不再指示建队/传队名，只派成员；OS 侧归属由
-    # hook_translator 的 SubagentStart 自动收编负责。
+    # CC v2.1.219 status quo (tool surface checked 2026-07-25): the TeamCreate tool no longer exists, and Agent's
+    # team_name parameter is annotated "Deprecated; ignored. The session has a single implicit team."
+    # — each session carries its own single implicit team (built and managed by CC at
+    # ~/.claude/teams/session-<internal id>/),
+    # and dispatching an agent joins the team. So no longer instruct to create a team / pass a team name — just
+    # dispatch members; OS-side ownership is handled by
+    # hook_translator's SubagentStart automatic absorption.
     lines = []
     lines.append("")
-    lines.append("=== 常驻成员派发指引 ===")
-    lines.append("直接派成员即可（team_name 参数已废弃，勿传）：")
+    lines.append("=== Resident Member Dispatch Guide ===")
+    lines.append("Just dispatch members directly (the team_name parameter is deprecated; do not pass it):")
     for i, m in enumerate(enabled_members, start=1):
         role = m["role"]
         lines.append(
             f"{i}. Agent(name='{m['name']}', "
-            f"subagent_type='{role}', prompt='待命，等待Leader分配任务')"
+            f"subagent_type='{role}', prompt='On standby, waiting for the Leader to assign tasks')"
         )
     return lines
 
@@ -333,10 +348,10 @@ def _check_for_updates() -> str | None:
                     json.dumps({"last_checked": time.time(), "notice": None}),
                     encoding="utf-8",
                 )
-                return f"[OS] 已自动更新到最新版本 (commit: {new_commit})"
+                return f"[OS] Automatically updated to the latest version (commit: {new_commit})"
             else:
                 errs = "; ".join(bg.get("errors", ["unknown error"]))
-                return f"[OS] 自动更新失败: {errs}"
+                return f"[OS] Auto-update failed: {errs}"
         except Exception:
             pass
 
@@ -363,8 +378,10 @@ def _check_for_updates() -> str | None:
                 local_commit = _get_local_commit(root)
                 remote_commit = _get_remote_commit(root)
                 if local_commit and remote_commit and local_commit != remote_commit:
-                    # 仅当远端严格领先时才更新。本地领先/分叉（开发机常态：已提交未推送）
-                    # 不能触发——否则每次会话都误报"检测到新版本"并空跑 git pull。
+                    # Only update when the remote is strictly ahead. A local lead/divergence (the dev-machine norm:
+                    # committed but not pushed)
+                    # must not trigger it — otherwise every session would falsely report "a new version was detected"
+                    # and run git pull for nothing.
                     anc = subprocess.run(
                         ["git", "merge-base", "--is-ancestor", remote_commit, "HEAD"],
                         cwd=str(root),
@@ -372,11 +389,12 @@ def _check_for_updates() -> str | None:
                         timeout=3,
                     )
                     if anc.returncode == 0:
-                        return None  # 远端提交已在本地历史里 → 本地不落后，无需更新
+                        return None  # the remote commit is already in the local history → the local side is not
+                        # behind; no update needed
                     _run_background_update(root)
                     return (
-                        f"[OS] 检测到新版本 (local: {local_commit} → remote: {remote_commit})，"
-                        "正在后台自动更新，下次启动时生效。"
+                        f"[OS] A new version was detected (local: {local_commit} → remote: {remote_commit}), "
+                        "auto-updating in the background; it takes effect on the next startup."
                     )
             except Exception:
                 pass
@@ -470,11 +488,11 @@ def _check_teams_dir_cleanup() -> str | None:
         team_dirs = [p for p in teams_dir.iterdir() if p.is_dir()]
         count = len(team_dirs)
         if count > 10:
-            # TeamDelete 工具在 CC v2.1.219 已不存在（2026-07-25 工具面核对），
-            # 隐式团队目录由 CC 自建自管——只提示手动清理。
+            # The TeamDelete tool no longer exists in CC v2.1.219 (tool surface checked 2026-07-25);
+            # implicit team directories are built and managed by CC itself — only hint at manual cleanup.
             return (
-                f"[OS提醒] 检测到 {count} 个历史会话团队目录，可手动清理："
-                "rm -rf ~/.claude/teams/<旧目录>（当前会话的目录勿删）"
+                f"[OS Reminder] Detected {count} historical session team directories, which can be cleaned up manually:"
+                "rm -rf ~/.claude/teams/<old directory> (do not delete the current session's directory)"
             )
     except Exception:
         pass
@@ -482,28 +500,36 @@ def _check_teams_dir_cleanup() -> str | None:
 
 
 def _build_unregistered_briefing(cwd: str, is_dismissed: bool) -> str:
-    """未注册目录的极简简报（2026-07-21 串线事故根治）。
+    """The minimal briefing for unregistered directories (root fix for the 2026-07-21 cross-wiring incident).
 
-    只输出：① 身份说明 + 注册/忽略引导；② 合法全局纪律（global/user 桶）+ 本目录
-    指纹临时桶记忆。**刻意不输出** 团队列表、历史团队目录清理提醒、Leader 规则、
-    任务墙、自动唤醒/loop、skills/模板——那些是注册项目工作台内容，对无关目录是噪音
-    （事故实录：未注册目录的会话被灌入其他项目的框架文字）。"""
+    Outputs only: 1) an identity note + registration/ignore guidance; 2) the legitimate global discipline (global/user
+    buckets) + this directory's
+    fingerprint temporary-bucket memories. **Deliberately does not output** team lists, historical team directory
+    cleanup reminders, Leader rules,
+    the task wall, auto wake/loop, skills/templates — those are registered-project workbench content and are noise to
+    unrelated directories
+    (incident record: a session in an unregistered directory was poured full of another project's framework text)."""
     lines = []
-    lines.append("[AI Team OS] 当前目录未注册为 OS 项目 — 极简简报")
+    lines.append("[AI Team OS] The current directory is not registered as an OS project — Minimal briefing")
     lines.append("")
     if not is_dismissed:
         dir_name = Path(cwd).name or cwd
-        lines.append("⚠️ 当前目录未注册到 AI Team OS 项目系统：")
+        lines.append("⚠️ Not registered in the AI Team OS project system:")
         lines.append(f"   {cwd}")
         lines.append("")
-        lines.append("注册后可用任务墙/会议/报告/Dashboard 与项目隔离；不注册则本会话")
-        lines.append("仅继承全局纪律 + 本目录的临时记忆，不参与任何团队工作台。")
+        lines.append("After registering, you can use the task wall/meetings/reports/Dashboard with project "
+                     "isolation; if not registered, this session")
+        lines.append("inherits only the global discipline + this directory's temporary memories and does not "
+                     "participate in any team workbench.")
         lines.append("")
-        lines.append(f"→ 用户说\"注册\"/\"是\"/\"好\" → 执行: project_create(name='{dir_name}', root_path='{cwd}')")
-        lines.append("→ 用户说\"不用\"/\"不注册\"/\"不要\" → 执行: dismiss_project_registration(cwd='" + cwd + "')")
+        lines.append(f"→ When the user says \"register\"/\"yes\"/\"ok\" → execute: "
+                     f"project_create(name='{dir_name}', root_path='{cwd}')")
+        lines.append("→ When the user says \"no need\"/\"don't register\"/\"no\" → execute: "
+                     "dismiss_project_registration(cwd='" + cwd + "')")
         lines.append("")
-    # 方向记忆：global/user 真全局纪律 + 本目录指纹临时桶（API 按 X-Project-Dir 推导）。
-    # 只继承这些——绝不含其他项目的 project 记忆。API 不可达则静默为空。
+    # Direction memories: the global/user genuinely-global discipline + this directory's fingerprint temporary bucket
+    # (derived by the API from X-Project-Dir).
+    # Inherits only these — never other projects' project memories. When the API is unreachable, silently empty.
     try:
         mem_items = _fetch_direction_memories(project_dir=cwd)
         lines.extend(_render_direction_memories(mem_items, budget=_MEM_INJECT_FUSE))
@@ -547,13 +573,15 @@ def _build_briefing() -> str:
             is_registered = True
             matched_project_id = best_proj.get("id", "")
 
-    # 未注册目录：极简简报，就此返回——不灌团队/规则/任务墙/唤醒/skills 等工作台内容。
+    # Unregistered directory: the minimal briefing, and return here — do not pour in workbench content such as
+    # teams/rules/the task wall/wakes/skills.
     if not is_registered:
         return _build_unregistered_briefing(cwd, is_dismissed)
 
-    # ===== 已注册项目：完整 Leader 简报（下方内容与旧版逐字一致，仅前移了注册判定）=====
+    # ===== Registered project: the full Leader briefing (the content below is verbatim-identical to the old version;
+    # only the registration check moved earlier)=====
     lines = []
-    lines.append("[AI Team OS] Session启动 — Leader简报")
+    lines.append("[AI Team OS] Session started — Leader briefing")
     lines.append("")
 
     # Team directory cleanup reminder
@@ -578,11 +606,11 @@ def _build_briefing() -> str:
         teams = teams_data["data"]
         active = [t for t in teams if t.get("status") == "active"]
         completed = [t for t in teams if t.get("status") == "completed"]
-        lines.append(f"团队: {len(active)}个活跃, {len(completed)}个已完成")
+        lines.append(f"Team: {len(active)} active, {len(completed)} completed")
         for t in active:
             lines.append(f"  - {t['name']} (active)")
     else:
-        lines.append("团队: 暂无")
+        lines.append("Team: none yet")
 
     lines.append("")
 
@@ -595,36 +623,44 @@ def _build_briefing() -> str:
                 pending.append(task)
         pending.sort(key=lambda t: t.get("score", 0), reverse=True)
         if pending:
-            lines.append("任务墙Top5:")
+            lines.append("Task Wall Top 5:")
             for t in pending[:5]:
                 priority = t.get("priority", "medium")
                 horizon = t.get("horizon", "mid")
                 score = t.get("score", 0)
                 lines.append(f"  [{priority}/{horizon}] {t['title']} (score:{score:.1f})")
         else:
-            lines.append("任务墙: 无待办任务")
+            lines.append("Task wall: no to-do tasks")
         lines.append("")
 
         stats = wall_data.get("stats", {})
         if stats:
             lines.append(
-                f"统计: 总{stats.get('total', 0)}任务, "
-                f"已完成{stats.get('completed_count', 0)}, "
-                f"待办{stats.get('by_status', {}).get('pending', 0)}"
+                f"Stats: {stats.get('total', 0)} tasks in total, "
+                f"{stats.get('completed_count', 0)} completed, "
+                f"{stats.get('by_status', {}).get('pending', 0)} to-do"
             )
             lines.append("")
 
     # 3. Rule reminders — top 5 critical rules only (full rules: GET /api/system/rules)
-    lines.append("=== Leader核心规则 (Top5) ===")
-    lines.append("1. 专注统筹: 实施工作派给成员，自己只协调。Agent 的 team_name 参数已废弃勿传，派出即自动收编")
-    lines.append("2. 派出后不空等: 继续领下一任务并行推进（最多3方向）；任务墙空时自行判断，不为有事干而找活")
-    lines.append("3. 自主决策: 战术决策（任务分配/实施方式）自主做主；战略决策（项目方向/重大架构）才请示用户")
-    lines.append("4. 进度保护: 每2个操作用task_memo_add记录进展；同一方法失败3次必须换思路或上报")
-    lines.append("5. 上下文: [CONTEXT WARNING]时保存进度；用户回来时先汇报阶段总结+待决事项")
-    lines.append("→ 完整规则: GET /api/system/rules")
+    lines.append("=== Leader Core Rules (Top 5) ===")
+    lines.append("1. Focus on coordination: dispatch implementation work to members and only coordinate yourself. "
+                 "The Agent team_name parameter is deprecated — do not pass it; dispatched agents are automatically "
+                 "absorbed")
+    lines.append("2. Do not wait idle after dispatching: take the next task and advance in parallel (at most 3 "
+                 "directions); when the task wall is empty, use your own judgment — do not invent work just to have "
+                 "something to do")
+    lines.append("3. Decide autonomously: make tactical decisions (task assignment/implementation approach) "
+                 "yourself; only consult the user on strategic decisions (project direction/major architecture)")
+    lines.append("4. Protect progress: record progress with task_memo_add every 2 operations; if the same approach "
+                 "fails 3 times, change approach or escalate")
+    lines.append("5. Context: save progress when [CONTEXT WARNING] appears; when the user returns, first report a "
+                 "phase summary + pending decisions")
+    lines.append("→ Full rules: GET /api/system/rules")
     lines.append("")
 
-    # 3.5 方向记忆节（记忆系统 v2 P1）：有效方向层条目按 kind 分组注入；API 不可达静默跳过
+    # 3.5 Direction-memory section (memory system v2 P1): valid direction-layer entries injected grouped by kind;
+    # silently skipped when the API is unreachable
     try:
         mem_items = _fetch_direction_memories(matched_project_id)
         lines.extend(_render_direction_memories(mem_items, budget=_MEM_INJECT_FUSE))
@@ -640,11 +676,11 @@ def _build_briefing() -> str:
                 if status in ("in_progress", "running"):
                     in_progress.append(task)
         if in_progress:
-            lines.append("=== 进行中任务 ===")
+            lines.append("=== In-Progress Tasks ===")
             for t in in_progress:
-                assignee = t.get("assigned_to", "未分配")
-                lines.append(f"  - {t['title']} (分配: {assignee})")
-            lines.append("→ 请检查这些任务是否需要更新状态或添加memo")
+                assignee = t.get("assigned_to", "Unassigned")
+                lines.append(f"  - {t['title']} (assigned: {assignee})")
+            lines.append("→ Please check whether these tasks need a status update or a memo added")
             lines.append("")
 
     # 4. Pending Leader Briefings (reuse already-fetched briefings_early)
@@ -652,22 +688,27 @@ def _build_briefing() -> str:
     if briefings and briefings.get("data"):
         items = briefings["data"]
         if items:
-            lines.append(f"=== Leader简报: {len(items)}个待决事项 ===")
+            lines.append(f"=== Leader briefing: {len(items)} pending decisions ===")
             for b in items[:5]:
                 lines.append(f"  [{b.get('urgency','medium')}] {b['title']}")
                 if b.get('recommendation'):
-                    lines.append(f"    建议: {b['recommendation'][:60]}")
-            lines.append("→ 用户介入时请先汇报以上待决事项，使用 briefing_list 查看详情")
+                    lines.append(f"    Recommendation: {b['recommendation'][:60]}")
+            lines.append("→ When the user steps in, first report the pending decisions above; use briefing_list for "
+                         "details")
             lines.append("")
 
     # 5. Auto-wake instruction (v2: event-driven + dynamic interval, replaces 30min cron)
-    # 唤醒体系 v2，见 docs/wake-loop-v2-design.md §5：不再指导建每 30 分钟固定 cron，
-    # 改为跑一次 /loop（动态间隔）；OS 维护提示由 ~/.claude/loop.md 承载。
-    lines.append("=== 自动唤醒 ===")
-    # ③ 催办类改条件句：无条件"请运行 /loop"对专注单一任务的会话是错误指令（实证被
-    # 系统性无视）。仅对承担统筹职责的会话建议 /loop，单任务会话可忽略。
-    lines.append("若本会话承担统筹职责（Leader/协调），建议运行一次 /loop；专注单一任务的会话可忽略。")
-    lines.append("（不带间隔=动态：每轮自选 1-60 分钟延迟，有活收紧、空闲拉长）每轮做什么见 ~/.claude/loop.md。")
+    # Wake system v2, see docs/wake-loop-v2-design.md §5: no longer instructs building a fixed 30-minute cron;
+    # instead, run /loop once (dynamic interval); the OS maintenance hints are carried by ~/.claude/loop.md.
+    lines.append("=== Auto Wake ===")
+    # ③ Nagging items become conditional sentences: an unconditional "please run /loop" is a wrong instruction for a
+    # session focused on a single task (empirically it gets
+    # systematically ignored). Recommend /loop only to sessions carrying coordination duties; single-task sessions may
+    # ignore it.
+    lines.append("If this session carries coordination duties (Leader/coordinator), running /loop once is "
+                 "recommended; sessions focused on a single task may ignore this.")
+    lines.append("(No interval = dynamic: each round chooses its own 1-60 minute delay — tighter when there is "
+                 "work, longer when idle.) See ~/.claude/loop.md for what to do each round.")
     lines.append("")
 
     # Auto team creation instructions
@@ -679,9 +720,11 @@ def _build_briefing() -> str:
 
 
 def _fetch_compact_checkpoint(session_id: str) -> str:
-    """取本会话最近一条压缩检查点的可注入文本；没有就返回空串。
+    """Get the injectable text of this session's most recent compaction checkpoint; return an empty string when there
+    is none.
 
-    刻意不做兜底文案：没有检查点时什么都不注入，绝不拿占位符占用户的上下文。
+    Deliberately no fallback copy: when there is no checkpoint, inject nothing — never occupy the user's context with
+    a placeholder.
     """
     if not session_id:
         return ""
@@ -719,11 +762,13 @@ def main() -> None:
         briefing = _build_briefing()
         sys.stdout.write(briefing)
 
-        # 压缩恢复路径（Q6 裁定 A）：SessionStart 的 source 有五种取值
-        # startup/resume/clear/compact/fork，只有 compact 这一种意味着"上一轮
-        # 上下文刚被压掉"。此时把 PreCompact 存下的 OS 侧作战态原样递回去——
-        # CC 自己的 compact_summary 压缩后本来就在模型上下文里，OS 该补的是模型
-        # 没有的那半边（在飞 agent / 未完成任务 / 待裁决项）。
+        # Compaction recovery path (Q6 ruling A): SessionStart's source has five values
+        # startup/resume/clear/compact/fork, and only compact means "the previous round's
+        # context was just compacted away". At that point, hand back the OS-side operational state PreCompact stored,
+        # as-is —
+        # CC's own compact_summary is already in the model's context after compaction; what the OS should supply is
+        # the half the model
+        # does not have (in-flight agents / unfinished tasks / items awaiting a ruling).
         compact_block = ""
         if session_info.get("source") == "compact":
             compact_block = _fetch_compact_checkpoint(session_info.get("session_id", ""))
@@ -739,13 +784,16 @@ def main() -> None:
         )
     else:
         # API not reachable
-        # D3 阶段D 止血（审计 M50）：不再引导手动起第二个 uvicorn 实例——那会与
-        # MCP 自启实例并存，导致双 reaper/重复唤醒。API 随 MCP 启动自动拉起。
+        # D3 stage D bleeding-stop (audit M50): no longer guide starting a second uvicorn instance manually — that
+        # would coexist with
+        # the MCP auto-started instance, causing dual reapers/duplicate wakes. The API is launched automatically with
+        # the MCP startup.
         sys.stdout.write(
-            "[AI Team OS] API未启动。API 会随 MCP server 自动拉起：\n"
-            "1) 重启 Claude Code（推荐，/mcp 确认 ai-team-os 已连接）；\n"
-            "2) 或在已连接的会话里调用 MCP 工具 os_restart_api。\n"
-            "请勿手动运行 uvicorn 起第二个实例（会与自启实例并存导致重复唤醒）。\n"
+            "[AI Team OS] The API is not running. The API is launched automatically with the MCP server:\n"
+            "1) Restart Claude Code (recommended; confirm ai-team-os is connected via /mcp);\n"
+            "2) Or call the MCP tool os_restart_api from a connected session.\n"
+            "Do not manually run uvicorn to start a second instance (it would coexist with the auto-started instance "
+            "and cause duplicate wakes).\n"
         )
         sys.stderr.write(f"[aiteam-bootstrap] AI Team OS API not reachable at {API_URL}\n")
 

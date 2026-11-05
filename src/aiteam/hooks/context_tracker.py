@@ -15,10 +15,10 @@ import re
 import sys
 from pathlib import Path
 
-# 默认按 1M context window 计算。
-# 理由：Claude Code 全平台现已默认使用 1M window；
-# 误报偏低（漏警告）比误报偏高（频繁假警告打断工作）危害更小。
-# 如需强制按小 window（如 200K）计算，请设置 CLAUDE_CONTEXT_SIZE 环境变量。
+# Computed against a 1M context window by default.
+# Reason: Claude Code now defaults to a 1M window on all platforms;
+# under-reporting (missed warnings) is less harmful than over-reporting (frequent false warnings interrupting work).
+# To force computation against a small window (e.g. 200K), set the CLAUDE_CONTEXT_SIZE environment variable.
 DEFAULT_CONTEXT_SIZE = 1_000_000
 LARGE_CONTEXT_SIZE = 1_000_000
 _CLAUDE_CONFIG = Path.home() / ".claude.json"
@@ -26,16 +26,17 @@ _FAMILY_RE = re.compile(r"claude-(opus|sonnet|haiku)")
 
 
 def _claude_config_has_1m_variant(model: str) -> bool:
-    """检测机器是否启用了 1M context 模式（通过 ~/.claude.json 的历史用量条目）。
+    """Detect whether the machine has 1M context mode enabled (via the historical usage entries in ~/.claude.json).
 
-    两层检测：
-    1. **精确匹配**：`{model}[1m]` 存在（最可靠）
-    2. **同 family 兜底**：任意 `claude-{family}-*[1m]` 存在 → 认为该 family 用 1M
-       （opus/sonnet/haiku 三个 family 各自独立判断）
+    Two detection levels:
+    1. **Exact match**: `{model}[1m]` exists (most reliable)
+    2. **Same-family fallback**: any `claude-{family}-*[1m]` exists → that family is considered to use 1M
+       (the opus/sonnet/haiku families are each judged independently)
 
-    Why family fallback: CC transcript 剥离 `[1m]` 后缀，且新 model 变体的 [1m]
-    用量条目可能尚未写入 config（model 升级后第一次跑时）。若用户在同 family
-    下有 1M 历史，则**新 model 大概率仍在 1M 模式**。这是合理启发式。
+    Why family fallback: CC transcripts strip the `[1m]` suffix, and a new model variant's [1m]
+    usage entry may not yet be written into the config (on the first run after a model upgrade). If the user has 1M
+    history in the same family,
+    then **the new model is most likely still in 1M mode**. This is a reasonable heuristic.
     """
     if not model:
         return False
@@ -46,12 +47,12 @@ def _claude_config_has_1m_variant(model: str) -> bool:
     except OSError:
         return False
 
-    # Level 1: 精确匹配
+    # Level 1: Exact match
     exact_marker = f'{model}[1m]'.encode()
     if exact_marker in content:
         return True
 
-    # Level 2: 同 family 兜底
+    # Level 2: Same-family fallback
     family_match = _FAMILY_RE.search(model.lower())
     if not family_match:
         return False
@@ -63,35 +64,35 @@ def _claude_config_has_1m_variant(model: str) -> bool:
 
 
 def _compute_used_pct(total_tokens: int, model: str) -> tuple[float, int]:
-    """计算使用率 + 检测 context window 大小。
+    """Compute the usage rate + detect the context window size.
 
-    优先级（高到低）：
-    1. **ENV var `CLAUDE_CONTEXT_SIZE`** — 用户终极覆盖（任意正整数 token 数）。
-       可用此项强制降级到小 window（如 CLAUDE_CONTEXT_SIZE=200000）。
-    2. **model 字串含 `1m` / `1000000`** → 1M（显式确认）
-    3. **~/.claude.json 有 `{model}[1m]` 或 同 family `*[1m]`** → 1M（历史用量推断）
-    4. **默认** → 1M（Claude Code 全平台现已默认 1M window；
-       误报偏低比频繁假警告打断工作危害更小）
+    Priority (high to low):
+    1. **ENV var `CLAUDE_CONTEXT_SIZE`** — the user's ultimate override (any positive integer token count).
+       This can force a downgrade to a small window (e.g. CLAUDE_CONTEXT_SIZE=200000).
+    2. **The model string contains `1m` / `1000000`** → 1M (explicit confirmation)
+    3. **~/.claude.json has `{model}[1m]` or a same-family `*[1m]`** → 1M (historical-usage inference)
+    4. **Default** → 1M (Claude Code now defaults to a 1M window on all platforms;
+       under-reporting is less harmful than frequent false warnings interrupting work)
     """
-    # 1. ENV var 终极覆盖（可用于强制按 200K 等小 window 计算）
+    # 1. ENV var ultimate override (can force computation against a small window such as 200K)
     env_size = os.environ.get("CLAUDE_CONTEXT_SIZE", "").strip()
     if env_size.isdigit() and int(env_size) > 0:
         ctx_size = int(env_size)
         pct = round((total_tokens / ctx_size) * 100, 1)
         return pct, ctx_size
 
-    # 2. model 字串明确含 1m 标记
+    # 2. The model string explicitly contains the 1m marker
     ctx_size = DEFAULT_CONTEXT_SIZE
     if model:
         ml = model.lower()
         if "1m" in ml or "1000000" in ml:
             ctx_size = LARGE_CONTEXT_SIZE
 
-    # 3. ~/.claude.json 历史用量推断（同 family fallback）
+    # 3. ~/.claude.json historical-usage inference (same-family fallback)
     if ctx_size == DEFAULT_CONTEXT_SIZE and _claude_config_has_1m_variant(model):
         ctx_size = LARGE_CONTEXT_SIZE
 
-    # 4. 默认已是 1M（DEFAULT_CONTEXT_SIZE = 1_000_000），无需额外判断
+    # 4. The default is already 1M (DEFAULT_CONTEXT_SIZE = 1_000_000); no extra judgment needed
 
     pct = round((total_tokens / ctx_size) * 100, 1)
     return pct, ctx_size
@@ -165,15 +166,15 @@ def main():
 
     if pct >= 90:
         print(
-            f"[CONTEXT CRITICAL] 上下文使用率: {pct}% ({used_tokens}/{ctx_size}). "
-            "立即停止当前工作，保存所有记忆和进度到 memory 文件，"
-            "然后提醒用户执行 /compact。不要开始任何新任务。"
+            f"[CONTEXT CRITICAL] Context usage: {pct}% ({used_tokens}/{ctx_size}). "
+            "Stop the current work immediately, save all memories and progress to the memory files, "
+            "then remind the user to run /compact. Do not start any new task."
         )
     elif pct >= 80:
         print(
-            f"[CONTEXT WARNING] 上下文使用率: {pct}% ({used_tokens}/{ctx_size}). "
-            "请尽快完成当前节点任务，然后保存记忆和进度到 memory 文件，"
-            "并提醒用户执行 /compact。"
+            f"[CONTEXT WARNING] Context usage: {pct}% ({used_tokens}/{ctx_size}). "
+            "Finish the current node task as soon as possible, then save memories and progress to the memory files, "
+            "and remind the user to run /compact."
         )
 
 

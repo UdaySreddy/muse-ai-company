@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
-"""PreCompact Hook — 压缩前把 OS 侧作战态定格成检查点。
+"""PreCompact Hook — freezes the OS-side operational state into a checkpoint before compaction.
 
-Q6 裁定 A（2026-07-27）。这个 hook 从前只做一件事：往
-``~/.claude/compact-events.jsonl`` 追加一行时间戳，而那个文件全仓没有任何读
-取方——审计原话"往一个没人读的文件追加时间戳"。
+Q6 ruling A (2026-07-27). This hook previously did exactly one thing: append
+one timestamp line to ``~/.claude/compact-events.jsonl``, a file that nothing in the whole repo
+reads — in the audit's own words, "appending timestamps to a file nobody reads".
 
-现在它真正做事：通知 OS 把这个会话此刻的作战态（在飞 agent / 未完成任务 /
-待缔造者裁决项）拍成检查点，压缩后的第一次 SessionStart(source=compact) 由
-session_bootstrap 原样递回给 Leader。快照内容由**服务端**从库里取，hook 只
-负责报信——这样 hook 保持纯 stdlib、单次 HTTP，也不会因为 hook 少查一样东西
-就把检查点做残。
+Now it does real work: it notifies the OS to snapshot this session's current operational state (in-flight agents /
+unfinished tasks /
+items awaiting the Creator's decision) into a checkpoint, which the first SessionStart(source=compact) after
+compaction has
+session_bootstrap hand back verbatim to the Leader. The snapshot content is taken from the DB by the **server side**;
+the hook only
+carries the message — this keeps the hook pure-stdlib with a single HTTP call, and the checkpoint is never left
+incomplete because the hook forgot to look something up.
 
-jsonl 保留为离线痕迹：OS 没起来时它是唯一的记录。同时补记 ``raw_bytes``——
-历史 159 条里有 155 条 trigger=unknown 且没有 session_id，那只可能是 stdin
-为空，但究竟谁在空手调用这个脚本一直没查清。记下入参长度，下次发生就有据可查，
-不必再靠推测。
+The jsonl is kept as an offline trace: when the OS is not up, it is the only record. It also records ``raw_bytes`` —
+of the historical 159 entries, 155 have trigger=unknown and no session_id, which can only mean empty stdin;
+but exactly who calls this script empty-handed was never pinned down. Recording the input length gives evidence to
+check next time it happens,
+instead of relying on speculation.
 
 Usage: python -m aiteam.hooks.pre_compact_save
 """

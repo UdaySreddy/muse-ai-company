@@ -37,8 +37,8 @@ API_URL = _get_api_url()
 # ---------------------------------------------------------------------------
 # send_event is registered at matcher "*" on purpose: the OS keys agent liveness,
 # IDLE→BUSY self-heal, project-binding heal and per-tool activity spans off tool
-# events, so narrowing the matcher blinds the observability layer (2026-07 "队死
-# 人活" incident). The cost guard is therefore *inside* the hook: tool calls the
+# events, so narrowing the matcher blinds the observability layer (2026-07 "team dead,
+# people alive" incident). The cost guard is therefore *inside* the hook: tool calls the
 # OS provably ignores are dropped before the HTTP POST.
 #
 # Two rules that must not be broken when editing this set:
@@ -75,20 +75,26 @@ ESSENTIAL_FIELDS = {
     "tool_name",
     "tool_input",
     "cc_team_name",
-    # 路径字段短（LARGE_FIELDS 已截 500 字符）且承载 wf_id 提取——超限剥离会
-    # 让 SubagentStop 丢失 wf_id、per-run 建队/迁移失败（2026-07-07 D1 实录）
+    # The path fields are short (LARGE_FIELDS already truncated to 500 characters) and carry the wf_id extraction —
+    # over-limit stripping would
+    # make SubagentStop lose the wf_id and per-run team creation/migration fail (2026-07-07 D1 record)
     "transcript_path",
     "agent_transcript_path",
-    # cwd 同样短，且是**唯一**能反查主会话 transcript 的兜底键：
-    # leader_usage.locate_main_transcript 在路径不可用时走 <slug(cwd)>/<session_id>.jsonl，
-    # 而那条兜底的 docstring 写明兜的就是"超大载荷被剥离到必留字段"这一档——
-    # cwd 不在必留里，兜底就在它专为之而生的场景里必然失效（2026-08-03 排查发现）。
-    # 项目归属匹配（_resolve_project_id_by_cwd）也吃同一个键。
+    # cwd is likewise short, and is the **only** fallback key that can reverse-lookup the main session's transcript:
+    # leader_usage.locate_main_transcript, when the path is unavailable, goes through <slug(cwd)>/<session_id>.jsonl,
+    # and that fallback's docstring states plainly that what it covers is exactly the tier "an oversized payload
+    # stripped down to the must-keep fields" —
+    # if cwd is not among the must-keep fields, the fallback necessarily fails in precisely the scenario it was born
+    # for (found in the 2026-08-03 investigation).
+    # Project-ownership matching (_resolve_project_id_by_cwd) consumes the same key.
     "cwd",
-    # PostCompact 的两个字段：压缩摘要动辄几万字，整体载荷必然超 32KB 闸，
-    # 于是 trigger 与摘要长度双双被剥掉，落库成 {trigger:"", summary_chars:0}
-    # ——生产实测就是这条形状。摘要正文本来就刻意不存，改为在 hook 侧算好长度
-    # 再把正文扔掉（见 _trim_payload），长度与 trigger 一起进必留字段。
+    # PostCompact's two fields: a compaction summary is easily tens of thousands of characters, so the overall payload
+    # necessarily exceeds the 32KB gate,
+    # so the trigger and the summary length are both stripped, persisting as {trigger:"", summary_chars:0}
+    # — the production-measured shape is exactly this. The summary body is deliberately not stored anyway; instead its
+    # length is computed on the hook side
+    # and the body discarded (see _trim_payload), with the length entering the must-keep fields together with the
+    # trigger.
     "trigger",
     "compact_summary_chars",
 }
