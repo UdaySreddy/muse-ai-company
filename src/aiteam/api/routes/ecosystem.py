@@ -138,8 +138,10 @@ def _profile_to_dict(
 ) -> dict[str, Any]:
     """Serialize a profile.
 
-    v1.5.1: expose stage_status (taken from the latest deep_review; when there is no review, the caller passes "queued").
-    research_count = the number of deep_review rows associated with this repo (the frontend uses it for the RepoCard research-count badge).
+    v1.5.1: expose stage_status (taken from the latest deep_review; when there is no review, the caller passes
+    "queued").
+    research_count = the number of deep_review rows associated with this repo (the frontend uses it for the RepoCard
+    research-count badge).
     """
     return {
         "id": p.id,
@@ -153,7 +155,8 @@ def _profile_to_dict(
         "homepage": p.homepage,
         "last_commit_at": p.last_commit_at.isoformat() if p.last_commit_at else None,
         "needs_deep_review": p.needs_deep_review,
-        # v1.6.1: relevance_category/relevance_score deprecated (the hardcoded heuristic has no reference value); no longer exposed
+        # v1.6.1: relevance_category/relevance_score deprecated (the hardcoded heuristic has no reference value); no
+        # longer exposed
         "one_line_summary": p.one_line_summary,
         "last_scanned_at": p.last_scanned_at.isoformat(),
         "first_seen_at": p.first_seen_at.isoformat(),
@@ -174,7 +177,8 @@ def _profile_to_dict(
         "fetch_failure_count": p.fetch_failure_count,
         "is_active": p.is_active,
         "active_rank": p.active_rank,
-        # Added in v1.5.1: expose the progressive-funnel stage status + research count (so frontend badges render and totals are accurate)
+        # Added in v1.5.1: expose the progressive-funnel stage status + research count (so frontend badges render and
+        # totals are accurate)
         "stage_status": stage_status or "queued",
         "research_count": research_count,
         # v1.6.0-P1.A manual status fields
@@ -206,7 +210,8 @@ def _profile_to_list_dict(
         "stars": p.stars,
         "language": p.language,
         "topics": p.topics,
-        # v1.6.1: relevance_category/relevance_score deprecated (the hardcoded heuristic has no reference value); no longer exposed
+        # v1.6.1: relevance_category/relevance_score deprecated (the hardcoded heuristic has no reference value); no
+        # longer exposed
         "one_line_summary": p.one_line_summary,
         "description_excerpt": _make_summary_excerpt(p.description, 150),
         "is_archived": p.is_archived,
@@ -236,11 +241,13 @@ async def _build_stage_map(
     Returns (stage_map, count_map):
     - stage_map[repo_id] = "queued" / "shallow_done" / ...(the latest deep_review; when none, per
       the v1.6.0 SST rule: has shallow_summary -> "shallow_done"; otherwise "queued")
-    - count_map[repo_id] = the number of times this repo has genuinely been researched (v1.5.2: only counts architecture_done+ rows;
+    - count_map[repo_id] = the number of times this repo has genuinely been researched (v1.5.2: only counts
+      architecture_done+ rows;
       shallow-scan completion does not count — a shallow scan is a pre-screening action, not "being researched")
 
     shallow_summary_map: {repo_id: shallow_summary} — used as the fallback when there is no deep_review.
-    Query all reviews in one go (by created_at desc) and aggregate on the Python side, avoiding an N+1 at the route layer.
+    Query all reviews in one go (by created_at desc) and aggregate on the Python side, avoiding an N+1 at the route
+    layer.
     """
     # v1.5.2: The semantic boundary of "has been researched" — only counts after entering the architecture stage
     _researched_stages = {"architecture_done", "debated", "referenced", "integrated"}
@@ -250,7 +257,8 @@ async def _build_stage_map(
     if not profile_ids:
         return stage_map, count_map
     id_set = set(profile_ids)
-    # list_deep_reviews does not support IN with multiple ids, but with a limit applied, Python-side filtering is sufficient (currently < a few thousand rows)
+    # list_deep_reviews does not support IN with multiple ids, but with a limit applied, Python-side filtering is
+    # sufficient (currently < a few thousand rows)
     reviews = await repo.list_deep_reviews(limit=10000)
     for r in reviews:
         if r.repo_id not in id_set:
@@ -311,7 +319,8 @@ async def search_profiles(
     limit: int = Query(default=20, le=100),
     offset: int = Query(default=0, ge=0),
     facet_counts: bool = Query(default=False),
-    # Depended on by the v1.5.0-E frontend tab switching / failed filtering (ignored by the service layer if unrecognized)
+    # Depended on by the v1.5.0-E frontend tab switching / failed filtering (ignored by the service layer if
+    # unrecognized)
     is_active: bool | None = Query(default=None),
     is_deleted: bool | None = Query(default=None),
     stage_status: str = Query(default=""),
@@ -331,7 +340,8 @@ async def search_profiles(
     pushed_after_dt = _parse_dt(pushed_after) if pushed_after else None
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
 
-    # v1.5.1: The stage_status filter does not depend on the stars limit — first compute stage_map over the whole DB to find wanted_ids
+    # v1.5.1: The stage_status filter does not depend on the stars limit — first compute stage_map over the whole DB to
+    # find wanted_ids
     id_filter: list[str] | None = None
     id_exclude: list[str] | None = None
     if stage_status:
@@ -403,7 +413,8 @@ async def search_profiles(
     _shallow_map = {p.id: p.shallow_summary for p in profiles}
     stage_map, count_map = await _build_stage_map(repo, [p.id for p in profiles], _shallow_map)
 
-    # stage_status is already handled at the SQL layer with id_filter / id_exclude; the route layer no longer post-filters
+    # stage_status is already handled at the SQL layer with id_filter / id_exclude; the route layer no longer
+    # post-filters
     if is_active is not None or is_deleted is not None:
         total = len(profiles)
 
@@ -809,7 +820,8 @@ def _serialize_full(payload: dict[str, Any]) -> dict[str, Any]:
     # v1.6.0 SST: derive stage_status using same logic as list endpoint (_build_stage_map)
     # Priority: deep_review.stage_status > non-empty shallow_summary → 'shallow_done' > 'queued'
     stage_status = "queued"
-    latest_dr = deep_reviews[0] if deep_reviews else None  # the repository return should be in reverse chronological order
+    # the repository return should be in reverse chronological order
+    latest_dr = deep_reviews[0] if deep_reviews else None
     if latest_dr and getattr(latest_dr, "stage_status", None):
         stage_status = latest_dr.stage_status
     elif profile.shallow_summary and profile.shallow_summary.strip():
@@ -1079,7 +1091,8 @@ async def run_shallow_refresh(
     body: EcosystemRefreshBody,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """Incrementally refresh the active set on demand (user ruling 2026-07-10: the periodic cron is retired in favor of manual triggering).
+    """Incrementally refresh the active set on demand (user ruling 2026-07-10: the periodic cron is retired in favor of
+    manual triggering).
 
     Probe each repo in the project's active set (top_n by stars) via gh: write status snapshots;
     repos with an updated pushed_at get their Stage 0 shallow scan re-queued; 404/403 are marked deleted/private.
@@ -1140,8 +1153,10 @@ class TagApplyBatchRequest(BaseModel):
     replace_auto: bool = Field(
         default=False,
         description=(
-            "When True, first delete each repo's old tags with source in {github_topic, auto_rule}, then insert the newly computed results."
-            "manual/auto_llm tags are left untouched. Used to clean up stale false positives after a rule upgrade. Defaults to False (append mode) for backward compatibility."
+            "When True, first delete each repo's old tags with source in {github_topic, auto_rule}, then insert the "
+            "newly computed results."
+            "manual/auto_llm tags are left untouched. Used to clean up stale false positives after a rule upgrade. "
+            "Defaults to False (append mode) for backward compatibility."
         ),
     )
 
@@ -1860,7 +1875,8 @@ async def create_shallow_batch(
     body: CreateShallowBatchBody,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """Create a new shallow-scan batch — discover candidate repos and freeze a snapshot; status=pending_approval, awaiting human approval.
+    """Create a new shallow-scan batch — discover candidate repos and freeze a snapshot; status=pending_approval,
+    awaiting human approval.
 
     Candidate repo logic: among active repos (is_deleted=False, last_active_status != 'archived'),
     repos whose shallow_summary is empty or stale (not refreshed for > 30 days).
@@ -1968,10 +1984,13 @@ async def approve_shallow_batch(
 ) -> dict[str, Any]:
     """Approve a batch — create DR rows for the candidate repos in the snapshot and **return the dispatch intents**.
 
-    The dispatch intents (including sub-agent prompts) are the product of this chain: approval itself does not make any agent
-    run; only once the caller receives ``intents`` can Stage 0 actually be dispatched. The historical implementation here
+    The dispatch intents (including sub-agent prompts) are the product of this chain: approval itself does not make any
+    agent
+    run; only once the caller receives ``intents`` can Stage 0 actually be dispatched. The historical implementation
+    here
     hand-rolled ``EcosystemDeepReview`` inserts; the created rows had no ``dispatch_prompt``, and the subsequent
-    ``tick()`` then skipped the whole batch because "this repo already has a queued row" — after approval nothing could run,
+    ``tick()`` then skipped the whole batch because "this repo already has a queued row" — after approval nothing could
+    run,
     and tick's return value was discarded entirely. Now everything is uniformly delegated to
     ``EcosystemShallowQueueWorker.dispatch_batch`` (row creation + prompt rendering + deduplication).
     """
@@ -1988,7 +2007,8 @@ async def approve_shallow_batch(
 
     now = utc_now()
 
-    # Read the candidate snapshot. A corrupted snapshot must fail explicitly: silently treating it as empty and approving would advance the batch to running
+    # Read the candidate snapshot. A corrupted snapshot must fail explicitly: silently treating it as empty and
+    # approving would advance the batch to running
     # while dispatching no repo at all — equivalent to permanently losing the order.
     candidate_ids: list[str] = []
     if batch.candidates_snapshot_json:
@@ -2097,7 +2117,8 @@ async def rollback_shallow_batch(
     """Roll back a batch — the inverse operation of approve.
 
     Delete this batch's shallow-scan task rows that have not started yet (stage_status='queued' and not claimed),
-    claimed/completed rows are kept; the batch is set to cancelled. Removed repos will be rediscovered the next time a batch is created
+    claimed/completed rows are kept; the batch is set to cancelled. Removed repos will be rediscovered the next time a
+    batch is created
     (candidates are computed in real time by the "not refreshed for 30 days" rule).
     """
     batch = await repo.get_shallow_batch(batch_id)
@@ -2208,7 +2229,8 @@ async def review_queue_claim(
     body: ReviewQueueClaimBody,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict[str, Any]:
-    """Claim the next row awaiting quality review (stage_status='shallow_done', quality_score IS NULL, claimed_by IS NULL).
+    """Claim the next row awaiting quality review (stage_status='shallow_done', quality_score IS NULL, claimed_by IS
+    NULL).
 
     Also returns the associated repo profile's shallow_summary for the reviewer to assess.
     Returns claimed review + profile or {"claimed": false} when queue is empty.
@@ -2811,10 +2833,13 @@ async def index_update(
         raise HTTPException(status_code=400, detail="X-Project-Id header required")
 
     # ── Step 1: resolve scan config from settings ─────────────────────────────
-    # After v1.6.1 rejected multi-source expansion, the data_sources / scan_profiles tables were zeroed out (their write entry points
-    # had long been no-ops), yet this endpoint still hard-validated their existence, so it forever returned only missing_setup —
+    # After v1.6.1 rejected multi-source expansion, the data_sources / scan_profiles tables were zeroed out (their write
+    # entry points
+    # had long been no-ops), yet this endpoint still hard-validated their existence, so it forever returned only
+    # missing_setup —
     # dragging down index_diff_latest / diff / queries_recap, the downstream consumers of its output,
-    # with it. The configuration source of truth is changed to ecosystem_project_settings (Q5 ruling, consistent with the single-source decision):
+    # with it. The configuration source of truth is changed to ecosystem_project_settings (Q5 ruling, consistent with
+    # the single-source decision):
     #   min_stars               → star threshold for archiving
     #   alert_max_new_per_scan  → per-scan new-additions alert threshold (migrated from scan_profile in v1.6.1)
     #   focus_topics            → query set; when empty, falls back to DEFAULT_QUERIES
@@ -3337,8 +3362,10 @@ async def get_repo_scan_history(
         })
 
     for dr in deep_reviews:
-        # v1.6.0 fix: Skip the v1.5 stage-tracking empty placeholder rows (no actual content, only stage='shallow_done' recorded)
-        # These rows are stage markers automatically created when a v1.5 shallow scan completes, not real deep scans. All 265 old repos have such rows.
+        # v1.6.0 fix: Skip the v1.5 stage-tracking empty placeholder rows (no actual content, only stage='shallow_done'
+        # recorded)
+        # These rows are stage markers automatically created when a v1.5 shallow scan completes, not real deep scans.
+        # All 265 old repos have such rows.
         has_real_content = bool(
             (dr.summary_md or "").strip()
             or (dr.architecture_md or "").strip()

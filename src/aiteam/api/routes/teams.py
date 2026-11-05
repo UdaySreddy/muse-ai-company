@@ -114,7 +114,8 @@ async def update_team(
     elif body.status is not None:
         team = await repo.update_team(team.id, status=body.status)
 
-    # Reassign/unbind project ownership (empty string = unbind, letting automatic attribution rebind via the authoritative path). Verify the target project exists,
+    # Reassign/unbind project ownership (empty string = unbind, letting automatic attribution rebind via the
+    # authoritative path). Verify the target project exists,
     # to prevent accidentally writing a nonexistent id and creating a phantom attribution.
     if body.project_id is not None:
         target = body.project_id.strip()
@@ -199,10 +200,14 @@ async def team_briefing(
         hints.append("The team has no members yet; dispatch directly (members are auto-enrolled into the team)")
 
     # 7. Context-aware hints. Only report "state facts you cannot see"; no common-sense action reminders —
-    #    reminders like "too many idle members, reclaim them" or "hold a meeting to discuss direction" would not make the reader's behavior any worse if deleted (user ruling 2026-07-28).
+    # reminders like "too many idle members, reclaim them" or "hold a meeting to discuss direction" would not make the
+    # reader's behavior any worse if deleted (user ruling 2026-07-28).
     #    The Agent team_name parameter is deprecated and ignored; the copy must not present that usage anymore.
     if idle_agents and ready_tasks:
-        hints.append("[Rule] There are idle agents and pending tasks; use SendMessage(to='<member name>') to keep dispatching and advance in parallel")
+        hints.append(
+            "[Rule] There are idle agents and pending tasks; use SendMessage(to='<member name>') "
+            "to keep dispatching and advance in parallel"
+        )
 
     # 8. File hotspot detection (files edited by multiple agents)
     file_hotspots = hook_translator.get_file_hotspots(window_minutes=10)

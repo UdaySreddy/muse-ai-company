@@ -27,7 +27,8 @@ async def model_usage(
     days: int = Query(7, ge=1, le=90),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict:
-    """Workflow agent usage aggregated by model tier over the last N days (orchestration charter observation caliber)."""
+    """Workflow agent usage aggregated by model tier over the last N days (orchestration charter observation
+    caliber)."""
     usage = await repo.aggregate_model_usage(days)
     return {"success": True, "data": {"days": days, "usage": usage}}
 

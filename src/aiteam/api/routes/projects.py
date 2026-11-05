@@ -130,17 +130,24 @@ async def project_summary(
     leader_info: dict | None = None
     leaders_info: list[dict] = []
 
-    # Leader identity = the CC main session under this project directory (read directly from the file source of truth, zero registration dependency).
-    # User ruling (2026-07-07): model/active status is auto-detected by the backend, not via the hook registration chain —
-    # the registration chain broke twice before (the leader row parasitized a workflow team and was migrated across projects; compact synthesized rows polluted it).
-    # User ruling (2026-07-10): when multiple sessions run in parallel, show each one as CEO-<English name>, no longer just the latest one.
+    # Leader identity = the CC main session under this project directory (read directly from the file source of truth,
+    # zero registration dependency).
+    # User ruling (2026-07-07): model/active status is auto-detected by the backend, not via the hook registration chain
+    # —
+    # the registration chain broke twice before (the leader row parasitized a workflow team and was migrated across
+    # projects; compact synthesized rows polluted it).
+    # User ruling (2026-07-10): when multiple sessions run in parallel, show each one as CEO-<English name>, no longer
+    # just the latest one.
     for probe in session_probe.detect_live_sessions(
         getattr(project, "root_path", "") or ""
     ):
         # In-flight tasks (fleet layer P2 observation, see docs/fleet-layer-design.md §6.1):
-        # the number of running tasks in the teams of the agents under this session (leader + the sub-agents it dispatched).
-        # Best-effort caliber when there is no owner_session_id (that is the fleet P1 foundation, not done in this batch) —
-        # if probing fails or the session has no agents persisted yet, honestly record 0; do not guess and do not abort with an error.
+        # the number of running tasks in the teams of the agents under this session (leader + the sub-agents it
+        # dispatched).
+        # Best-effort caliber when there is no owner_session_id (that is the fleet P1 foundation, not done in this
+        # batch) —
+        # if probing fails or the session has no agents persisted yet, honestly record 0; do not guess and do not abort
+        # with an error.
         in_flight_tasks = 0
         try:
             session_agents = await repo.find_agents_by_session(probe["session_id"])
@@ -159,7 +166,8 @@ async def project_summary(
             "current_task": "",
             "last_active_at": probe["last_active_at"],
             "live": bool(probe["live"]),
-            # CC session registry parallel reading (C13 dual-track observation) — display only, does not participate in the
+            # CC session registry parallel reading (C13 dual-track observation) — display only, does not participate in
+            # the
             # status/live determination above. cc_status is CC's own idle/busy.
             "cc_pid": probe.get("cc_pid"),
             "cc_status": probe.get("cc_status", ""),
@@ -174,7 +182,8 @@ async def project_summary(
         last_activity_at = leaders_info[0]["last_active_at"]
         leader_info = leaders_info[0]
 
-    # The DB leader row only supplements (fields only the hook chain has, such as current_task) and serves as a fallback when probing is unavailable.
+    # The DB leader row only supplements (fields only the hook chain has, such as current_task) and serves as a fallback
+    # when probing is unavailable.
     try:
         leaders = await repo.find_agents_by_role("leader")
         now = utc_now()
@@ -215,7 +224,8 @@ async def project_summary(
                     or "",
                     "last_active_at": last_activity_at,
                     "live": live_session,
-                    # When there is no file-probe data (DB fallback path), the watermark is unknown; honestly leave it empty —
+                    # When there is no file-probe data (DB fallback path), the watermark is unknown; honestly leave it
+                    # empty —
                     # never misapply the agents table's sub-agent watermark caliber to the main session row.
                     "ctx_tokens": None,
                     "ctx_window": None,
@@ -224,7 +234,8 @@ async def project_summary(
                 }
                 leaders_info.append(leader_info)
             else:
-                # current_task only exists in the hook chain — supply it to the corresponding session entry by session_id
+                # current_task only exists in the hook chain — supply it to the corresponding session entry by
+                # session_id
                 db_sid = getattr(freshest_leader, "session_id", "")
                 for li in leaders_info:
                     if li["session_id"] == db_sid:
@@ -254,7 +265,8 @@ async def project_summary(
         session_count = 0
 
     # Worktree observation (docs/worktree-governance-design.md §4/(c)): scanned on demand,
-    # no background daemon — each summary request triggers one read-only git probe, following the same principle as the other probe sections in this function
+    # no background daemon — each summary request triggers one read-only git probe, following the same principle as the
+    # other probe sections in this function
     # (probe failures degrade silently and never make the whole summary error out).
     try:
         worktrees = worktree_probe.detect_worktrees(getattr(project, "root_path", "") or "")

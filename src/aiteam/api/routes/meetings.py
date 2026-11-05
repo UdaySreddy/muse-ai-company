@@ -185,7 +185,11 @@ async def create_meeting_message(
             "impersonation": is_impersonation,
         },
     )
-    resp_msg = "Message sent successfully (sent on behalf of another; flagged as impersonation for audit)" if is_impersonation else "Message sent successfully"
+    resp_msg = (
+        "Message sent successfully (sent on behalf of another; flagged as impersonation for audit)"
+        if is_impersonation
+        else "Message sent successfully"
+    )
     return APIResponse(data=message, message=resp_msg)
 
 
@@ -257,13 +261,17 @@ async def conclude_meeting(
     )
 
     # Meeting conclusions are **no longer automatically written to memory** (ruling 2026-07-31).
-    # The original implementation stuffed a "[Meeting decision] ..." entry into the team-scope memories at every conclusion — the memory layer's only
-    # automatic write entry point: no review, no invalidation-axis management, growing linearly with the meeting count, and duplicating the proper path for decisions —
-    # the authoritative landing spot for conclusions is the decision event + task wall entry (Council discipline 4, the current system).
+    # The original implementation stuffed a "[Meeting decision] ..." entry into the team-scope memories at every
+    # conclusion — the memory layer's only
+    # automatic write entry point: no review, no invalidation-axis management, growing linearly with the meeting count,
+    # and duplicating the proper path for decisions —
+    # the authoritative landing spot for conclusions is the decision event + task wall entry (Council discipline 4, the
+    # current system).
     # Historical entries are kept frozen (not deleted, not invalidated, not migrated); only new additions stop.
     return APIResponse(
         data=updated,
-        message="The meeting has concluded. Please land conclusions in a decision event + a task wall entry (no longer automatically written to the memory layer)",
+        message="The meeting has concluded. Please land conclusions in a decision event + a task wall entry (no longer "
+                "automatically written to the memory layer)",
     )
 
 

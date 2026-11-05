@@ -17,7 +17,8 @@ _CONFIG_PATH = Path.home() / ".claude" / "data" / "ai-team-os" / "wake_config.js
 
 _DEFAULT_WAKE_CONFIG = {
     "interval": "30m",
-    "prompt_template": "Hello, please check the current project status, see whether there are any pending tasks on the task wall, and continue advancing the work.",
+    "prompt_template": "Hello, please check the current project status, see whether there are any pending tasks "
+                       "on the task wall, and continue advancing the work.",
     "autonomy_level": "consult",
 }
 

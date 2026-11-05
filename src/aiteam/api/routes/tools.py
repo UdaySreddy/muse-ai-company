@@ -1,10 +1,12 @@
 """AI Team OS — Tool progressive-loading P1 routes.
 
 GET /api/tools/always-load: called by the OS's MCP server during session startup; recomputes the recently high-frequency
-MCP tools' alwaysLoad whitelist (one SQL query + hysteresis debounce) and returns a list of bare tool names. The MCP server
+MCP tools' alwaysLoad whitelist (one SQL query + hysteresis debounce) and returns a list of bare tool names. The MCP
+server
 uses it to attach ``_meta {"anthropic/alwaysLoad": true}`` to matched tools, exempting them from defer.
 
-See the P1 section of docs/tool-loading-design.md for the design spec. The feature is a pure gain: if any step fails, it returns
+See the P1 section of docs/tool-loading-design.md for the design spec. The feature is a pure gain: if any step fails, it
+returns
 an empty list with 200; everything proceeds via ToolSearch as before and never throws a 5xx.
 """
 
@@ -32,16 +34,19 @@ router = APIRouter(prefix="/api/tools", tags=["tools"])
 async def get_always_load(
     registered: str = Query(
         "",
-        description="Bare tool names actually registered by the current MCP server (comma-separated); used to filter out deleted tools."
+        description="Bare tool names actually registered by the current MCP server (comma-separated); used to filter "
+                    "out deleted tools."
         "Leave empty to skip registration filtering (e.g. for manual debugging).",
     ),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict:
     """Recompute the alwaysLoad rotation list and record an audit event.
 
-    - Data: ``mcp__ai-team-os%`` tools in agent_activities over the last 7 days, spanning ≥2 days, in descending frequency order;
+    - Data: ``mcp__ai-team-os%`` tools in agent_activities over the last 7 days, spanning ≥2 days, in descending
+      frequency order;
     - Normalization: strip the prefix to get bare names and filter by ``registered`` to the tools currently registered;
-    - Hysteresis: read the most recent rotation event's ``data.tools`` as incumbents; a challenger must exceed incumbent×1.2 to rotate in;
+    - Hysteresis: read the most recent rotation event's ``data.tools`` as incumbents; a challenger must exceed
+      incumbent×1.2 to rotate in;
     - Hard cap 5, target 3; do not pad when data is insufficient;
     - The computed result is recorded as one events audit row (also the next period's hysteresis baseline);
     - If any step fails → return an empty list with 200.
@@ -63,7 +68,8 @@ async def get_always_load(
 
         result = compute_rotation(candidates, incumbents)
 
-        # Record the computed result as one ledger row — audit and next period's hysteresis baseline combined; no new table and no config writes.
+        # Record the computed result as one ledger row — audit and next period's hysteresis baseline combined; no new
+        # table and no config writes.
         await repo.create_event(
             event_type=ROTATION_EVENT_TYPE,
             source="api.tools.always_load",

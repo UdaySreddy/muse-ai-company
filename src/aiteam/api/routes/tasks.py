@@ -206,13 +206,17 @@ async def run_task(
         "success": True,
         "data": task.model_dump(mode="json"),
         "message": message,
-        "_hint": "The task has been recorded in the team task list. CC Agents can view pending tasks via team_briefing and claim them themselves.",
+        "_hint": "The task has been recorded in the team task list. CC Agents can view pending tasks "
+                 "via team_briefing and claim them themselves.",
     }
     if blocked_by:
         resp["blocked_by"] = blocked_by
     if related_tasks:
         resp["related_tasks"] = related_tasks
-        resp["_warning"] = f"Detected {len(related_tasks)} similar running tasks; please confirm whether this is a duplicate"
+        resp["_warning"] = (
+            f"Detected {len(related_tasks)} similar running tasks; "
+            f"please confirm whether this is a duplicate"
+        )
     return resp
 
 
@@ -504,9 +508,12 @@ async def update_task(
         )
 
     # Attribution v1 §2.4: only record the edge when this call **explicitly provided assigned_to**.
-    # This is the weakest-evidence of the three bookkeeping actions: the author of a memo / report is "who left the record", whereas
-    # assigned_to is "who it was assigned to" — being assigned does not mean having done it. So we deliberately do not fall back on "who called this endpoint"
-    # (the Leader and sub-agents in a session share one MCP process, so that signal cannot distinguish people at all), nor do we
+    # This is the weakest-evidence of the three bookkeeping actions: the author of a memo / report is "who left the
+    # record", whereas
+    # assigned_to is "who it was assigned to" — being assigned does not mean having done it. So we deliberately do not
+    # fall back on "who called this endpoint"
+    # (the Leader and sub-agents in a session share one MCP process, so that signal cannot distinguish people at all),
+    # nor do we
     # infer the author from a status change when assigned_to was not given. Better one fewer edge.
     if body.assigned_to:
         await try_record_worked_on(
@@ -774,7 +781,8 @@ async def get_execution_trace(
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-    # Memory v2: query the task_memos table directly (filtering out invalidated entries by default) instead of unpacking config JSON.
+    # Memory v2: query the task_memos table directly (filtering out invalidated entries by default) instead of unpacking
+    # config JSON.
     memos = await repo.list_task_memos(task_id)
 
     timeline: list[dict[str, Any]] = []

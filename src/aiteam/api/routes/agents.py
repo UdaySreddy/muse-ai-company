@@ -100,7 +100,8 @@ async def add_agent(
         await repo.update_agent(agent.id, **update_kwargs)
 
     # Model-governance soft hint (normal mode only, never blocks — user ruling 2026-07-10):
-    # when the model is not in the file source-of-truth list, attach a hint; ultracode/workflow agents do not pass through this endpoint and are naturally unconstrained.
+    # when the model is not in the file source-of-truth list, attach a hint; ultracode/workflow agents do not pass
+    # through this endpoint and are naturally unconstrained.
     model_hint = ""
     if body.model:
         try:
@@ -110,7 +111,8 @@ async def add_agent(
             if known and body.model not in known:
                 model_hint = (
                     f"Hint: model '{body.model}' has never appeared in any CC session on this machine"
-                    f" (see /api/models/available for the available list); please verify the spelling or account permissions. Registered as usual; not blocked."
+                    f" (see /api/models/available for the available list); please verify the spelling or account "
+                    f"permissions. Registered as usual; not blocked."
                 )
         except Exception:  # noqa: BLE001
             pass

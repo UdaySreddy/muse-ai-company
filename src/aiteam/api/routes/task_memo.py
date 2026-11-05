@@ -2,7 +2,8 @@
 
 Provides task memo read and append functionality for recording task progress, decisions, issues, and summaries.
 Memory system v2 P0: memos have been promoted from the Task.config["memo"] JSON array to a standalone task_memos table;
-the write API remains fully compatible, and reads/writes all go through the table (invalidated entries are filtered out by default, invalid_at IS NULL).
+the write API remains fully compatible, and reads/writes all go through the table (invalidated entries are filtered out
+by default, invalid_at IS NULL).
 """
 
 from __future__ import annotations
@@ -21,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["task-memo"])
 
-# Memory v2 P2: when the number of new valid memos added to this project since the last reconcile exceeds this count, attach a reconcile hint to the write response.
+# Memory v2 P2: when the number of new valid memos added to this project since the last reconcile exceeds this count,
+# attach a reconcile hint to the write response.
 _RECONCILE_HINT_THRESHOLD = 150
 
 
@@ -50,9 +52,11 @@ async def add_task_memo(
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-    # Write-time security scan (v2.1): the episodic layer **only scans for invisible Unicode**. The memo path is high-frequency and does not enter
+    # Write-time security scan (v2.1): the episodic layer **only scans for invisible Unicode**. The memo path is
+    # high-frequency and does not enter
     # any agent's system prompt — injection-style phrasing here is merely recorded text, not an executed
-    # instruction; but content invisible to the naked eye should not be stored in any layer (retrieval would surface it back before the model's eyes).
+    # instruction; but content invisible to the naked eye should not be stored in any layer (retrieval would surface it
+    # back before the model's eyes).
     finding = scan_invisible(body.content or "")
     if finding is not None:
         return {
@@ -71,8 +75,10 @@ async def add_task_memo(
     )
     entry = _task_memo_to_legacy(memo)
 
-    # Knowledge layer P1a: extract cross-domain references to build edges (zero-LLM regex, best-effort, never blocks the write).
-    # Attached at the route layer = the convergence point of the MCP tool and REST dual entry points. from_id uses the real memo id.
+    # Knowledge layer P1a: extract cross-domain references to build edges (zero-LLM regex, best-effort, never blocks the
+    # write).
+    # Attached at the route layer = the convergence point of the MCP tool and REST dual entry points. from_id uses the
+    # real memo id.
     try:
         from aiteam.api.link_extract import extract_refs
         from aiteam.types import KnowledgeLink
@@ -95,7 +101,8 @@ async def add_task_memo(
     except Exception:  # noqa: BLE001
         logger.warning("memo link extraction failed", exc_info=True)
 
-    # Attribution v1 §2.4: within this bookkeeping action that **already necessarily happens**, also record the agent→task edge.
+    # Attribution v1 §2.4: within this bookkeeping action that **already necessarily happens**, also record the
+    # agent→task edge.
     # The parameters naturally carry both task_id and author, so nobody needs to make an extra tool call.
     await try_record_worked_on(
         repo,
@@ -108,8 +115,10 @@ async def add_task_memo(
 
     result: dict = {"success": True, "data": entry}
 
-    # Memory v2 P2 volume-threshold soft hint: new valid memos in this project since the last reconcile > 150 → attach a hint
-    # prompting a memory_reconcile pass (a minimal take on Generative Agents' importance-over-threshold: counting by volume).
+    # Memory v2 P2 volume-threshold soft hint: new valid memos in this project since the last reconcile > 150 → attach a
+    # hint
+    # prompting a memory_reconcile pass (a minimal take on Generative Agents' importance-over-threshold: counting by
+    # volume).
     if task.project_id:
         try:
             since = await repo.get_last_reconcile_at(task.project_id)

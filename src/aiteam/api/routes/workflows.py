@@ -3,8 +3,10 @@
 Read-only queries for CC ultracode/Workflow run records + per-agent telemetry, plus a manual reconciliation endpoint.
 
 Project isolation uses the optional ``?project_id=`` query (not the ``X-Project-Id`` header): the frontend apiFetch only
-attaches the isolation header to ``/api/ecosystem`` (a hard gate in client.ts); non-ecosystem endpoints use get_repository
-with the global repository + explicit query filtering, avoiding a repeat of the all-teams-disappeared bug (red line 2: do not touch project_scope).
+attaches the isolation header to ``/api/ecosystem`` (a hard gate in client.ts); non-ecosystem endpoints use
+get_repository
+with the global repository + explicit query filtering, avoiding a repeat of the all-teams-disappeared bug (red line 2:
+do not touch project_scope).
 """
 
 from __future__ import annotations
@@ -93,7 +95,8 @@ async def reconcile_workflows(
     )
 
     # Phase 2 optional enhancement: for running/interrupted runs, also perform a live tail + .output enrichment,
-    # so a manual refresh shows the live state immediately without waiting for the 60s reaper tick. Best-effort; failures do not affect the reconciliation result.
+    # so a manual refresh shows the live state immediately without waiting for the 60s reaper tick. Best-effort;
+    # failures do not affect the reconciliation result.
     live: list[WorkflowRun] = []
     for st in ("running", "interrupted"):
         try:

@@ -134,7 +134,8 @@ async def create_report(
     )
     await repo.create_report(report)
 
-    # Knowledge layer P1a: extract cross-domain references from the report body to build edges (best-effort, same approach as task_memo)
+    # Knowledge layer P1a: extract cross-domain references from the report body to build edges (best-effort, same
+    # approach as task_memo)
     try:
         from aiteam.api.link_extract import extract_refs
         from aiteam.types import KnowledgeLink

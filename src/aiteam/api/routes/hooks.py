@@ -225,7 +225,8 @@ async def save_compact_checkpoint(
 ) -> dict:
     """Before the context is compacted, freeze this session's OS-side operational state into a checkpoint event.
 
-    The snapshot is taken by the server directly from the database — the hook only reports "I am about to compact" and is not responsible for gathering content. This way
+    The snapshot is taken by the server directly from the database — the hook only reports "I am about to compact" and
+    is not responsible for gathering content. This way
     the hook stays pure stdlib with a single HTTP call, and the checkpoint will not end up incomplete
     just because the hook side missed checking one thing.
     """
@@ -268,9 +269,11 @@ async def read_compact_checkpoint(
 
 @router.get("/background-jobs")
 async def list_background_jobs(root_path: str = "", in_flight_only: bool = True) -> dict:
-    """Current state of CC `--bg` background sessions (read directly from the file source of truth, zero registration dependency).
+    """Current state of CC `--bg` background sessions (read directly from the file source of truth, zero registration
+    dependency).
 
-    These sessions never register into the OS through any hook and can keep running after the foreground window is closed — without looking here,
+    These sessions never register into the OS through any hook and can keep running after the foreground window is
+    closed — without looking here,
     the project summary would say "nobody is working" while a daemon is actually running.
     """
     jobs = (

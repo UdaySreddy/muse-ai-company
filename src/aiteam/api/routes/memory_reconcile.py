@@ -2,8 +2,10 @@
 
 Design §4 "reconcile on demand" — two endpoints:
 - GET  /api/memory/reconcile/candidates —— deterministic coarse screening (zero LLM): episodic-layer candidate groups
-  (in-cluster BM25 pairing) + direction-layer inventory (for per-item staleness checks) + distillation material (promotion candidates) +
-  operating instructions. Judgment is left to the in-session CC agent calling the tool (the OS has no independent LLM credentials).
+  (in-cluster BM25 pairing) + direction-layer inventory (for per-item staleness checks) + distillation material
+  (promotion candidates) +
+  operating instructions. Judgment is left to the in-session CC agent calling the tool (the OS has no independent LLM
+  credentials).
 - POST /api/memory/reconcile/apply —— batch-apply the operations confirmed by the agent
   (merge/invalidate/score/promote), idempotent: repeating an operation on an already-invalidated entry returns noop.
 """
@@ -25,7 +27,8 @@ from aiteam.storage.repository import StorageRepository
 
 router = APIRouter(prefix="/api/memory/reconcile", tags=["memory"])
 
-# If the number of candidate groups exceeds this count, hint to enable ultracode for concurrent fine judgment (design §4 trigger clause).
+# If the number of candidate groups exceeds this count, hint to enable ultracode for concurrent fine judgment (design §4
+# trigger clause).
 _ULTRACODE_GROUP_HINT = 8
 
 
@@ -39,12 +42,14 @@ async def reconcile_candidates(
     ),
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict:
-    """Coarse screening: return episodic-layer candidate groups + direction-layer inventory + distillation material + operating instructions."""
+    """Coarse screening: return episodic-layer candidate groups + direction-layer inventory + distillation material +
+    operating instructions."""
     project_id = repo._project_scope
     if not project_id:
         raise HTTPException(
             status_code=400,
-            detail="Memory reconcile requires project context — please call it from within a project (X-Project-Id / X-Project-Dir)",
+            detail="Memory reconcile requires project context — please call it from within a project (X-Project-Id / "
+                   "X-Project-Dir)",
         )
 
     memos = await repo.list_project_task_memos(
@@ -53,7 +58,8 @@ async def reconcile_candidates(
     groups = build_candidate_groups(memos, threshold=threshold)
     promotion = [g for g in groups if g["promotion_candidate"]]
 
-    # Direction-layer inventory: the full text of all valid entries, for the caller to judge item by item whether each "is still true" (staleness detection).
+    # Direction-layer inventory: the full text of all valid entries, for the caller to judge item by item whether each
+    # "is still true" (staleness detection).
     directions = await repo.list_direction_memories(project_id=project_id)
     direction_inventory = [
         {
@@ -97,7 +103,8 @@ async def reconcile_apply(
     body: ReconcileApply,
     repo: StorageRepository = Depends(get_scoped_repository),
 ) -> dict:
-    """Batch-apply reconcile operations (idempotent). Returns per-item results and refreshes last_reconcile_at at the end."""
+    """Batch-apply reconcile operations (idempotent). Returns per-item results and refreshes last_reconcile_at at the
+    end."""
     project_id = repo._project_scope
     results: list[dict] = []
 
@@ -238,7 +245,8 @@ async def reconcile_apply(
                     }
                 )
                 continue
-            # Security scan: promote is the direction layer's second write entry point; the same rules as memory_add apply
+            # Security scan: promote is the direction layer's second write entry point; the same rules as memory_add
+            # apply
             finding = scan_direction_content(content)
             if finding is not None:
                 results.append(
@@ -260,7 +268,8 @@ async def reconcile_apply(
                         "op": "promote",
                         "status": "error",
                         "error": (
-                            f"Content is {len(content)} characters, exceeding the direction layer's per-entry limit of {_MAX_CONTENT_CHARS} — "
+                            f"Content is {len(content)} characters, exceeding the direction layer's per-entry limit of "
+                            f"{_MAX_CONTENT_CHARS} — "
                             "please trim it or convert it into a pointer entry"
                         ),
                     }
@@ -268,7 +277,8 @@ async def reconcile_apply(
                 continue
             scope_id = _resolve_scope_id(op.scope, "", repo)
             # Red line 2: bucket character quota (storage cap = injection budget, the same axis as memory_add).
-            # We do not re-attach the full bucket inventory here — the reconcile flow's direction_inventory already provided the full text,
+            # We do not re-attach the full bucket inventory here — the reconcile flow's direction_inventory already
+            # provided the full text,
             # and repeating it on every failed promote would only bloat the response.
             over_quota = await _bucket_quota_check(
                 repo, op.scope, scope_id, len(content), include_entries=False
@@ -299,7 +309,8 @@ async def reconcile_apply(
             {"op": kind, "status": "error", "error": f"Unknown operation {kind!r}"}
         )
 
-    # Refresh the reconcile timestamp (reuses project.config, no new table) — the baseline for the volume-threshold soft hint.
+    # Refresh the reconcile timestamp (reuses project.config, no new table) — the baseline for the volume-threshold soft
+    # hint.
     reconciled_at = None
     if project_id:
         applied_any = any(r.get("status") == "applied" for r in results)
