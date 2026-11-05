@@ -1,23 +1,23 @@
-# 长期流量归档 — 突破 GitHub Traffic API 仅保留 14 天的窗口限制。
+# Long-term traffic archive — working around the GitHub Traffic API keeping only a 14-day window.
 #
-# 每天远程抓取公开仓 CronusL-1141/AI-company 的 views/clones/referrers/
-# stars/forks，累积到本私有仓的 github-repo-stats 数据分支（含 HTML 报告），
-# 流量数据不落公开仓、不对外暴露。
+# Every day, remotely fetch views/clones/referrers/stars/forks of the public repo CronusL-1141/AI-company,
+# and accumulate them into the github-repo-stats data branch of this private repo (including HTML reports);
+# traffic data never lands in the public repo and is not exposed externally.
 #
-# 依赖 secret GHRS_GITHUB_API_TOKEN：classic PAT，勾选 repo scope
-# （traffic API 要求对目标仓库有 push 权限；数据分支写回也用它）。
+# Depends on the secret GHRS_GITHUB_API_TOKEN: a classic PAT with the repo scope checked
+# (the traffic API requires push permission on the target repo; it is also used to write back to the data branch).
 name: github-repo-stats
 
 on:
   schedule:
-    # 每天 UTC 23:47（北京 07:47），错开整点负载高峰
+    # Every day at UTC 23:47 (Beijing 07:47), avoiding the on-the-hour load peak
     - cron: "47 23 * * *"
   workflow_dispatch: {}
 
 jobs:
   ghrs:
     name: github-repo-stats
-    # 仅在私有仓运行 — 公开仓没有 secret，跑了只会产生失败记录
+    # Run only in the private repo — the public repo has no secret, so running there would only produce failure records
     if: github.repository == 'CronusL-1141/AI-company-private'
     runs-on: ubuntu-latest
     steps:
