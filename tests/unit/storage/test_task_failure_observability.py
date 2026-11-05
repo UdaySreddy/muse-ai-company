@@ -1,20 +1,23 @@
-"""失败观测写入侧回归测试 — 观测断链闭合批 ①。
+"""Failure-observability write-side regression tests — closing the observability broken chain, batch (1).
 
-断链实录（2026-07-28 取证）：``EventType.TASK_FAILED`` 自声明起就没有任何**存活**
-写入方 ——
+Broken-chain record (2026-07-28 forensics): since its declaration, ``EventType.TASK_FAILED`` has had no **living**
+writer —
 
-* ``config/settings.py`` 的通知事件白名单引用了 ``task.failed``；
-* ``api/routes/settings.py`` 的默认通知配置也列了它；
-* ``orchestrator/team_manager.py`` 里确实有一处 ``_emit("task.failed", ...)``，
-  但它挂在 ``event_bus`` 上且该模块全仓无导入方 —— 是退役编排路径的死码。
+* ``config/settings.py``'s notification event whitelist references ``task.failed``;
+* ``api/routes/settings.py``'s default notification configuration also lists it;
+* In ``orchestrator/team_manager.py`` there is indeed one ``_emit("task.failed", ...)``,
+  but it hangs on ``event_bus`` and that module has no importers anywhere in the repo — dead code from the retired
+  orchestration path.
 
-于是「任务失败」这件事在事件流里从来没出现过，失败观测全靠 agent 自己汇报；
-agent 卡死 / 被杀 / 静默转 failed 时，系统对失败一无所知。
+So the fact 'a task failed' never appeared in the event stream at all, and failure observability relied entirely on
+agents reporting themselves;
+when an agent is stuck / killed / silently turns failed, the system knows nothing about the failure.
 
-本组测试把 ``task.failed`` 钉死在**存储层状态机的唯一入口**
-``StorageRepository.update_task`` 上：只要状态被改成 failed，无论调用方是 API、
-MCP 工具、reaper 回收还是直接调 repo，事件都必须落库，并且带得走前状态与失败
-上下文——不依赖任何调用方的自觉。
+This group of tests pins ``task.failed`` to **the single entry point of the storage-layer state machine**,
+``StorageRepository.update_task``: as long as the status is changed to failed, no matter whether the caller is the API,
+an MCP tool, reaper collection, or a direct repo call, the event must be persisted, carrying the previous status and the
+failure
+context — without relying on any caller's conscientiousness.
 """
 
 from __future__ import annotations
@@ -40,10 +43,10 @@ async def repo() -> StorageRepository:
     await close_db()
 
 
-async def _make_task(repo: StorageRepository, title: str = "观测断链闭合验证任务"):
+async def _make_task(repo: StorageRepository, title: str = "Observability broken-chain closure verification task"):
     """Create a team + task and return the task."""
     team = await repo.create_team(name="d1-observability", mode="coordinate")
-    return await repo.create_task(team.id, title=title, description="失败观测写入侧验证")
+    return await repo.create_task(team.id, title=title, description="Failure-observability write-side verification")
 
 
 async def _failed_events(repo: StorageRepository, task_id: str) -> list:
@@ -53,133 +56,138 @@ async def _failed_events(repo: StorageRepository, task_id: str) -> list:
 
 
 # ---------------------------------------------------------------------------
-# 核心：状态机转 failed 必须落事件
+# Core: transitioning the state machine to failed must record an event
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
 async def test_status_to_failed_emits_task_failed(repo: StorageRepository) -> None:
-    """状态改成 failed → 存储层必须自动落一条 task.failed（不靠调用方自报）。"""
+    """The status changes to failed → the storage layer must automatically record a task.failed (not relying on the
+    caller to report itself)."""
     task = await _make_task(repo)
     await repo.update_task(task.id, status=TaskStatus.RUNNING.value)
 
-    await repo.update_task(task.id, status="failed", result="worker 进程被杀，无自报")
+    await repo.update_task(task.id, status="failed", result="The worker process was killed, with no self-report")
 
     hits = await _failed_events(repo, task.id)
-    assert len(hits) == 1, "转 failed 未落 task.failed 事件——观测断链"
+    assert len(hits) == 1, "Transitioning to failed recorded no task.failed event — the observability chain is broken"
     assert hits[0].entity_type == "task"
     assert hits[0].source == "repository"
 
 
 @pytest.mark.asyncio()
 async def test_task_failed_carries_prior_status_and_context(repo: StorageRepository) -> None:
-    """事件必须带前状态与失败上下文，否则事后无法归因。"""
+    """The event must carry the previous status and the failure context, otherwise it cannot be attributed
+    afterwards."""
     task = await _make_task(repo)
     await repo.update_task(task.id, status=TaskStatus.RUNNING.value)
-    await repo.update_task(task.id, status="failed", result="依赖的 API 连续 3 次超时")
+    await repo.update_task(task.id, status="failed", result="The dependent API timed out 3 times in a row")
 
     hits = await _failed_events(repo, task.id)
     assert len(hits) == 1
     data = hits[0].data
 
     assert data["task_id"] == task.id
-    # 前状态：失败是从哪个状态掉下来的，是归因的第一手信息
-    assert data["from_status"] == "running", f"前状态丢失: {data}"
+    # The previous status: which status the failure fell from is the first-hand information for attribution
+    assert data["from_status"] == "running", f"The previous status was lost: {data}"
     assert data["to_status"] == "failed"
-    # 失败上下文
-    assert "超时" in (data.get("failure_context") or ""), f"失败上下文丢失: {data}"
+    # Failure context
+    assert "timed out" in (data.get("failure_context") or ""), f"The failure context was lost: {data}"
     assert data["team_id"] == task.team_id
-    # 快照仍按 update_task 的既有约定给出
+    # The snapshot is still given by update_task's existing convention
     assert hits[0].state_snapshot["status"] == "failed"
 
 
 @pytest.mark.asyncio()
 async def test_enum_status_input_also_emits(repo: StorageRepository) -> None:
-    """调用方传 TaskStatus 枚举（team_manager 老写法）时同样要落事件。"""
+    """When the caller passes a TaskStatus enum (team_manager's old writing style), an event must likewise be
+    recorded."""
     task = await _make_task(repo)
-    await repo.update_task(task.id, status=TaskStatus.FAILED, result="枚举入参路径")
+    await repo.update_task(task.id, status=TaskStatus.FAILED, result="Enum-argument path")
 
     hits = await _failed_events(repo, task.id)
-    assert len(hits) == 1, "枚举入参路径漏采"
+    assert len(hits) == 1, "The enum-argument path was missed"
 
 
 @pytest.mark.asyncio()
 async def test_repeated_failed_update_does_not_duplicate(repo: StorageRepository) -> None:
-    """只在「转入」失败态时发一次；反复写 failed 不刷屏（事件流是账本不是日志）。"""
+    """Emit only once, on 'transitioning into' the failed state; writing failed repeatedly does not flood (the event
+    stream is a ledger, not a log)."""
     task = await _make_task(repo)
-    await repo.update_task(task.id, status="failed", result="第一次失败")
-    await repo.update_task(task.id, result="补一句说明")  # 不改状态
-    await repo.update_task(task.id, status="failed", result="重复写同状态")
+    await repo.update_task(task.id, status="failed", result="First failure")
+    await repo.update_task(task.id, result="Adding an explanatory note")  # Status unchanged
+    await repo.update_task(task.id, status="failed", result="Repeatedly writing the same status")
 
     hits = await _failed_events(repo, task.id)
-    assert len(hits) == 1, f"重复转 failed 造成事件刷屏: {len(hits)} 条"
+    assert len(hits) == 1, f"Repeatedly transitioning to failed flooded the events: {len(hits)} entries"
 
 
 @pytest.mark.asyncio()
 async def test_non_failure_transition_emits_nothing(repo: StorageRepository) -> None:
-    """正常流转不得误报失败。"""
+    """Normal transitions must not falsely report failure."""
     task = await _make_task(repo)
     await repo.update_task(task.id, status=TaskStatus.RUNNING.value)
-    await repo.update_task(task.id, status=TaskStatus.COMPLETED.value, result="顺利完成")
+    await repo.update_task(task.id, status=TaskStatus.COMPLETED.value, result="Completed smoothly")
 
     assert await _failed_events(repo, task.id) == []
 
 
 @pytest.mark.asyncio()
 async def test_recovery_then_fail_again_emits_second_event(repo: StorageRepository) -> None:
-    """failed → 重试 running → 再 failed：第二次失败是新事实，必须再落一条。"""
+    """failed → retry running → failed again: the second failure is a new fact and must record another event."""
     task = await _make_task(repo)
-    await repo.update_task(task.id, status="failed", result="第一次失败")
-    await repo.update_task(task.id, status=TaskStatus.RUNNING.value)  # 重试
-    await repo.update_task(task.id, status="failed", result="第二次失败")
+    await repo.update_task(task.id, status="failed", result="First failure")
+    await repo.update_task(task.id, status=TaskStatus.RUNNING.value)  # Retry
+    await repo.update_task(task.id, status="failed", result="Second failure")
 
     hits = await _failed_events(repo, task.id)
-    assert len(hits) == 2, f"重试后再次失败漏采: {len(hits)} 条"
+    assert len(hits) == 2, f"A failure after a retry was missed: {len(hits)} entries"
     assert {h.data["from_status"] for h in hits} == {"pending", "running"}
 
 
 # ---------------------------------------------------------------------------
-# 诊断结果同样要落事件：分析做过了但没留痕，等于没做
+# Diagnostic results must likewise record events: if the analysis was done but left no trace, it is as if it was not
+# done
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
 async def test_failure_analysis_lands_event(repo: StorageRepository) -> None:
-    """failure_analysis（失败炼金）跑完必须落 task.failure_analyzed。"""
+    """After failure_analysis (failure alchemy) runs, it must record task.failure_analyzed."""
     from aiteam.loop.failure_alchemy import FailureAlchemist
 
     task = await _make_task(repo)
-    await repo.update_task(task.id, status="failed", result="连接被拒绝")
+    await repo.update_task(task.id, status="failed", result="Connection refused")
 
     await FailureAlchemist(repo).process_failure(task.id, task.team_id)
 
     events = await repo.list_events(event_type="task.failure_analyzed", limit=50)
     hits = [e for e in events if e.entity_id == task.id]
-    assert len(hits) == 1, "失败炼金结果未落事件"
+    assert len(hits) == 1, "The failure-alchemy result recorded no event"
     assert hits[0].data["task_id"] == task.id
-    # 产物摘要要能证明分析真的产出了东西
+    # The product summary must be able to prove the analysis really produced something
     assert hits[0].data["artifacts"] == ["antibody", "vaccine", "catalyst"]
 
 
 @pytest.mark.asyncio()
 async def test_diagnose_failure_lands_event(repo: StorageRepository) -> None:
-    """diagnose_task_failure 跑完必须落 task.failure_diagnosed，且带根因。"""
+    """After diagnose_task_failure runs, it must record task.failure_diagnosed, carrying the root cause."""
     from aiteam.loop.failure_alchemy import FailureAlchemist
 
     task = await _make_task(repo)
-    await repo.update_task(task.id, status="failed", result="数据库连接池耗尽")
+    await repo.update_task(task.id, status="failed", result="Database connection pool exhausted")
 
     await FailureAlchemist(repo).diagnose_failure(task.id)
 
     events = await repo.list_events(event_type="task.failure_diagnosed", limit=50)
     hits = [e for e in events if e.entity_id == task.id]
-    assert len(hits) == 1, "失败诊断结果未落事件"
-    assert "连接池" in hits[0].data["root_cause"]
+    assert len(hits) == 1, "The failure-diagnosis result recorded no event"
+    assert "connection pool" in hits[0].data["root_cause"]
 
 
 @pytest.mark.asyncio()
 async def test_diagnosis_on_missing_task_lands_nothing(repo: StorageRepository) -> None:
-    """任务不存在时不得落空事件。"""
+    """When the task does not exist, no empty event must be recorded."""
     from aiteam.loop.failure_alchemy import FailureAlchemist
 
     await FailureAlchemist(repo).diagnose_failure("no-such-task")

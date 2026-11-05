@@ -1,4 +1,4 @@
-"""v1.5.0-A: EcosystemRepoStatusSnapshot 单元测试 (append-only 快照表)。"""
+"""v1.5.0-A: EcosystemRepoStatusSnapshot unit tests (append-only snapshot table)."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ async def sample_scan_run_id(repo: StorageRepository) -> str:
 async def test_create_status_snapshot_basic(
     repo: StorageRepository, sample_repo_id: str, sample_scan_run_id: str
 ) -> None:
-    """创建快照后能按 repo_id 列出。"""
+    """After creating a snapshot it can be listed by repo_id."""
     snap = EcosystemRepoStatusSnapshot(
         repo_id=sample_repo_id,
         scan_run_id=sample_scan_run_id,
@@ -69,7 +69,7 @@ async def test_create_status_snapshot_basic(
 async def test_status_snapshot_append_only_history(
     repo: StorageRepository, sample_repo_id: str, sample_scan_run_id: str
 ) -> None:
-    """每次写入都新增一行，按时间倒序返回（append-only）。"""
+    """Every write adds a new row, returned in reverse chronological order (append-only)."""
     for stars, is_active in [(1000, False), (5000, True), (8000, True)]:
         await repo.create_status_snapshot(
             EcosystemRepoStatusSnapshot(
@@ -83,7 +83,7 @@ async def test_status_snapshot_append_only_history(
 
     snapshots = await repo.list_status_snapshots(repo_id=sample_repo_id, limit=10)
     assert len(snapshots) == 3
-    # 三个 stars 都被记录，append-only
+    # All three stars values are recorded; append-only
     star_set = {s.stars for s in snapshots}
     assert star_set == {1000, 5000, 8000}
 
@@ -92,7 +92,7 @@ async def test_status_snapshot_append_only_history(
 async def test_status_snapshot_filter_by_scan_run(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """按 scan_run_id 过滤。"""
+    """Filter by scan_run_id."""
     run_a = await repo.create_scan_run(
         EcosystemScanRun(strategy=EcosystemScanStrategy.INCREMENTAL)
     )
@@ -121,14 +121,14 @@ async def test_status_snapshot_filter_by_scan_run(
 async def test_status_snapshot_summary_at_time_preserved(
     repo: StorageRepository, sample_repo_id: str, sample_scan_run_id: str
 ) -> None:
-    """summary_at_time 保留当时的 shallow_summary 文本。"""
+    """summary_at_time preserves the shallow_summary text of that moment."""
     snap = EcosystemRepoStatusSnapshot(
         repo_id=sample_repo_id,
         scan_run_id=sample_scan_run_id,
         stars=10000,
-        summary_at_time="历史浅扫总结：这是一个 skills 框架...",
+        summary_at_time="Historical shallow-scan summary: this is a skills framework...",
     )
     await repo.create_status_snapshot(snap)
 
     fetched = await repo.list_status_snapshots(repo_id=sample_repo_id)
-    assert "skills 框架" in fetched[0].summary_at_time
+    assert "skills framework" in fetched[0].summary_at_time

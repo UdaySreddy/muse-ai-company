@@ -1,11 +1,11 @@
-"""并发 claim 竞争条件单元测试 — worker pool 基础设施 (v1.5.3)。
+"""Concurrent claim race-condition unit tests — worker pool infrastructure (v1.5.3).
 
-验证多 worker 同时 claim 时：
-- 每行最多只被一个 worker 认领（claimed_by 唯一）
-- 空队列返回 None
-- release 后可重新认领
-- apply_quality_review 写回所有字段
-- min_stars 过滤正常工作
+Verifies that when multiple workers claim simultaneously:
+- Each row can be claimed by at most one worker (claimed_by uniqueness)
+- After release it can be claimed again
+- apply_quality_review writes back all fields
+- apply_quality_review writes back all fields
+- min_stars filtering works correctly
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ async def _make_shallow_done_review(repo: StorageRepository, repo_id: str) -> Ec
 
 
 async def test_concurrent_claim_shallow_no_double_claim(repo: StorageRepository) -> None:
-    """10 workers 争抢 5 个 queued row：恰好 5 个成功，5 个返回 None，无重复认领。"""
+    """10 workers competing for 5 queued rows: exactly 5 succeed, 5 return None, with no duplicate claims."""
     repo_ids = []
     for i in range(5):
         rid = await _make_profile(repo, f"owner/repo-shallow-{i}")
@@ -104,13 +104,13 @@ async def test_concurrent_claim_shallow_no_double_claim(repo: StorageRepository)
 
 
 async def test_claim_shallow_empty_queue_returns_none(repo: StorageRepository) -> None:
-    """空队列时 claim 返回 None。"""
+    """When the queue is empty, claim returns None."""
     result = await repo.claim_next_shallow_repo(worker_id="lonely-worker")
     assert result is None
 
 
 async def test_claim_shallow_already_claimed_skipped(repo: StorageRepository) -> None:
-    """已被认领的行不能被第二个 worker 取走。"""
+    """A row already claimed cannot be taken by a second worker."""
     rid = await _make_profile(repo, "owner/single-repo")
     await _make_queued_review(repo, rid)
 
@@ -128,7 +128,7 @@ async def test_claim_shallow_already_claimed_skipped(repo: StorageRepository) ->
 
 
 async def test_release_and_reclaim(repo: StorageRepository) -> None:
-    """release 后，同一行可被新 worker 重新认领。"""
+    """After release, the same row can be claimed again by a new worker."""
     rid = await _make_profile(repo, "owner/releasable-repo")
     review = await _make_queued_review(repo, rid)
 
@@ -153,7 +153,7 @@ async def test_release_and_reclaim(repo: StorageRepository) -> None:
 
 
 async def test_apply_quality_review_writes_all_fields(repo: StorageRepository) -> None:
-    """apply_quality_review 写回所有 6 个字段并释放认领锁。"""
+    """apply_quality_review writes back all 6 fields and releases the claim lock."""
     rid = await _make_profile(repo, "owner/quality-repo")
     _ = await _make_shallow_done_review(repo, rid)
     # First claim it
@@ -178,7 +178,7 @@ async def test_apply_quality_review_writes_all_fields(repo: StorageRepository) -
 
 
 async def test_apply_quality_review_missing_row_returns_none(repo: StorageRepository) -> None:
-    """不存在的 dr_id 返回 None。"""
+    """A non-existent dr_id returns None."""
     result = await repo.apply_quality_review(
         dr_id="non-existent",
         quality_score=50,
@@ -194,13 +194,13 @@ async def test_apply_quality_review_missing_row_returns_none(repo: StorageReposi
 
 
 async def test_claim_review_empty_queue_returns_none(repo: StorageRepository) -> None:
-    """无 shallow_done 行时返回 None。"""
+    """When there are no shallow_done rows, returns None."""
     result = await repo.claim_next_review_repo(worker_id="qworker-x")
     assert result is None
 
 
 async def test_claim_review_returns_profile_with_summary(repo: StorageRepository) -> None:
-    """认领 review 时同时返回 profile（含 shallow_summary）。"""
+    """Claiming a review also returns the profile (including shallow_summary)."""
     rid = await _make_profile(repo, "owner/with-summary")
     profile_obj = await repo.get_ecosystem_profile_by_id(rid)
     assert profile_obj is not None
@@ -215,7 +215,7 @@ async def test_claim_review_returns_profile_with_summary(repo: StorageRepository
 
 
 async def test_min_stars_filter_excludes_low_star_repo(repo: StorageRepository) -> None:
-    """min_stars 过滤：低星数 repo 的 review 行不被 claim。"""
+    """min_stars filter: a review row for a low-star repo is not claimed."""
     low_rid = await _make_profile(repo, "owner/low-stars-repo", stars=10)
     await _make_shallow_done_review(repo, low_rid)
 
@@ -224,7 +224,7 @@ async def test_min_stars_filter_excludes_low_star_repo(repo: StorageRepository) 
 
 
 async def test_min_stars_filter_includes_high_star_repo(repo: StorageRepository) -> None:
-    """min_stars 过滤：高星数 repo 的 review 行正常被 claim。"""
+    """min_stars filter: a review row for a high-star repo is claimed normally."""
     high_rid = await _make_profile(repo, "owner/high-stars-repo", stars=5000)
     await _make_shallow_done_review(repo, high_rid)
 
@@ -240,13 +240,13 @@ async def test_min_stars_filter_includes_high_star_repo(repo: StorageRepository)
 
 
 async def test_release_claim_missing_row_returns_none(repo: StorageRepository) -> None:
-    """不存在的 dr_id 释放返回 None。"""
+    """A non-existent dr_id returns None."""
     result = await repo.release_claim(dr_id="ghost-id", reason="does not exist")
     assert result is None
 
 
 async def test_release_claim_clears_claimed_by(repo: StorageRepository) -> None:
-    """release_claim 正确清空 claimed_by 并记录 reason。"""
+    """release_claim correctly clears claimed_by and records the reason."""
     rid = await _make_profile(repo, "owner/to-release")
     review = await _make_queued_review(repo, rid)
 

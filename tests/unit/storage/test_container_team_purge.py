@@ -1,12 +1,15 @@
-"""completed 会话容器队的定期清理 —— 判据与级联。
+"""Periodic cleanup of completed session container teams — criteria and cascades.
 
-一个 CC 会话一支容器队、绝不跨会话复用（fleet 层 §3），所以一个长跑的 CC 进程
-每换一次会话就在库里留下一具 completed 空壳。2026-07-27 生产库实测：80 支容器
-队里 78 支已 completed，全部零任务、零会议、零 busy 成员——纯堆积。
+A CC session gets one container team and never reuses it across sessions (fleet layer §3), so a long-running CC process
+Every time it changes session it leaves a completed empty shell in the database. Production database measurement,
+2026-07-27: of 80 container
+teams, 78 were already completed, all with zero tasks, zero meetings and zero busy members — pure accumulation.
 
-这些用例钉死的是清理的**克制**。活队、非容器队、近期队、还有人在忙的队，以及
-任何挂着实质记录（任务/会议/报告/调度/唤醒/工作流运行）的队，一支都不许删；
-真删的时候必须把成员与成员活动一起带走，不留悬空行。
+These cases pin down the cleanup's **restraint**. Live teams, non-container teams, recent teams, teams with someone
+still busy, and
+any team carrying substantive records (tasks/meetings/reports/schedules/wakes/workflow runs) must not be deleted, not a
+single one;
+when truly deleting, the members and their activities must be taken away together, leaving no dangling rows.
 """
 
 from __future__ import annotations
@@ -32,11 +35,13 @@ async def _count(repo, model, **where) -> int:
 
 
 async def _age(repo, team_id: str, days: float) -> None:
-    """把队的三个时间戳一起推老。
+    """Push all three of the team's timestamps older together.
 
-    生产实测 13 支待清队的 ``completed_at`` **全是 NULL**（关队路径写 status 时
-    没落时间戳），所以判龄必须能从 updated_at 兜底——这里刻意保持 completed_at
-    为空，让用例走的正是生产的那条路径。
+    Production measurements: the ``completed_at`` of all 13 teams awaiting cleanup was **NULL** (the team-closing path
+    writes the status
+    without recording a timestamp), so age determination must be able to fall back to updated_at — completed_at is
+    deliberately kept
+    empty here, so the case walks exactly the production path.
     """
     stamp = utc_now() - timedelta(days=days)
     async with get_session(repo._db_url) as session:
@@ -48,7 +53,7 @@ async def _age(repo, team_id: str, days: float) -> None:
 
 
 async def _husk(repo, name: str = "session-0def8f84", *, days: float = 30):
-    """一具典型空壳：completed 容器队 + 一个 offline 成员 + 若干成员活动。"""
+    """A typical empty shell: a completed container team + one offline member + some member activities."""
     team = await repo.create_team(name=name, mode="coordinate", config=dict(CONTAINER))
     agent = await repo.create_agent(
         team_id=team.id, name="worker", role="worker", source="hook"
@@ -80,11 +85,11 @@ async def test_spent_husk_is_purged_with_its_roster(db_repository):
 
 @pytest.mark.asyncio
 async def test_live_container_is_never_touched(db_repository):
-    """活着的容器队——本会话正在用的那支——绝不能被扫进来。"""
+    """A live container team — the one this session is using — must never be swept in."""
     team = await db_repository.create_team(
         name="session-80d0cc5e", mode="coordinate", config=dict(CONTAINER)
     )
-    await _age(db_repository, team.id, 90)  # 老，但还 active
+    await _age(db_repository, team.id, 90)  # Old, but still active
 
     assert await db_repository.purge_stale_session_containers(retention_days=7) == []
     assert await db_repository.get_team(team.id) is not None
@@ -100,8 +105,10 @@ async def test_recent_husk_is_kept(db_repository):
 
 @pytest.mark.asyncio
 async def test_busy_member_blocks_purge(db_repository):
-    """队 completed 却挂着 busy 成员是已知的矛盾态（reaper 另有复活逻辑）——
-    这种队要留给复活路径处理，清理绝不能抢在前面把人连队一起删掉。"""
+    """A team completed yet carrying a busy member is a known contradictory state (the reaper has separate revival
+    logic) —
+    such a team must be left to the revival path; the cleanup must never rush ahead and delete the people together
+    with the team."""
     team, agent = await _husk(db_repository)
     await db_repository.update_agent(agent.id, status="busy")
 
@@ -111,7 +118,8 @@ async def test_busy_member_blocks_purge(db_repository):
 
 @pytest.mark.asyncio
 async def test_recently_active_member_blocks_purge(db_repository):
-    """成员最近活跃是比队上任何时间戳都硬的"还在用"证据（2026-07-25 wenge 教训）。"""
+    """A member's recent activity is harder evidence of 'still in use' than any timestamp on the team (the 2026-07-25
+    wenge lesson)."""
     team, agent = await _husk(db_repository)
     await db_repository.update_agent(agent.id, last_active_at=utc_now())
 
@@ -124,12 +132,12 @@ async def test_recently_active_member_blocks_purge(db_repository):
     ("name", "config"),
     [
         ("workflow-wf_374d39b3", {"kind": "workflow"}),
-        ("session-legacy", {}),  # 无 kind 的历史遗留队
-        ("ecosystem-platform", {"kind": "session"}),  # 有 kind 但不是容器命名
+        ("session-legacy", {}),  # A legacy team with no kind
+        ("ecosystem-platform", {"kind": "session"}),  # Has a kind but is not container naming
     ],
 )
 async def test_non_container_teams_are_never_touched(db_repository, name, config):
-    """双判据：kind=session **且** 名字是 session-<sid8>，缺一不删。"""
+    """Dual criteria: kind=session **and** the name is session-<sid8>; if either is missing, do not delete."""
     team = await db_repository.create_team(name=name, mode="coordinate", config=config)
     await db_repository.update_team(team.id, status="completed")
     await _age(db_repository, team.id, 90)
@@ -141,7 +149,7 @@ async def test_non_container_teams_are_never_touched(db_repository, name, config
 @pytest.mark.asyncio
 async def test_team_with_tasks_is_kept(db_repository):
     team, _ = await _husk(db_repository)
-    await db_repository.create_task(team_id=team.id, title="还留着的活")
+    await db_repository.create_task(team_id=team.id, title="Work still remaining")
 
     assert await db_repository.purge_stale_session_containers(retention_days=7) == []
     assert await db_repository.get_team(team.id) is not None
@@ -150,7 +158,7 @@ async def test_team_with_tasks_is_kept(db_repository):
 @pytest.mark.asyncio
 async def test_team_with_meetings_is_kept(db_repository):
     team, _ = await _husk(db_repository)
-    await db_repository.create_meeting(team_id=team.id, topic="开过的会")
+    await db_repository.create_meeting(team_id=team.id, topic="A meeting that was held")
 
     assert await db_repository.purge_stale_session_containers(retention_days=7) == []
     assert await db_repository.get_team(team.id) is not None
@@ -162,7 +170,7 @@ async def test_team_with_reports_is_kept(db_repository):
     from aiteam.types import Report
 
     await db_repository.create_report(
-        Report(author="worker", topic="留档", content="# 正文", team_id=team.id)
+        Report(author="worker", topic="For the record", content="# Body text", team_id=team.id)
     )
 
     assert await db_repository.purge_stale_session_containers(retention_days=7) == []
@@ -184,7 +192,7 @@ async def test_limit_caps_one_cycle(db_repository):
 
 @pytest.mark.asyncio
 async def test_non_positive_retention_disables_the_purge(db_repository):
-    """关停开关必须真关停：0 天不等于"立刻全删"。"""
+    """The kill switch must really kill: 0 days does not mean 'delete everything immediately'."""
     team, _ = await _husk(db_repository)
 
     assert await db_repository.purge_stale_session_containers(retention_days=0) == []
@@ -193,7 +201,8 @@ async def test_non_positive_retention_disables_the_purge(db_repository):
 
 
 class _RecordingBus:
-    """验类型的桩——桩绝不能比生产宽松（批 9 教训：枚举缺项时单测绿、线上炸）。"""
+    """A type-checking stub — a stub must never be more lenient than production (the batch 9 lesson: when an enum
+    item is missing, the unit tests are green and production blows up)."""
 
     def __init__(self):
         self.events: list[tuple[str, str, dict]] = []
@@ -224,7 +233,7 @@ async def test_reaper_sweeps_and_leaves_a_trace(db_repository):
 
 @pytest.mark.asyncio
 async def test_purge_rides_the_existing_reap_tick(db_repository, monkeypatch):
-    """无定时器铁律：清理搭现有 reap 循环，不得新起任何调度。"""
+    """The no-timer iron law: the cleanup rides the existing reap loop and must not start any new scheduling."""
     from aiteam.api.state_reaper import StateReaper
 
     reaper = StateReaper(repo=db_repository, event_bus=_RecordingBus())
@@ -267,15 +276,19 @@ async def test_dry_run_reports_without_deleting(db_repository):
 
 @pytest.mark.asyncio
 async def test_member_carrying_token_ledger_blocks_purge(db_repository):
-    """成员行上挂着用量账 = 永不清理（2026-08-03 实录立规）。
+    """A usage account hanging on a member row = never clean it up (rule established from the 2026-08-03 record).
 
-    这道闸与 tasks/meetings/reports 那几条不同：那些问"还有谁会来看这份记录"，
-    这一条问"删掉会不会毁掉再也采不回来的数据"。token 五列是从 transcript 解析
-    出来的，而 transcript 会随时间被清掉——行删了就永久没了。
+    This gate differs from the tasks/meetings/reports ones: those ask 'who else will come to look at this record',
+    while this one asks 'would deleting it destroy data that can never be collected again'. The five token columns are
+    parsed out of
+    transcripts, and transcripts are cleared over time — once the row is deleted, they are gone forever.
 
-    实录：purge 随 v1.11.0（2026-07-27）上线，token 五列直到 v1.11.1（2026-07-29）
-    才落到 agents 行上，清理闸从未回头补。生产库实测到一支 07-27 关闭的空壳挂着
-    85,418,776 token，四小时后即进射程；同期已有 16 行在 token 列落地之后被删。
+    Record: purge went live with v1.11.0 (2026-07-27), while the five token columns did not land on agent rows until
+    v1.11.1 (2026-07-29),
+    and the cleanup gate was never retrofitted. A production database measurement found an empty shell closed on 07-27
+    carrying
+    85,418,776 tokens, entering range four hours later; in the same period 16 rows had already been deleted after the
+    token columns landed.
     """
     team, agent = await _husk(db_repository, name="session-1a2b3c4d")
     await db_repository.update_agent(agent.id, cache_read_tokens=63_178_891)
@@ -289,7 +302,7 @@ async def test_member_carrying_token_ledger_blocks_purge(db_repository):
 
 @pytest.mark.asyncio
 async def test_measured_zero_also_blocks_purge(db_repository):
-    """测出来是 0 也是一次测量结果，与"从没测过"不是一回事（no-data != zero）。"""
+    """A measured 0 is also a measurement result; it is not the same thing as 'never measured' (no-data != zero)."""
     team, agent = await _husk(db_repository, name="session-2b3c4d5e")
     await db_repository.update_agent(agent.id, tokens_measured_at=utc_now())
 
@@ -302,7 +315,7 @@ async def test_measured_zero_also_blocks_purge(db_repository):
 
 @pytest.mark.asyncio
 async def test_husk_without_token_ledger_is_still_purged(db_repository):
-    """反向：没有账的空壳照常清理，这道闸不得把 purge 整个废掉。"""
+    """Reverse: an empty shell with no account is cleaned up as usual; this gate must not abolish purge altogether."""
     team, _ = await _husk(db_repository, name="session-3c4d5e6f")
 
     planned = await db_repository.purge_stale_session_containers(
@@ -314,11 +327,14 @@ async def test_husk_without_token_ledger_is_still_purged(db_repository):
 
 @pytest.mark.asyncio
 async def test_unharvested_transcript_blocks_purge(db_repository, tmp_path):
-    """有 transcript_path、账还没采、文件还在 = 不许删（2026-08-03 取证补闸）。
+    """Has a transcript_path, the account not yet collected, and the file still present = must not delete (gate added
+    from the 2026-08-03 forensics).
 
-    路径只记在行上：行一删，即使 transcript 还躺在磁盘上，回采也永远找不到
-    它——窗口静默关闭，与销毁已记账是同一失败模式，只是早一步。生产实测：
-    9 支闸外空壳队挂着 10 行未采 Leader 行，10 份 transcript 全部仍在磁盘。
+    The path is recorded only on the row: once the row is deleted, even if the transcript still lies on disk,
+    re-collection can never find
+    it — the window silently closes, the same failure mode as destroying recorded accounts, just one step earlier.
+    Production measurement:
+    9 empty-shell teams outside the gate carried 10 uncollected Leader rows, and all 10 transcripts are still on disk.
     """
     transcript = tmp_path / "87500462-f517-473b-9bc2-468a1ab7892f.jsonl"
     transcript.write_text('{"type":"assistant"}\n')
@@ -334,7 +350,8 @@ async def test_unharvested_transcript_blocks_purge(db_repository, tmp_path):
 
 @pytest.mark.asyncio
 async def test_dead_transcript_path_does_not_block_purge(db_repository, tmp_path):
-    """反向：文件已被 CC 清掉的行没有可采的东西，回落为普通 husk 照常清理。"""
+    """Reverse: a row whose file has already been cleared by CC has nothing to collect and falls back to an ordinary
+    husk, cleaned up as usual."""
     team, agent = await _husk(db_repository, name="session-5e6f7a8b")
     await db_repository.update_agent(
         agent.id, transcript_path=str(tmp_path / "gone.jsonl")

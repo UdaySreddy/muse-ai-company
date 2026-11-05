@@ -1,4 +1,4 @@
-"""生态仓档案存储层单元测试 — upsert + search 覆盖。"""
+"""Ecosystem repository profile storage-layer unit tests — upsert + search coverage."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from aiteam.types import EcosystemRepoProfile
 
 @pytest_asyncio.fixture()
 async def repo() -> StorageRepository:
-    """内存 SQLite 仓库用于测试。"""
+    """In-memory SQLite repository for testing."""
     r = StorageRepository(db_url="sqlite+aiosqlite://")
     await r.init_db()
     yield r  # type: ignore[misc]
@@ -52,7 +52,7 @@ def _make_profile(
 
 
 async def test_upsert_new_profile_creates_record(repo: StorageRepository) -> None:
-    """新档案 upsert 后能被 search 检索到。"""
+    """After upserting a new profile it can be found by search."""
     profile = _make_profile()
     await repo.upsert_ecosystem_profile(profile)
 
@@ -61,7 +61,7 @@ async def test_upsert_new_profile_creates_record(repo: StorageRepository) -> Non
 
 
 async def test_upsert_updates_stars_on_second_call(repo: StorageRepository) -> None:
-    """同一 repo_full_name 再次 upsert 时 stars 字段被更新。"""
+    """When the same repo_full_name is upserted again, the stars field is updated."""
     profile = _make_profile(stars=10000)
     await repo.upsert_ecosystem_profile(profile)
 
@@ -75,7 +75,7 @@ async def test_upsert_updates_stars_on_second_call(repo: StorageRepository) -> N
 
 
 async def test_upsert_preserves_first_seen_at(repo: StorageRepository) -> None:
-    """多次 upsert 后 first_seen_at 不变，last_scanned_at 更新。"""
+    """After multiple upserts, first_seen_at is unchanged and last_scanned_at is updated."""
     profile = _make_profile()
     await repo.upsert_ecosystem_profile(profile)
 
@@ -102,7 +102,7 @@ async def test_upsert_preserves_first_seen_at(repo: StorageRepository) -> None:
 
 
 async def test_upsert_multiple_distinct_repos(repo: StorageRepository) -> None:
-    """多个不同 repo upsert 后各自独立存在。"""
+    """Multiple different repos upserted exist independently of each other."""
     repos = [
         _make_profile(f"owner/repo-{i}", stars=5000 + i * 1000)
         for i in range(3)
@@ -117,7 +117,7 @@ async def test_upsert_multiple_distinct_repos(repo: StorageRepository) -> None:
 
 
 async def test_upsert_updates_needs_deep_review_flag(repo: StorageRepository) -> None:
-    """needs_deep_review 字段在 upsert 时可更新。"""
+    """The needs_deep_review field can be updated on upsert."""
     profile = _make_profile(needs_deep_review=True, stars=8000)
     await repo.upsert_ecosystem_profile(profile)
 
@@ -138,7 +138,7 @@ async def test_upsert_updates_needs_deep_review_flag(repo: StorageRepository) ->
 
 
 async def test_search_by_min_stars_filters_correctly(repo: StorageRepository) -> None:
-    """min_stars 过滤：只返回 stars >= 阈值的档案。"""
+    """min_stars filter: returns only profiles with stars >= the threshold."""
     await repo.upsert_ecosystem_profile(_make_profile("owner/low-stars", stars=3000))
     await repo.upsert_ecosystem_profile(_make_profile("owner/high-stars", stars=20000))
 
@@ -149,7 +149,7 @@ async def test_search_by_min_stars_filters_correctly(repo: StorageRepository) ->
 
 
 async def test_search_by_keyword_matches_name(repo: StorageRepository) -> None:
-    """keyword 过滤：匹配 name 字段（LIKE）。使用 repo_full_name 唯一标识作为关键词。"""
+    """keyword filter: matches the name field (LIKE). Uses the repo_full_name unique identifier as the keyword."""
     profile_a = EcosystemRepoProfile(
         repo_full_name="anthropics/claude-code",
         name="claude-code",
@@ -180,7 +180,7 @@ async def test_search_by_keyword_matches_name(repo: StorageRepository) -> None:
 
 
 async def test_search_by_category(repo: StorageRepository) -> None:
-    """category 过滤：只返回指定分类的档案。"""
+    """category filter: returns only profiles of the specified category."""
     await repo.upsert_ecosystem_profile(
         _make_profile("owner/mcp-tool", stars=8000, category="mcp-server")
     )
@@ -196,7 +196,7 @@ async def test_search_by_category(repo: StorageRepository) -> None:
 
 
 async def test_search_by_needs_deep_review(repo: StorageRepository) -> None:
-    """needs_deep_review 过滤：True/False 各自准确返回。"""
+    """needs_deep_review filter: True/False each return accurately."""
     await repo.upsert_ecosystem_profile(
         _make_profile("owner/small-repo", stars=6000, needs_deep_review=True)
     )
@@ -212,7 +212,7 @@ async def test_search_by_needs_deep_review(repo: StorageRepository) -> None:
 
 
 async def test_search_returns_sorted_by_stars_desc(repo: StorageRepository) -> None:
-    """结果按 stars 降序排列。"""
+    """Results are sorted by stars in descending order."""
     for stars in [5000, 30000, 15000]:
         await repo.upsert_ecosystem_profile(
             _make_profile(f"owner/repo-{stars}", stars=stars)
@@ -224,12 +224,12 @@ async def test_search_returns_sorted_by_stars_desc(repo: StorageRepository) -> N
 
 
 # ---------------------------------------------------------------------------
-# Stage B 扩展字段 (4 cases)
+# Stage B extended fields (4 cases)
 # ---------------------------------------------------------------------------
 
 
 async def test_stage_b_fields_persist_on_create(repo: StorageRepository) -> None:
-    """新增的 4 个 Stage B 字段创建时能完整保存。"""
+    """The 4 new Stage B fields are saved in full at creation."""
     pushed = utc_now()
     profile = EcosystemRepoProfile(
         repo_full_name="owner/active-repo",
@@ -240,24 +240,24 @@ async def test_stage_b_fields_persist_on_create(repo: StorageRepository) -> None
         pushed_at=pushed,
         is_archived=False,
         scan_run_id="scan-001",
-        description_excerpt="一个活跃的测试仓",
+        description_excerpt="An active test repository",
     )
     await repo.upsert_ecosystem_profile(profile)
 
     fetched = await repo.get_ecosystem_profile("owner/active-repo")
     assert fetched is not None
     assert fetched.pushed_at is not None
-    # SQLite 存储后 datetime 可能丢失 tz，使用 naive 转换比较
+    # After SQLite storage the datetime may lose its tz; compare after converting to naive
     pushed_naive = pushed.replace(tzinfo=None)
     fetched_pushed_naive = fetched.pushed_at.replace(tzinfo=None) if fetched.pushed_at.tzinfo else fetched.pushed_at
     assert abs((fetched_pushed_naive - pushed_naive).total_seconds()) < 1
     assert fetched.is_archived is False
     assert fetched.scan_run_id == "scan-001"
-    assert fetched.description_excerpt == "一个活跃的测试仓"
+    assert fetched.description_excerpt == "An active test repository"
 
 
 async def test_stage_b_fields_updatable_on_upsert(repo: StorageRepository) -> None:
-    """二次 upsert 时新字段可被更新（如标 is_archived）。"""
+    """On a second upsert, new fields can be updated (e.g. marking is_archived)."""
     profile = EcosystemRepoProfile(
         repo_full_name="owner/aging-repo",
         name="aging-repo",
@@ -287,7 +287,7 @@ async def test_stage_b_fields_updatable_on_upsert(repo: StorageRepository) -> No
 
 
 async def test_stage_b_default_values_on_legacy_data(repo: StorageRepository) -> None:
-    """未显式设置 Stage B 字段时使用默认值。"""
+    """When the Stage B fields are not explicitly set, defaults are used."""
     profile = _make_profile("owner/legacy-repo", stars=8000)
     await repo.upsert_ecosystem_profile(profile)
 
@@ -300,7 +300,7 @@ async def test_stage_b_default_values_on_legacy_data(repo: StorageRepository) ->
 
 
 async def test_get_ecosystem_profile_by_id_roundtrip(repo: StorageRepository) -> None:
-    """get_ecosystem_profile_by_id 能按主键取回。"""
+    """get_ecosystem_profile_by_id can retrieve by primary key."""
     profile = _make_profile("owner/by-id-test", stars=12000)
     await repo.upsert_ecosystem_profile(profile)
 

@@ -1,16 +1,18 @@
-"""Q2 — 纯心跳不再落事件，而心跳**检测**必须分毫不变。
+"""Q2 — Pure heartbeats no longer record events, while heartbeat **detection** must remain utterly unchanged.
 
-缔造者 2026-07-27 拍板停写，附硬条件：「停止心跳写入不是停止心跳检测吧？
-别影响其他检测功能就可以」。这一条正是本文件要钉死的。
+The Creator ruled on 2026-07-27 to stop the writes, with a hard condition: 'Stopping heartbeat writes is not stopping
+heartbeat detection, is it?
+As long as it does not affect other detection features, it is fine.' This is exactly what this file pins down.
 
-停写规模（生产库实测）：``agent.updated`` 共 112,349 行 = events 全表
-237,126 行的 47.4%；其中 changes 恰好只有 ``last_active_at`` 的 94,029 行，
-单这一类就占全表 39.7%（近 7 天 45,717 / 118,867 = 38.5%）。
+Scale of the stopped writes (measured in the production database): ``agent.updated`` has 112,349 rows in total = 47.4%
+of the whole events table's
+237,126 rows; of those, 94,029 rows have changes of exactly ``last_active_at`` only,
+and that single class alone accounts for 39.7% of the whole table (45,717 / 118,867 = 38.5% in the last 7 days).
 
-停的是什么、没停什么：
-- 停：``update_agent(last_active_at=…)`` 之后顺手再写的那一行事件。
-- 没停：``agents.last_active_at`` 这一列照写。StateReaper 的超时判据、
-  wake_actionable 的"刚收工"判据读的都是这一列，不是事件流。
+What is stopped and what is not:
+- Stopped: the event row that used to be written opportunistically after ``update_agent(last_active_at=…)``.
+- Not stopped: the ``agents.last_active_at`` column is still written. The StateReaper timeout criterion,
+  wake_actionable's 'just finished work' criterion — both read this column, not the event stream.
 """
 
 from __future__ import annotations
@@ -114,7 +116,7 @@ class TestDetectionIsUnaffected:
 
     @pytest.mark.asyncio
     async def test_wake_actionable_still_sees_the_heartbeat(self, repo, agent):
-        """`/api/wake/actionable` 的"刚从 busy 收工"判据也读这一列。"""
+        """The 'just finished work from busy' criterion of `/api/wake/actionable` also reads this column."""
         from aiteam.api import wake_actionable
 
         beat = utc_now()

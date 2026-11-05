@@ -1,4 +1,4 @@
-"""仓与仓引用关系存储层单元测试。"""
+"""Repository-to-repository reference relation storage-layer unit tests."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from aiteam.types import (
 
 @pytest_asyncio.fixture()
 async def repo() -> StorageRepository:
-    """内存 SQLite 仓库用于测试。"""
+    """In-memory SQLite repository for testing."""
     r = StorageRepository(db_url="sqlite+aiosqlite://")
     await r.init_db()
     yield r  # type: ignore[misc]
@@ -24,7 +24,7 @@ async def repo() -> StorageRepository:
 
 
 async def _make_profiles(repo: StorageRepository, count: int = 3) -> list[str]:
-    """快速建若干 repo profile，返回其 id 列表。"""
+    """Quickly create several repo profiles and return their id list."""
     ids: list[str] = []
     for i in range(count):
         p = EcosystemRepoProfile(
@@ -42,7 +42,7 @@ async def _make_profiles(repo: StorageRepository, count: int = 3) -> list[str]:
 
 
 async def test_add_relation_persists(repo: StorageRepository) -> None:
-    """添加关联后能在 list 中查到。"""
+    """After adding a relation it can be found in the list."""
     ids = await _make_profiles(repo, count=2)
     rel = EcosystemRelation(
         from_repo_id=ids[0],
@@ -60,7 +60,7 @@ async def test_add_relation_persists(repo: StorageRepository) -> None:
 
 
 async def test_list_relations_filter_by_type(repo: StorageRepository) -> None:
-    """按 relation_type 过滤只返回对应类型。"""
+    """Filtering by relation_type returns only the corresponding type."""
     ids = await _make_profiles(repo, count=3)
     await repo.add_relation(
         EcosystemRelation(
@@ -85,7 +85,7 @@ async def test_list_relations_filter_by_type(repo: StorageRepository) -> None:
 
 
 async def test_list_relations_filter_by_to_repo(repo: StorageRepository) -> None:
-    """按 to_repo_id 过滤可查找谁引用了这个仓。"""
+    """Filtering by to_repo_id can find who referenced this repository."""
     ids = await _make_profiles(repo, count=3)
     await repo.add_relation(
         EcosystemRelation(
@@ -108,7 +108,7 @@ async def test_list_relations_filter_by_to_repo(repo: StorageRepository) -> None
 
 
 async def test_remove_relation(repo: StorageRepository) -> None:
-    """删除关联后 list 不再包含；重复删除返回 False。"""
+    """After deleting a relation, list no longer contains it; deleting again returns False."""
     ids = await _make_profiles(repo, count=2)
     rel = EcosystemRelation(
         from_repo_id=ids[0],
@@ -125,7 +125,7 @@ async def test_remove_relation(repo: StorageRepository) -> None:
 
 
 async def test_multiple_relations_same_pair_allowed(repo: StorageRepository) -> None:
-    """同一对 (from, to) 但不同 relation_type 应允许共存。"""
+    """The same pair (from, to) with different relation_types should be allowed to coexist."""
     ids = await _make_profiles(repo, count=2)
     await repo.add_relation(
         EcosystemRelation(

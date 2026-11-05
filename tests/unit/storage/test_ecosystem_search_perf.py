@@ -107,7 +107,7 @@ async def seeded_repo() -> StorageRepository:
 
 
 async def test_explain_search_uses_project_stars_index(seeded_repo: StorageRepository) -> None:
-    """K1 索引: project_id+stars 复合索引覆盖默认 stars 排序。"""
+    """K1 index: the project_id+stars composite index covers the default stars sort."""
     async with get_session(seeded_repo._db_url) as session:
         rows = (
             await session.execute(
@@ -129,7 +129,7 @@ async def test_explain_search_uses_project_stars_index(seeded_repo: StorageRepos
 async def test_explain_category_lang_uses_composite_index(
     seeded_repo: StorageRepository,
 ) -> None:
-    """K1 索引: 同时过滤 category+language 走对应复合索引。"""
+    """K1 index: filtering category+language simultaneously goes through the corresponding composite index."""
     async with get_session(seeded_repo._db_url) as session:
         rows = (
             await session.execute(
@@ -155,7 +155,7 @@ async def test_explain_category_lang_uses_composite_index(
 async def test_explain_pushed_at_sort_uses_composite_index(
     seeded_repo: StorageRepository,
 ) -> None:
-    """K1 索引: pushed_at 排序走 (project_id, pushed_at) 索引避免 TEMP B-TREE。"""
+    """K1 index: sorting by pushed_at goes through the (project_id, pushed_at) index, avoiding a TEMP B-TREE."""
     async with get_session(seeded_repo._db_url) as session:
         rows = (
             await session.execute(
@@ -187,9 +187,9 @@ async def _percentile(values: list[float], p: float) -> float:
 
 
 async def test_search_p95_within_budget(seeded_repo: StorageRepository) -> None:
-    """50 次随机 search 的 p95 必须远低于生产事故的 2057ms。
+    """The p95 of 50 random searches must be far below the production incident's 2057ms.
 
-    使用 250ms 预算覆盖 CI 慢机；目标产品要求 < 50ms。
+    Using a 250ms budget to cover slow CI machines; the product requirement target is < 50ms.
     """
     rng = random.Random(7)
     keywords = ["thing-1", "thing-99", "agent", "core", "rare"]
@@ -212,7 +212,7 @@ async def test_search_p95_within_budget(seeded_repo: StorageRepository) -> None:
 
 
 async def test_facet_counts_p95_within_budget(seeded_repo: StorageRepository) -> None:
-    """facet_counts 单次扫描重写：50 次跑下来 p95 必须在预算内。"""
+    """facet_counts single-scan rewrite: over 50 runs the p95 must be within budget."""
     durations_ms: list[float] = []
     for _ in range(50):
         t0 = time.perf_counter()
@@ -227,9 +227,9 @@ async def test_facet_counts_p95_within_budget(seeded_repo: StorageRepository) ->
 
 
 async def test_tags_empty_does_not_drop_results(seeded_repo: StorageRepository) -> None:
-    """K1 bug fix: tags=[] / tags=None 不应进入 EXISTS 子查询而误返回 0。
+    """K1 bug fix: tags=[] / tags=None should not enter the EXISTS subquery and wrongly return 0.
 
-    搜索带 tags=[] 必须等价于不传 tags（命中所有 N_PROFILES 行）。
+    Searching with tags=[] must be equivalent to not passing tags (hitting all N_PROFILES rows).
     """
     rows_no_tags, total_no_tags = await seeded_repo.search_ecosystem_profiles_extended(
         limit=10

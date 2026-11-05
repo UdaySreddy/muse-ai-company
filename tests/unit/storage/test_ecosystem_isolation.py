@@ -1,13 +1,13 @@
-"""Stage J — Ecosystem 项目隔离 storage-layer 单元测试。
+"""Stage J — Ecosystem project isolation storage-layer unit tests.
 
-验证 5 张数据表（profile / scan_run / deep_review / repo_tag / relation）
-在不同 project_id 之间完全隔离，且 EcosystemTag 字典保持全局可见。
+Verifies that 5 data tables (profile / scan_run / deep_review / repo_tag / relation)
+are completely isolated between different project_ids, and the EcosystemTag dictionary stays globally visible.
 
-设计要点：
-- 同一个 in-memory SQLite DB 模拟真实环境（共享数据库 + 多项目作用域）。
-- 测试两个 StorageRepository 实例分别 project_scope=p1 / p2。
-- 通过显式 project_id 参数 + 隐式 _project_scope 两种路径都验证。
-- 包含 backfill_ecosystem_to_project 的端到端验证场景。
+Design points:
+- The same in-memory SQLite DB simulates the real environment (shared database + multi-project scopes).
+- Tests two StorageRepository instances with project_scope=p1 / p2 respectively.
+- Through both paths: an explicit project_id parameter + the implicit _project_scope.
+- Includes an end-to-end verification scenario for backfill_ecosystem_to_project.
 """
 
 from __future__ import annotations
@@ -30,34 +30,34 @@ from aiteam.types import (
     EcosystemTagSource,
 )
 
-# 共享 in-memory DB —— 用 file::memory:?cache=shared 让多个连接看到相同表
-# 但测试简化：复用同一个 db_url，在同一进程内 EnginePool 就能共享。
+# Shared in-memory DB — use file::memory:?cache=shared so multiple connections see the same tables
+# But the test simplifies: reuse the same db_url, and within the same process the EnginePool shares it.
 SHARED_DB_URL = "sqlite+aiosqlite://"
 
 
 @pytest_asyncio.fixture()
 async def shared_db():
-    """初始化共享 in-memory DB 并返回三个 repo：
-    - global_repo: 不带作用域，用于设置基础数据 + 全局查询
-    - project_a / project_b: 两个独立项目 id
+    """Initialize the shared in-memory DB and return three repos:
+    - global_repo: no scope, used to set up base data + global queries
+    - project_a / project_b: two independent project ids
     """
-    # 先用 global_repo 创建 schema + 项目
+    # First create the schema + projects with global_repo
     global_repo = StorageRepository(db_url=SHARED_DB_URL)
     await global_repo.init_db()
 
-    # 创建两个项目
+    # Create the two projects
     project_a_obj = await global_repo.create_project(
         name="Project-A",
         root_path="/tmp/project-a",
-        description="测试项目 A",
+        description="Test project A",
     )
     project_b_obj = await global_repo.create_project(
         name="Project-B",
         root_path="/tmp/project-b",
-        description="测试项目 B",
+        description="Test project B",
     )
 
-    # 为每个项目创建 scoped repo（共享同一 db_url，因为 EnginePool 缓存了 engine）
+    # Create a scoped repo for each project (sharing the same db_url, because the EnginePool caches the engine)
     repo_a = StorageRepository(
         db_url=SHARED_DB_URL, project_scope=project_a_obj.id
     )
@@ -93,7 +93,7 @@ def _make_profile(repo_full_name: str = "test/repo") -> EcosystemRepoProfile:
 
 
 async def test_profile_isolated_by_project_scope(shared_db) -> None:
-    """两个项目 upsert 同一仓 → 各自得到独立行，互不可见。"""
+    """Two projects upserting the same repository → each gets an independent row, mutually invisible."""
     repo_a = shared_db["repo_a"]
     repo_b = shared_db["repo_b"]
 
@@ -109,12 +109,12 @@ async def test_profile_isolated_by_project_scope(shared_db) -> None:
     assert len(b_list) == 1
     assert a_list[0].project_id == shared_db["project_a_id"]
     assert b_list[0].project_id == shared_db["project_b_id"]
-    # 同一 repo_full_name 两条独立 id
+    # The same repo_full_name, two independent ids
     assert a_list[0].id != b_list[0].id
 
 
 async def test_get_profile_respects_project_scope(shared_db) -> None:
-    """get_ecosystem_profile 在不同作用域下只看到自己项目的行。"""
+    """get_ecosystem_profile sees only its own project's rows under different scopes."""
     repo_a = shared_db["repo_a"]
     repo_b = shared_db["repo_b"]
 
@@ -125,22 +125,22 @@ async def test_get_profile_respects_project_scope(shared_db) -> None:
 
     assert found_in_a is not None
     assert found_in_a.project_id == shared_db["project_a_id"]
-    assert found_in_b is None  # 项目 B 看不到项目 A 的仓
+    assert found_in_b is None  # Project B cannot see project A's repository
 
 
 async def test_explicit_project_id_overrides_scope(shared_db) -> None:
-    """显式 project_id 参数优先于 _project_scope。"""
+    """An explicit project_id parameter takes priority over _project_scope."""
     repo_a = shared_db["repo_a"]
     pid_b = shared_db["project_b_id"]
 
-    # repo_a 用显式 project_id=pid_b 写入项目 B
+    # repo_a writes into project B with an explicit project_id=pid_b
     await repo_a.upsert_ecosystem_profile(
         _make_profile("forced/projectb"), project_id=pid_b
     )
 
-    # repo_a 自身（作用域=A）查不到
+    # repo_a itself (scope=A) cannot find it
     assert await repo_a.get_ecosystem_profile("forced/projectb") is None
-    # 通过显式 project_id=pid_b 查询 OK
+    # Querying with an explicit project_id=pid_b is OK
     found = await repo_a.get_ecosystem_profile(
         "forced/projectb", project_id=pid_b
     )
@@ -184,7 +184,7 @@ async def test_deep_review_isolated(shared_db) -> None:
     repo_a = shared_db["repo_a"]
     repo_b = shared_db["repo_b"]
 
-    # A 写一个 profile + 一个 deep review
+    # A writes a profile + a deep review
     p_a = _make_profile("dr/test")
     await repo_a.upsert_ecosystem_profile(p_a)
     profile_a = (await repo_a.search_ecosystem_profiles(limit=10))[0]
@@ -196,7 +196,7 @@ async def test_deep_review_isolated(shared_db) -> None:
         )
     )
 
-    # B 看不到
+    # B cannot see it
     a_reviews = await repo_a.list_deep_reviews(limit=100)
     b_reviews = await repo_b.list_deep_reviews(limit=100)
     assert len(a_reviews) == 1
@@ -214,7 +214,7 @@ async def test_repo_tag_isolated(shared_db) -> None:
     repo_a = shared_db["repo_a"]
     repo_b = shared_db["repo_b"]
 
-    # 全局标签字典（project_id NULL）
+    # The global tag dictionary (project_id NULL)
     tag = EcosystemTag(
         name="memory_system",
         category=EcosystemTagCategory.CAPABILITY,
@@ -222,7 +222,7 @@ async def test_repo_tag_isolated(shared_db) -> None:
     )
     await global_repo.upsert_tag(tag)
 
-    # 两项目各自有一个仓
+    # Each of the two projects has one repository
     await repo_a.upsert_ecosystem_profile(_make_profile("a-team/repo"))
     await repo_b.upsert_ecosystem_profile(_make_profile("b-team/repo"))
     profile_a = (await repo_a.search_ecosystem_profiles(limit=10))[0]
@@ -230,7 +230,7 @@ async def test_repo_tag_isolated(shared_db) -> None:
     saved_tag = await global_repo.get_tag_by_name("memory_system")
     assert saved_tag is not None
 
-    # 各自打标
+    # Tag each one
     await repo_a.add_repo_tag(
         EcosystemRepoTag(
             repo_id=profile_a.id,
@@ -253,7 +253,7 @@ async def test_repo_tag_isolated(shared_db) -> None:
     assert a_rt[0].project_id == shared_db["project_a_id"]
     assert b_rt[0].project_id == shared_db["project_b_id"]
 
-    # 标签字典保持全局：两个项目都能查到同一标签字典行
+    # The tag dictionary stays global: both projects can find the same tag dictionary row
     assert (await global_repo.list_tags(limit=10))[0].name == "memory_system"
 
 
@@ -261,7 +261,7 @@ async def test_relation_isolated(shared_db) -> None:
     repo_a = shared_db["repo_a"]
     repo_b = shared_db["repo_b"]
 
-    # A 项目两个仓 + 一条关系
+    # Project A: two repositories + one relation
     await repo_a.upsert_ecosystem_profile(_make_profile("rel/x"))
     await repo_a.upsert_ecosystem_profile(_make_profile("rel/y"))
     a_profiles = await repo_a.search_ecosystem_profiles(limit=10)
@@ -290,32 +290,32 @@ async def test_relation_isolated(shared_db) -> None:
 
 
 async def test_backfill_to_project(shared_db) -> None:
-    """legacy 行（project_id=NULL）通过 backfill 迁移到指定项目，
-    迁移后 repo_a 的 search 能看到，repo_b 看不到。"""
+    """Legacy rows (project_id=NULL) are migrated to the specified project via backfill;
+    after migration, repo_a's search can see them and repo_b cannot."""
     global_repo = shared_db["global"]
     repo_a = shared_db["repo_a"]
     repo_b = shared_db["repo_b"]
 
-    # 模拟 legacy 数据：用 global_repo（没有 project_scope）写入 NULL project_id
+    # Simulate legacy data: write a NULL project_id using global_repo (no project_scope)
     legacy_profile = _make_profile("legacy/repo-1")
-    legacy_profile.project_id = None  # 显式确保 NULL
+    legacy_profile.project_id = None  # Explicitly ensure NULL
     await global_repo.upsert_ecosystem_profile(legacy_profile)
 
     legacy_run = EcosystemScanRun(strategy=EcosystemScanStrategy.INCREMENTAL)
     await global_repo.create_scan_run(legacy_run)
 
-    # 迁移前 repo_a / repo_b 都看不到
+    # Before migration, neither repo_a nor repo_b can see it
     assert len(await repo_a.search_ecosystem_profiles(limit=100)) == 0
     assert len(await repo_b.search_ecosystem_profiles(limit=100)) == 0
 
-    # backfill 到 project A
+    # Backfill to project A
     counts = await global_repo.backfill_ecosystem_to_project(
         shared_db["project_a_id"]
     )
     assert counts["ecosystem_repo_profiles"] == 1
     assert counts["ecosystem_scan_runs"] == 1
 
-    # 迁移后 repo_a 看到，repo_b 看不到
+    # After migration, repo_a sees it and repo_b does not
     a_after = await repo_a.search_ecosystem_profiles(limit=100)
     b_after = await repo_b.search_ecosystem_profiles(limit=100)
     assert len(a_after) == 1
@@ -323,7 +323,7 @@ async def test_backfill_to_project(shared_db) -> None:
     assert a_after[0].project_id == shared_db["project_a_id"]
     assert len(b_after) == 0
 
-    # 二次 backfill 幂等：NULL 行已经不存在，无新增
+    # A second backfill is idempotent: the NULL rows no longer exist, so nothing new is added
     counts_again = await global_repo.backfill_ecosystem_to_project(
         shared_db["project_a_id"]
     )
@@ -331,7 +331,7 @@ async def test_backfill_to_project(shared_db) -> None:
 
 
 async def test_backfill_rejects_unknown_project(shared_db) -> None:
-    """不存在的 project_id 应抛异常。"""
+    """A non-existent project_id should raise an exception."""
     import pytest
 
     global_repo = shared_db["global"]
@@ -345,7 +345,7 @@ async def test_backfill_rejects_unknown_project(shared_db) -> None:
 
 
 async def test_search_extended_scoped(shared_db) -> None:
-    """search_ecosystem_profiles_extended 也尊重作用域。"""
+    """search_ecosystem_profiles_extended also respects the scope."""
     repo_a = shared_db["repo_a"]
     repo_b = shared_db["repo_b"]
 

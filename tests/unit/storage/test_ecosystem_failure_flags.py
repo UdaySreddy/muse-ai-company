@@ -1,8 +1,8 @@
-"""v1.5.0-A: Profile 失败/活跃状态 helpers 单元测试。
+"""v1.5.0-A: Profile failure/activity state helpers unit tests.
 
-覆盖：
+Coverage:
 - mark_profile_deleted / mark_profile_private / mark_profile_fetch_failure
-- clear_profile_failure (复活机制 §3.3)
+- clear_profile_failure (resurrection mechanism §3.3)
 - update_profile_active_set
 - update_profile_shallow_summary
 """
@@ -46,7 +46,7 @@ async def sample_repo_id(repo: StorageRepository) -> str:
 async def test_mark_profile_deleted_sets_flags(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """删库标记应设 is_deleted=True / is_active=False / 写错误消息。"""
+    """The deletion marker should set is_deleted=True / is_active=False / and write an error message."""
     updated = await repo.mark_profile_deleted(
         sample_repo_id, error_message="GitHub returned 404"
     )
@@ -60,7 +60,7 @@ async def test_mark_profile_deleted_sets_flags(
 async def test_mark_profile_private_sets_flags(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """私密标记 is_private_now=True / is_active=False。"""
+    """The private marker sets is_private_now=True / is_active=False."""
     updated = await repo.mark_profile_private(sample_repo_id)
     assert updated.is_private_now is True
     assert updated.is_active is False
@@ -71,7 +71,7 @@ async def test_mark_profile_private_sets_flags(
 async def test_mark_profile_fetch_failure_increments_count(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """普通抓取失败累加 fetch_failure_count，不切换 deleted/private/active。"""
+    """An ordinary fetch failure accumulates fetch_failure_count and does not toggle deleted/private/active."""
     u1 = await repo.mark_profile_fetch_failure(
         sample_repo_id, error_message="connection reset"
     )
@@ -90,7 +90,8 @@ async def test_mark_profile_fetch_failure_increments_count(
 async def test_clear_profile_failure_resurrects(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """复活机制：删除/私密标记 + 失败计数清零，is_active 回 True。"""
+    """Resurrection mechanism: deletion/private markers + the failure count are cleared, and is_active returns to
+    True."""
     await repo.mark_profile_deleted(sample_repo_id, error_message="404")
     await repo.mark_profile_fetch_failure(sample_repo_id, error_message="404 again")
 
@@ -106,7 +107,7 @@ async def test_clear_profile_failure_resurrects(
 async def test_update_profile_active_set(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """活跃集刷新写 is_active + active_rank。"""
+    """Refreshing the active set writes is_active + active_rank."""
     updated = await repo.update_profile_active_set(
         sample_repo_id, is_active=True, active_rank=42
     )
@@ -124,13 +125,13 @@ async def test_update_profile_active_set(
 async def test_update_profile_shallow_summary_writes_timestamp(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """写浅扫总结自动更新 last_shallow_refreshed_at。"""
+    """Writing a shallow-scan summary automatically updates last_shallow_refreshed_at."""
     before = utc_now()
     updated = await repo.update_profile_shallow_summary(
         sample_repo_id,
-        shallow_summary="这是 anthropics/skills 的浅扫总结...",
+        shallow_summary="This is the shallow-scan summary of anthropics/skills...",
     )
-    assert updated.shallow_summary.startswith("这是")
+    assert updated.shallow_summary.startswith("This is")
     assert updated.last_shallow_refreshed_at is not None
     assert updated.last_shallow_refreshed_at >= before
 
@@ -139,11 +140,11 @@ async def test_update_profile_shallow_summary_writes_timestamp(
 async def test_update_profile_shallow_summary_explicit_timestamp(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """显式 refreshed_at 应被采用。"""
+    """An explicit refreshed_at should be adopted."""
     target = datetime(2025, 6, 1, tzinfo=UTC)
     updated = await repo.update_profile_shallow_summary(
         sample_repo_id,
-        shallow_summary="历史回填总结",
+        shallow_summary="Historical backfill summary",
         refreshed_at=target,
     )
     assert updated.last_shallow_refreshed_at == target
@@ -151,6 +152,6 @@ async def test_update_profile_shallow_summary_explicit_timestamp(
 
 @pytest.mark.asyncio
 async def test_mark_nonexistent_repo_returns_none(repo: StorageRepository) -> None:
-    """不存在的 repo_id 返回 None，不抛异常。"""
+    """A non-existent repo_id returns None without raising."""
     result = await repo.mark_profile_deleted("does-not-exist")
     assert result is None

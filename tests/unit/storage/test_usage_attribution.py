@@ -1,9 +1,13 @@
-"""覆盖率聚合单测 —— 分母定义与未归因分类（归因 v1 §4.1 / §3.4 / §2.4）。
+"""Coverage aggregation unit tests — the denominator definition and unattributed classification (attribution v1 §4.1 /
+§3.4 / §2.4).
 
-**这个文件存在的理由是分母**。§4.1 原文：「分母的定义必须写死在代码里并有单测，
-因为分母是唯一能被悄悄做假的地方」。R2 说的做假不是恶意，是一个看起来完全合理的
-改动——"没路径的行没法测，从分母里去掉吧"——覆盖率于是从 78% 跳到 100%，数字变好
-看、代码读着也通顺、没有任何东西报错。下面每一条断言都对应一种这样的改法。
+**The reason this file exists is the denominator.** §4.1, verbatim: 'The definition of the denominator must be written
+dead in code and have unit tests,
+because the denominator is the only place that can be quietly faked'. What R2 calls faking is not malice; it is a change
+that looks entirely reasonable
+— 'rows with no path cannot be measured; take them out of the denominator' — and the coverage jumps from 78% to 100%;
+the number looks better,
+the code reads smoothly, and nothing errors. Every assertion below corresponds to one such change.
 """
 
 from __future__ import annotations
@@ -55,8 +59,9 @@ async def _agent(
     layers: tuple[int, int, int, int] = (1, 2, 3, 4),
     tokens_source: str | None = None,
 ) -> None:
-    """直插 AgentModel —— create_agent 不收 created_at / token 五列，而本文件测的
-    正好就是这两样东西怎么参与分母与窗口。"""
+    """Insert an AgentModel directly — create_agent does not accept created_at / the five token columns, and what this
+    file tests
+    is exactly how those two things participate in the denominator and the window."""
     async with get_session(DB) as session:
         session.add(
             AgentModel(
@@ -96,7 +101,7 @@ async def _worked_on(agent_id: str, task_id: str) -> None:
 
 
 class TestDenominator:
-    """分母 = ``role != 'leader'`` 的行数，**含**那些没有 transcript 的行。"""
+    """The denominator = the number of rows with ``role != 'leader'``, **including** those rows without a transcript."""
 
     @pytest.mark.asyncio
     async def test_rows_without_transcript_stay_in_denominator(self, repo):
@@ -105,7 +110,8 @@ class TestDenominator:
         await _agent(repo, agent_id="a3", transcript_path=None)
 
         att = await repo.aggregate_token_attribution(metric=TokenMetric.USAGE_SUM)
-        # 3 而不是 1：不得以"没路径所以不算"为由剔除——那正是让局部冒充全貌
+        # 3 rather than 1: they must not be excluded on the grounds of 'no path, so they do not count' — that is exactly
+        # passing a part off as the whole picture
         assert att.dispatches_total == 3
         assert att.dispatches_attributed == 1
         assert att.unattributed_reasons == {UnattributedReason.NO_TRANSCRIPT_PATH.value: 2}
@@ -125,10 +131,12 @@ class TestDenominator:
 
     @pytest.mark.asyncio
     async def test_workflow_subagents_are_not_excluded(self, repo):
-        """实测 96% 的派工是 ``workflow-subagent``；把它们移出分母覆盖率立刻虚高。
+        """A measured 96% of dispatches are ``workflow-subagent``; moving them out of the denominator would immediately
+        inflate the coverage.
 
-        ``api/agent_reuse.py`` 确实有个 ``_EXCLUDED_ROLES`` 把它连同 leader 一起
-        排除，但那是"谁能被复用"的治理口径。在归因口径里 workflow 派工就是派工。
+        ``api/agent_reuse.py`` does have an ``_EXCLUDED_ROLES`` that excludes it together with the leader,
+        but that is the governance metric of 'who can be reused'. In the attribution metric, a workflow dispatch is a
+        dispatch.
         """
         await _agent(repo, agent_id="a1", role="workflow-subagent")
         await _agent(repo, agent_id="a2", role="workflow-subagent")
@@ -147,10 +155,12 @@ class TestDenominator:
 
 
 class TestWindowIsOnCreatedAt:
-    """窗口落在 ``created_at``，**不是** ``tokens_measured_at``。
+    """The window falls on ``created_at``, **not** ``tokens_measured_at``.
 
-    按测量时间落窗，没测过的行会连同分母一起消失，覆盖率恒等于 100% —— 而且看起来
-    完全说得通（"只统计这段时间测到的"）。这是分母做假里最隐蔽的一种。
+    Windowing by measurement time would make unmeasured rows disappear together with the denominator, so the coverage
+    would constantly equal 100% — and it would look
+    completely reasonable ('we only count what was measured in this period'). This is the most insidious kind of
+    denominator fraud.
     """
 
     @pytest.mark.asyncio
@@ -166,10 +176,12 @@ class TestWindowIsOnCreatedAt:
 
     @pytest.mark.asyncio
     async def test_measured_today_but_created_long_ago_is_out_of_a_recent_window(self, repo):
-        """回采会给三周前的行盖上今天的 ``tokens_measured_at``。
+        """Re-collection stamps rows from three weeks ago with today's ``tokens_measured_at``.
 
-        若按测量时间落窗，"近 7 天"会突然多出 1,900 行历史派工，且它们全部已测量
-        —— 近期采集率会被回采洗成接近 100%（R 6.3-2 点名的"一个数字掩盖另一个数字"）。
+        If windowing were by measurement time, 'the last 7 days' would suddenly gain 1,900 historical dispatch rows, all
+        of them already measured
+        — the recent collection rate would be washed by re-collection to nearly 100% (the 'one number masking another
+        number' named by R 6.3-2).
         """
         now = utc_now()
         await _agent(
@@ -177,7 +189,7 @@ class TestWindowIsOnCreatedAt:
             agent_id="backfilled",
             created_at=now - timedelta(days=21),
             transcript_path="/x.jsonl",
-            measured=True,  # tokens_measured_at = 现在
+            measured=True,  # tokens_measured_at = now
         )
         att = await repo.aggregate_token_attribution(
             metric=TokenMetric.USAGE_SUM, since=now - timedelta(days=7), until=now
@@ -204,8 +216,8 @@ class TestUnattributedReasons:
         }
 
     def test_classifier_separates_recoverable_from_lost(self, tmp_path):
-        """``not_yet_measured`` 跑一次回采就能补；另外两个补不上。合并两者，
-        看的人就无从判断该不该现在动手（回采窗口在关闭，R6）。"""
+        """``not_yet_measured`` can be made up by one re-collection run; the other two cannot. Merging the two,
+        a viewer could not judge whether to act now (the re-collection window is closing, R6)."""
         assert classify_unattributed(None) == UnattributedReason.NO_TRANSCRIPT_PATH.value
         assert classify_unattributed("") == UnattributedReason.NO_TRANSCRIPT_PATH.value
         assert (
@@ -265,21 +277,23 @@ class TestScopes:
             tokens_source=TokenSource.ALIAS_FALLBACK.value,
         )
         att = await repo.aggregate_token_attribution(metric=TokenMetric.USAGE_SUM)
-        # 一行兜底就整体降级：口径诚实优先于好看
+        # One fallback row downgrades the whole: honesty of the metric takes priority over looking good
         assert att.method is AttributionMethod.ALIAS_FALLBACK
 
     @pytest.mark.asyncio
     async def test_ctx_last_is_refused_with_the_reason(self, repo):
-        """ctx_last 在结构上进不来：四层分解在 ingest 时就已合并、从未落库。
+        """ctx_last structurally cannot come in: the four-layer decomposition is merged at ingest time and was never
+        persisted.
 
-        把知识放在拒绝路径上，比放在注释里更难被绕过。
+        Putting the knowledge on the rejection path makes it harder to bypass than putting it in a comment.
         """
-        with pytest.raises(ValueError, match="四层"):
+        with pytest.raises(ValueError, match="four layers"):
             await repo.aggregate_token_attribution(metric=TokenMetric.CTX_LAST)
 
 
 class TestTaskScope:
-    """§2.4：跨多个 task 的 agent 如实计未归因，**禁止平均分摊**。"""
+    """§2.4: an agent spanning multiple tasks is truthfully counted as unattributed; **averaging/apportioning is
+    forbidden**."""
 
     @pytest.mark.asyncio
     async def test_single_edge_agent_attributes_cleanly(self, repo):
@@ -307,16 +321,18 @@ class TestTaskScope:
         assert att.unattributed_reasons == {
             UnattributedReason.MULTI_TASK_UNSPLITTABLE.value: 1
         }
-        # 关键：一个 token 都不许分过来。平均分摊会造出无法证伪的数字。
+        # Key point: not a single token may be apportioned over. Averaging would create unfalsifiable numbers.
         assert (att.input_tokens, att.output_tokens) == (0, 0)
         assert (att.cache_creation_tokens, att.cache_read_tokens) == (0, 0)
 
     @pytest.mark.asyncio
     async def test_empty_task_id_is_refused_instead_of_mislabelling(self, repo):
-        """空 task_id 曾让"根本没有边"的行被标成"切不开"。
+        """An empty task_id once made rows with 'fundamentally no edge' be marked as 'cannot be split'.
 
-        两者处置完全相反：前者要靠记账动作把边攒起来（全链最窄的一跳，0.8%），
-        后者是边有了但数分不开。混成一个数，看的人就再也看不见真正的瓶颈。
+        The two are handled in completely opposite ways: the former relies on accounting actions to accumulate edges
+        (the narrowest hop in the whole chain, 0.8%),
+        the latter has the edge but the numbers cannot be split. Mixed into one number, a viewer would never see the
+        real bottleneck again.
         """
         await _agent(repo, agent_id="a1")
         with pytest.raises(ValueError, match="scope_id"):
@@ -369,7 +385,8 @@ class TestCoverageReport:
 
     @pytest.mark.asyncio
     async def test_not_collected_row_is_none_not_zero(self, repo):
-        """"设计上不采集"是一个正式取值。0 会被读成"一次都没测到"，空白会被读成 bug。"""
+        """"Not collected by design" is a formal value. A 0 would be read as 'never measured once', and a blank would
+        be read as a bug."""
         report = await repo.usage_coverage_report()
         tool_row = next(r for r in report.rows if r.path is DispatchPopulation.TOOL_CALL)
         assert tool_row.dispatches_total is None
@@ -378,7 +395,8 @@ class TestCoverageReport:
 
     @pytest.mark.asyncio
     async def test_metrics_are_never_mixed_across_rows(self, repo):
-        """矩阵不提供合计行：两个口径实测差 5~25 倍，跨行合计就是混口径。"""
+        """The matrix offers no total row: the two metrics measure 5-25x apart, so summing across rows would mix
+        metrics."""
         report = await repo.usage_coverage_report()
         metrics = {r.metric for r in report.rows if r.metric}
         assert metrics == {TokenMetric.USAGE_SUM.value, TokenMetric.CTX_LAST.value}

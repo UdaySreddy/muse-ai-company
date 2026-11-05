@@ -1,4 +1,4 @@
-"""v1.5.0-A: EcosystemProjectSettings 单元测试 (项目自定义阈值)。"""
+"""v1.5.0-A: EcosystemProjectSettings unit tests (project-customized thresholds)."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ async def project_id(repo: StorageRepository) -> str:
 async def test_get_settings_missing_returns_none(
     repo: StorageRepository, project_id: str
 ) -> None:
-    """无设置时 get 返回 None。"""
+    """With no settings, get returns None."""
     settings = await repo.get_ecosystem_project_settings(project_id)
     assert settings is None
 
@@ -41,7 +41,7 @@ async def test_get_settings_missing_returns_none(
 async def test_ensure_settings_creates_default_for_normal_project(
     repo: StorageRepository,
 ) -> None:
-    """普通项目使用通用默认值。"""
+    """Ordinary projects use the generic defaults."""
     p = await repo.create_project(name="my-app", root_path="/tmp/a")
     settings = await repo.ensure_ecosystem_project_settings(p.id, is_ai_team_os=False)
     assert settings.project_id == p.id
@@ -55,7 +55,7 @@ async def test_ensure_settings_creates_default_for_normal_project(
 async def test_ensure_settings_creates_strict_default_for_ai_team_os(
     repo: StorageRepository, project_id: str
 ) -> None:
-    """AI Team OS 项目使用严格默认值 (min_stars=5000)。"""
+    """The AI Team OS project uses strict defaults (min_stars=5000)."""
     settings = await repo.ensure_ecosystem_project_settings(
         project_id, is_ai_team_os=True
     )
@@ -69,15 +69,15 @@ async def test_ensure_settings_creates_strict_default_for_ai_team_os(
 async def test_ensure_settings_idempotent(
     repo: StorageRepository, project_id: str
 ) -> None:
-    """已存在时 ensure 不覆盖，幂等。"""
+    """When it already exists, ensure does not overwrite; idempotent."""
     first = await repo.ensure_ecosystem_project_settings(
         project_id, is_ai_team_os=True
     )
-    # 用户手动调整
+    # Manually adjusted by the user
     first.min_stars = 9999
     await repo.upsert_ecosystem_project_settings(first)
 
-    # ensure 不应覆盖
+    # ensure should not overwrite
     second = await repo.ensure_ecosystem_project_settings(
         project_id, is_ai_team_os=True
     )
@@ -88,7 +88,7 @@ async def test_ensure_settings_idempotent(
 async def test_upsert_settings_updates_existing(
     repo: StorageRepository, project_id: str
 ) -> None:
-    """upsert 现有设置应更新所有字段。"""
+    """An upsert of existing settings should update all fields."""
     initial = EcosystemProjectSettings(
         project_id=project_id,
         min_stars=1000,
@@ -111,7 +111,7 @@ async def test_upsert_settings_updates_existing(
 async def test_upsert_settings_requires_project_id(
     repo: StorageRepository,
 ) -> None:
-    """空 project_id 应抛 ValueError。"""
+    """An empty project_id should raise ValueError."""
     with pytest.raises(ValueError):
         await repo.upsert_ecosystem_project_settings(
             EcosystemProjectSettings(project_id="")

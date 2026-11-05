@@ -1,4 +1,4 @@
-"""Stage E 扩展检索 + 全息详情 + facet 聚合存储层测试。"""
+"""Stage E extended search + holographic details + facet aggregation storage-layer tests."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from aiteam.types import (
 
 @pytest_asyncio.fixture()
 async def repo() -> StorageRepository:
-    """内存 SQLite 仓库用于测试。"""
+    """In-memory SQLite repository for testing."""
     r = StorageRepository(db_url="sqlite+aiosqlite://")
     await r.init_db()
     yield r  # type: ignore[misc]
@@ -67,7 +67,7 @@ def _make_profile(
 
 
 async def _seed_basic(repo: StorageRepository) -> dict[str, EcosystemRepoProfile]:
-    """种子若干仓档案，返回 name->profile 字典。"""
+    """Seed several repository profiles and return a name->profile dict."""
     now = utc_now()
     profiles = {
         "anthropics/claude-code": _make_profile(
@@ -123,7 +123,7 @@ async def _seed_basic(repo: StorageRepository) -> dict[str, EcosystemRepoProfile
 
 
 async def test_extended_search_returns_total(repo: StorageRepository) -> None:
-    """扩展检索返回 (rows, total) 元组，total 等于 limit 之前的命中数。"""
+    """Extended search returns a (rows, total) tuple; total equals the number of hits before the limit."""
     await _seed_basic(repo)
     rows, total = await repo.search_ecosystem_profiles_extended(limit=2)
     assert total == 5
@@ -131,7 +131,7 @@ async def test_extended_search_returns_total(repo: StorageRepository) -> None:
 
 
 async def test_extended_search_language_filter(repo: StorageRepository) -> None:
-    """language 过滤精确匹配。"""
+    """The language filter matches exactly."""
     await _seed_basic(repo)
     rows, total = await repo.search_ecosystem_profiles_extended(language="Python", limit=10)
     names = {p.repo_full_name for p in rows}
@@ -143,14 +143,14 @@ async def test_extended_search_language_filter(repo: StorageRepository) -> None:
 
 
 async def test_extended_search_pushed_after_filter(repo: StorageRepository) -> None:
-    """pushed_after 过滤：仅返回 pushed_at >= 阈值的仓。"""
+    """pushed_after filter: returns only repos with pushed_at >= the threshold."""
     await _seed_basic(repo)
     cutoff = utc_now() - timedelta(days=15)
     rows, total = await repo.search_ecosystem_profiles_extended(
         pushed_after=cutoff, limit=10
     )
     names = {p.repo_full_name for p in rows}
-    # 2/5/10 days 通过；30/400 不通过
+    # 2/5/10 days pass; 30/400 do not
     assert "anthropics/claude-code" in names
     assert "modelcontextprotocol/servers" in names
     assert "langchain/langgraph" in names
@@ -159,7 +159,7 @@ async def test_extended_search_pushed_after_filter(repo: StorageRepository) -> N
 
 
 async def test_extended_search_is_archived_filter(repo: StorageRepository) -> None:
-    """is_archived=True 仅返回归档仓。"""
+    """is_archived=True returns only archived repos."""
     await _seed_basic(repo)
     rows, _ = await repo.search_ecosystem_profiles_extended(
         is_archived=True, limit=10
@@ -169,7 +169,7 @@ async def test_extended_search_is_archived_filter(repo: StorageRepository) -> No
 
 
 async def test_extended_search_offset_pagination(repo: StorageRepository) -> None:
-    """offset/limit 实现翻页，total 不变。"""
+    """offset/limit implements paging; total is unchanged."""
     await _seed_basic(repo)
     page1, total1 = await repo.search_ecosystem_profiles_extended(limit=2, offset=0)
     page2, total2 = await repo.search_ecosystem_profiles_extended(limit=2, offset=2)
@@ -187,7 +187,7 @@ async def test_extended_search_offset_pagination(repo: StorageRepository) -> Non
 
 
 async def test_sort_stars_desc_default(repo: StorageRepository) -> None:
-    """默认 sort=stars 按 star 降序。"""
+    """The default sort=stars sorts by stars in descending order."""
     await _seed_basic(repo)
     rows, _ = await repo.search_ecosystem_profiles_extended(limit=10)
     star_seq = [p.stars for p in rows]
@@ -195,17 +195,17 @@ async def test_sort_stars_desc_default(repo: StorageRepository) -> None:
 
 
 async def test_sort_recency_orders_by_pushed_at(repo: StorageRepository) -> None:
-    """sort=recency 按 pushed_at 降序，None 排最后。"""
+    """sort=recency sorts by pushed_at in descending order, with None last."""
     await _seed_basic(repo)
     rows, _ = await repo.search_ecosystem_profiles_extended(sort="recency", limit=10)
-    # 最新 pushed 应该在前
+    # The newest pushed should be in front
     assert rows[0].repo_full_name == "anthropics/claude-code"
 
 
 async def test_sort_relevance_orders_by_relevance_score(
     repo: StorageRepository,
 ) -> None:
-    """sort=relevance 按 relevance_score 降序。"""
+    """sort=relevance sorts by relevance_score in descending order."""
     await _seed_basic(repo)
     rows, _ = await repo.search_ecosystem_profiles_extended(sort="relevance", limit=10)
     score_seq = [p.relevance_score for p in rows]
@@ -218,7 +218,7 @@ async def test_sort_relevance_orders_by_relevance_score(
 
 
 async def test_tags_match_all_and_semantics(repo: StorageRepository) -> None:
-    """tag_match_mode=all 要求所有 tag 都关联到 repo（AND 语义）。"""
+    """tag_match_mode=all requires all tags to be associated with the repo (AND semantics)."""
     profiles = await _seed_basic(repo)
     target = profiles["modelcontextprotocol/servers"]
 
@@ -236,7 +236,7 @@ async def test_tags_match_all_and_semantics(repo: StorageRepository) -> None:
             repo_id=target.id, tag_id=tag_b.id, source=EcosystemTagSource.MANUAL
         )
     )
-    # 仅给 langchain/langgraph 加 a 不加 b
+    # Only add a to langchain/langgraph, not b
     other = profiles["langchain/langgraph"]
     await repo.add_repo_tag(
         EcosystemRepoTag(
@@ -254,7 +254,7 @@ async def test_tags_match_all_and_semantics(repo: StorageRepository) -> None:
 
 
 async def test_tags_match_any_or_semantics(repo: StorageRepository) -> None:
-    """tag_match_mode=any OR 语义命中。"""
+    """tag_match_mode=any: OR-semantics hits."""
     profiles = await _seed_basic(repo)
     tag_a = EcosystemTag(name="x_capa", category=EcosystemTagCategory.CAPABILITY)
     tag_b = EcosystemTag(name="x_capb", category=EcosystemTagCategory.CAPABILITY)
@@ -284,7 +284,7 @@ async def test_tags_match_any_or_semantics(repo: StorageRepository) -> None:
 
 
 async def test_tags_unknown_returns_empty(repo: StorageRepository) -> None:
-    """传入完全未知的 tag 名 → 0 结果（短路）。"""
+    """Passing a completely unknown tag name → 0 results (short-circuit)."""
     await _seed_basic(repo)
     rows, total = await repo.search_ecosystem_profiles_extended(
         tags=["totally-unknown-tag"], tag_match_mode="all", limit=10
@@ -294,7 +294,7 @@ async def test_tags_unknown_returns_empty(repo: StorageRepository) -> None:
 
 
 async def test_tags_combined_with_other_filters(repo: StorageRepository) -> None:
-    """tag 过滤与 min_stars 等基础过滤组合生效。"""
+    """Tag filtering combined with base filters such as min_stars takes effect."""
     profiles = await _seed_basic(repo)
     tag = EcosystemTag(name="combo_tag", category=EcosystemTagCategory.CAPABILITY)
     await repo.upsert_tag(tag)
@@ -309,7 +309,7 @@ async def test_tags_combined_with_other_filters(repo: StorageRepository) -> None
         tags=["combo_tag"], min_stars=10000, limit=10
     )
     names = {p.repo_full_name for p in rows}
-    # 仅 stars>=10000 的命中（claude-code/servers/langgraph）
+    # Only hits with stars>=10000 (claude-code/servers/langgraph)
     assert names == {
         "anthropics/claude-code",
         "modelcontextprotocol/servers",
@@ -324,13 +324,13 @@ async def test_tags_combined_with_other_filters(repo: StorageRepository) -> None
 
 
 async def test_get_full_returns_none_for_missing(repo: StorageRepository) -> None:
-    """不存在的仓返回 None。"""
+    """A non-existent repository returns None."""
     result = await repo.get_ecosystem_profile_full(repo_full_name="ghost/none")
     assert result is None
 
 
 async def test_get_full_includes_tags_with_names(repo: StorageRepository) -> None:
-    """全息详情包含标签 + 标签名（join EcosystemTag 取 name/category）。"""
+    """Holographic details include tags + tag names (joining EcosystemTag for name/category)."""
     profiles = await _seed_basic(repo)
     target = profiles["langchain/langgraph"]
     tag = EcosystemTag(name="agent_lib", category=EcosystemTagCategory.CAPABILITY)
@@ -357,7 +357,7 @@ async def test_get_full_includes_tags_with_names(repo: StorageRepository) -> Non
 async def test_get_full_includes_relations_from_and_to(
     repo: StorageRepository,
 ) -> None:
-    """relations_from / relations_to 双向，含目标/起点仓 full_name。"""
+    """relations_from / relations_to in both directions, including the target/source repository's full_name."""
     profiles = await _seed_basic(repo)
     src = profiles["modelcontextprotocol/servers"]
     tgt = profiles["anthropics/claude-code"]
@@ -396,13 +396,13 @@ async def test_get_full_includes_relations_from_and_to(
 async def test_get_full_includes_deep_reviews_and_scan_run(
     repo: StorageRepository,
 ) -> None:
-    """deep_reviews + scan_run 关联返回。"""
+    """The deep_reviews + scan_run associations are returned."""
     profiles = await _seed_basic(repo)
     target = profiles["anthropics/claude-code"]
 
     scan = EcosystemScanRun(strategy=EcosystemScanStrategy.FULL, notes="seed")
     await repo.create_scan_run(scan)
-    # 关联 scan_run_id 后重 upsert
+    # After associating a scan_run_id, upsert again
     target_with_scan = target.model_copy(
         update={
             "scan_run_id": scan.id,
@@ -433,7 +433,7 @@ async def test_get_full_includes_deep_reviews_and_scan_run(
 
 
 async def test_facet_counts_categories(repo: StorageRepository) -> None:
-    """category facet 聚合正确。"""
+    """The category facet aggregation is correct."""
     await _seed_basic(repo)
     facets = await repo.compute_ecosystem_facet_counts()
     assert facets["category"]["tooling"] == 2
@@ -443,7 +443,7 @@ async def test_facet_counts_categories(repo: StorageRepository) -> None:
 
 
 async def test_facet_counts_languages(repo: StorageRepository) -> None:
-    """language facet 聚合正确。"""
+    """The language facet aggregation is correct."""
     await _seed_basic(repo)
     facets = await repo.compute_ecosystem_facet_counts()
     assert facets["language"]["Python"] == 3
@@ -452,7 +452,7 @@ async def test_facet_counts_languages(repo: StorageRepository) -> None:
 
 
 async def test_facet_counts_archived(repo: StorageRepository) -> None:
-    """archived facet 区分 true/false。"""
+    """The archived facet distinguishes true/false."""
     await _seed_basic(repo)
     facets = await repo.compute_ecosystem_facet_counts()
     assert facets["archived"]["true"] == 1
@@ -460,18 +460,18 @@ async def test_facet_counts_archived(repo: StorageRepository) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Performance smoke: 200 仓 × 50 random queries p95 < 50ms (1)
+# Performance smoke: 200 repos × 50 random queries, p95 < 50ms (1)
 # ---------------------------------------------------------------------------
 
 
 async def test_performance_search_under_50ms_p95(repo: StorageRepository) -> None:
-    """种子 200 仓 + 50 次随机查询，p95 < 50ms。"""
+    """Seed 200 repos + 50 random queries; p95 < 50ms."""
     import random
     import time
 
     random.seed(42)
 
-    # 创建 4 个 tag 用于覆盖测试
+    # Create 4 tags to cover the test
     tags = []
     for i in range(4):
         t = EcosystemTag(
@@ -480,7 +480,7 @@ async def test_performance_search_under_50ms_p95(repo: StorageRepository) -> Non
         await repo.upsert_tag(t)
         tags.append(t)
 
-    # 种子 200 仓
+    # Seed 200 repos
     languages = ["Python", "TypeScript", "Go", "Rust", "Java"]
     categories = ["tooling", "agent-framework", "mcp-server", "skill-system", None]
     profiles: list[EcosystemRepoProfile] = []
@@ -496,7 +496,7 @@ async def test_performance_search_under_50ms_p95(repo: StorageRepository) -> Non
         await repo.upsert_ecosystem_profile(p)
         profiles.append(p)
 
-    # 随机给一半仓加 1-3 个 tag
+    # Randomly add 1-3 tags to half the repos
     for p in profiles[:100]:
         for tag in random.sample(tags, k=random.randint(1, 3)):
             stored = await repo.get_ecosystem_profile(p.repo_full_name)
@@ -508,7 +508,7 @@ async def test_performance_search_under_50ms_p95(repo: StorageRepository) -> Non
                 )
             )
 
-    # 50 次随机查询
+    # 50 random queries
     durations: list[float] = []
     keywords = ["repo", "perf", "owner", ""]
     for _ in range(50):

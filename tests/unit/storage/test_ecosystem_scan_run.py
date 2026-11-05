@@ -1,4 +1,4 @@
-"""扫描批次记录存储层单元测试。"""
+"""Scan batch record storage-layer unit tests."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from aiteam.types import EcosystemScanRun, EcosystemScanStrategy
 
 @pytest_asyncio.fixture()
 async def repo() -> StorageRepository:
-    """内存 SQLite 仓库用于测试。"""
+    """In-memory SQLite repository for testing."""
     r = StorageRepository(db_url="sqlite+aiosqlite://")
     await r.init_db()
     yield r  # type: ignore[misc]
@@ -26,12 +26,12 @@ def _make_scan_run(
     return EcosystemScanRun(
         strategy=strategy,
         triggered_by=triggered_by,
-        notes="测试扫描批次",
+        notes="Test scan batch",
     )
 
 
 async def test_create_scan_run_persists(repo: StorageRepository) -> None:
-    """创建扫描批次后能按 id 取回。"""
+    """After creating a scan batch it can be retrieved by id."""
     run = _make_scan_run()
     await repo.create_scan_run(run)
 
@@ -42,12 +42,12 @@ async def test_create_scan_run_persists(repo: StorageRepository) -> None:
 
 
 async def test_get_scan_run_missing_returns_none(repo: StorageRepository) -> None:
-    """不存在的 id 返回 None。"""
+    """A non-existent id returns None."""
     assert await repo.get_scan_run("non-existent-id") is None
 
 
 async def test_update_scan_run_completion_stats(repo: StorageRepository) -> None:
-    """扫描完成后更新统计字段。"""
+    """After the scan completes, update the statistics fields."""
     run = _make_scan_run()
     await repo.create_scan_run(run)
 
@@ -70,12 +70,12 @@ async def test_update_scan_run_completion_stats(repo: StorageRepository) -> None
 
 
 async def test_update_scan_run_missing_returns_none(repo: StorageRepository) -> None:
-    """更新不存在的 scan_run 返回 None。"""
+    """Updating a non-existent scan_run returns None."""
     assert await repo.update_scan_run("missing-id", repos_added=5) is None
 
 
 async def test_list_scan_runs_filter_by_strategy(repo: StorageRepository) -> None:
-    """按 strategy 过滤只返回对应批次。"""
+    """Filtering by strategy returns only the corresponding batches."""
     await repo.create_scan_run(_make_scan_run(EcosystemScanStrategy.INCREMENTAL))
     await repo.create_scan_run(_make_scan_run(EcosystemScanStrategy.FULL))
     await repo.create_scan_run(_make_scan_run(EcosystemScanStrategy.TRENDING))
@@ -89,7 +89,7 @@ async def test_list_scan_runs_filter_by_strategy(repo: StorageRepository) -> Non
 
 
 async def test_list_scan_runs_no_filter_returns_all(repo: StorageRepository) -> None:
-    """不传 strategy 返回所有批次。"""
+    """Without a strategy, all batches are returned."""
     await repo.create_scan_run(_make_scan_run(EcosystemScanStrategy.INCREMENTAL))
     await repo.create_scan_run(_make_scan_run(EcosystemScanStrategy.TOPIC))
 

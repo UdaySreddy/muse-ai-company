@@ -1,4 +1,5 @@
-"""aggregate_model_usage 单测 — 编排宪章观测口径（按档位聚合 workflow agent 用量）。"""
+"""aggregate_model_usage unit tests — the orchestration charter's observation metric (aggregating workflow agent
+usage by tier)."""
 
 from __future__ import annotations
 
@@ -60,7 +61,7 @@ class TestAggregateModelUsage:
     @pytest.mark.asyncio
     async def test_window_excludes_old_rows(self, repo):
         await _seed(repo, "claude-opus-4-8", 500, "wf_3", "c1")
-        # 手动把该行推老到窗口外
+        # Manually push this row older, outside the window
         from sqlalchemy import update
 
         from aiteam.storage.connection import get_session
@@ -80,4 +81,4 @@ class TestAggregateModelUsage:
     async def test_empty_model_labelled(self, repo):
         await _seed(repo, "", 50, "wf_4", "c1")
         usage = await repo.aggregate_model_usage(days=7)
-        assert usage[0]["model"] == "(未记录)"
+        assert usage[0]["model"] == "(not recorded)"

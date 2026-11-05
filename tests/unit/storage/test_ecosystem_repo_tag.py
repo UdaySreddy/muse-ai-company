@@ -1,4 +1,4 @@
-"""仓-标签多对多关联存储层单元测试。"""
+"""Repository-tag many-to-many association storage-layer unit tests."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from aiteam.types import (
 
 @pytest_asyncio.fixture()
 async def repo() -> StorageRepository:
-    """内存 SQLite 仓库用于测试。"""
+    """In-memory SQLite repository for testing."""
     r = StorageRepository(db_url="sqlite+aiosqlite://")
     await r.init_db()
     yield r  # type: ignore[misc]
@@ -27,7 +27,7 @@ async def repo() -> StorageRepository:
 
 @pytest_asyncio.fixture()
 async def fixtures(repo: StorageRepository) -> dict[str, str]:
-    """预置一个 repo_profile + 两个 tag，返回 id 映射。"""
+    """Pre-seed a repo_profile + two tags and return the id mapping."""
     profile = EcosystemRepoProfile(
         repo_full_name="anthropics/claude-code",
         name="claude-code",
@@ -55,7 +55,7 @@ async def fixtures(repo: StorageRepository) -> dict[str, str]:
 async def test_add_repo_tag_creates_association(
     repo: StorageRepository, fixtures: dict[str, str]
 ) -> None:
-    """添加新关联后能在 list 中看到。"""
+    """After adding a new association it can be seen in the list."""
     rt = EcosystemRepoTag(
         repo_id=fixtures["repo_id"],
         tag_id=fixtures["tag_a"],
@@ -74,7 +74,7 @@ async def test_add_repo_tag_creates_association(
 async def test_add_repo_tag_idempotent_updates(
     repo: StorageRepository, fixtures: dict[str, str]
 ) -> None:
-    """同 (repo_id, tag_id) 再次 add 会更新 confidence / source 而非新增。"""
+    """Adding the same (repo_id, tag_id) again updates confidence / source rather than adding a new one."""
     rt = EcosystemRepoTag(
         repo_id=fixtures["repo_id"],
         tag_id=fixtures["tag_a"],
@@ -102,7 +102,7 @@ async def test_add_repo_tag_idempotent_updates(
 async def test_remove_repo_tag(
     repo: StorageRepository, fixtures: dict[str, str]
 ) -> None:
-    """移除关联后 list 不再包含；重复 remove 返回 False。"""
+    """Removing an association means list no longer contains it; removing again returns False."""
     await repo.add_repo_tag(
         EcosystemRepoTag(
             repo_id=fixtures["repo_id"],
@@ -123,7 +123,7 @@ async def test_remove_repo_tag(
 async def test_list_repo_tags_filter_by_tag_id(
     repo: StorageRepository, fixtures: dict[str, str]
 ) -> None:
-    """按 tag_id 过滤可定位关联了某 tag 的所有 repo。"""
+    """Filtering by tag_id can locate all repos associated with a certain tag."""
     await repo.add_repo_tag(
         EcosystemRepoTag(repo_id=fixtures["repo_id"], tag_id=fixtures["tag_a"])
     )
@@ -140,7 +140,7 @@ async def test_list_repo_tags_filter_by_tag_id(
 async def test_multiple_tags_per_repo(
     repo: StorageRepository, fixtures: dict[str, str]
 ) -> None:
-    """单仓可关联多个不同 tag。"""
+    """A single repository can be associated with multiple different tags."""
     await repo.add_repo_tag(
         EcosystemRepoTag(repo_id=fixtures["repo_id"], tag_id=fixtures["tag_a"])
     )

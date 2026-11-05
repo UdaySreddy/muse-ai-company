@@ -1,17 +1,18 @@
-"""D5 双轴收敛测试 — 派生映射真源 / choke point / R1-F3 回填矩阵与幂等。
+"""D5 dual-axis convergence tests — the derivation mapping's source of truth / choke point / the R1-F3 backfill matrix
+and idempotency.
 
-覆盖（对应 D5 测试计划 T1-T6）：
-- T1: types.STAGE_TO_STATUS 全量覆盖 + derive_status_from_stage 纯函数契约；
-- T2: create_deep_review choke point 强制派生（忽略调用方传入 status）；
-- T3: update_deep_review_stage choke point 派生 + 清认领 + completed_at
-      COALESCE（已有值绝不覆盖，历史不可改写）；
-- T4: backfill_deep_review_dual_axis 真实组合矩阵（R1/R2/F1/F2/F3 各规则
-      rowcount 与终态），内嵌顺序论证（R1 先于 F3，(completed,queued)
-      老行绝不被误重置回 queued）；
-- T5: 回填幂等 — 两跑第二遍 rowcount 恒 0、行零变化；
-- T6: project 隔离 — 显式 project_id 只触本项目行（红线3 现范式）。
+Coverage (corresponding to the D5 test plan T1-T6):
+- T1: full coverage of types.STAGE_TO_STATUS + the derive_status_from_stage pure-function contract;
+- T2: the create_deep_review choke point forcibly derives (ignoring the status passed by the caller);
+- T3: the update_deep_review_stage choke point derivation + claim clearing + completed_at
+      COALESCE (an existing value is never overwritten; history cannot be rewritten);
+- T4: the backfill_deep_review_dual_axis real combination matrix (each of the R1/R2/F1/F2/F3 rules'
+      rowcounts and final states), with an embedded ordering argument (R1 before F3, so (completed,queued)
+      legacy rows are never wrongly reset back to queued);
+- T5: backfill idempotency — on a second run, every rule's rowcount is constantly 0 and rows are unchanged;
+- T6: project isolation — an explicit project_id touches only this project's rows (the current paradigm of red line 3).
 
-认领缺口并发回归（tick 建行原子携带 claimed_by）见
+The claim-gap concurrency regression (tick creating rows that atomically carry claimed_by) is in
 tests/unit/services/test_ecosystem_shallow_queue.py::test_tick_dispatched_row_cannot_be_double_claimed。
 """
 
@@ -41,7 +42,7 @@ from aiteam.types import (
 
 @pytest_asyncio.fixture()
 async def repo() -> StorageRepository:
-    """内存 SQLite 仓库用于测试。"""
+    """In-memory SQLite repository for testing."""
     r = StorageRepository(db_url="sqlite+aiosqlite://")
     await r.init_db()
     yield r  # type: ignore[misc]
@@ -50,7 +51,7 @@ async def repo() -> StorageRepository:
 
 @pytest_asyncio.fixture()
 async def sample_repo_id(repo: StorageRepository) -> str:
-    """先建一个 EcosystemRepoProfile 返回其 id 用作 FK。"""
+    """First create an EcosystemRepoProfile and return its id for use as an FK."""
     profile = EcosystemRepoProfile(
         repo_full_name="anthropics/claude-code",
         name="claude-code",
@@ -73,10 +74,13 @@ async def _make_legacy_row(
     project_id: str | None = None,
     **extra_fields,
 ) -> EcosystemDeepReview:
-    """构造历史脏数据行：先经 create（会强制派生），再用通用 setter 直写脏 status。
+    """Construct a historical dirty-data row: first go through create (which forcibly derives), then write the dirty
+    status directly with the generic setter.
 
-    D5 后 create_deep_review 是 choke point，脏组合只能经低层 setter 复现 —
-    与真实历史行的落库路径等价（老 reviewer 当年正是直写 status 列）。
+    After D5, create_deep_review is a choke point, so dirty combinations can only be reproduced via the low-level setter
+    —
+    equivalent to the storage path of real historical rows (the old reviewer back then wrote the status column
+    directly).
     """
     row = EcosystemDeepReview(
         project_id=project_id,
@@ -95,17 +99,18 @@ async def _make_legacy_row(
 
 
 # ---------------------------------------------------------------------------
-# T1: 映射真源 — STAGE_TO_STATUS / derive_status_from_stage
+# T1: Mapping source of truth — STAGE_TO_STATUS / derive_status_from_stage
 # ---------------------------------------------------------------------------
 
 
 def test_stage_to_status_covers_every_stage() -> None:
-    """STAGE_TO_STATUS 必须覆盖 EcosystemStageStatus 全部成员（唯一真源无死角）。"""
+    """STAGE_TO_STATUS must cover all members of EcosystemStageStatus (the single source of truth, with no blind
+    spots)."""
     assert set(STAGE_TO_STATUS.keys()) == set(EcosystemStageStatus)
 
 
 def test_stage_to_status_mapping_values() -> None:
-    """规格钉死的映射：queued→queued；5 完成态→completed；3 失败态→failed。"""
+    """The mapping pinned by the spec: queued→queued; the 5 completion states→completed; the 3 failure states→failed."""
     expected = {
         EcosystemStageStatus.QUEUED: EcosystemDeepReviewStatus.QUEUED,
         EcosystemStageStatus.SHALLOW_DONE: EcosystemDeepReviewStatus.COMPLETED,
@@ -121,7 +126,7 @@ def test_stage_to_status_mapping_values() -> None:
 
 
 def test_derive_status_accepts_enum_and_str() -> None:
-    """derive_status_from_stage 接受 enum 与字符串（先归一）。"""
+    """derive_status_from_stage accepts both enums and strings (normalizing first)."""
     assert (
         derive_status_from_stage(EcosystemStageStatus.DEBATED)
         is EcosystemDeepReviewStatus.COMPLETED
@@ -134,36 +139,36 @@ def test_derive_status_accepts_enum_and_str() -> None:
 
 
 def test_derive_status_rejects_unknown_stage() -> None:
-    """未知 stage 字符串抛 ValueError（与 EcosystemStageStatus() 同契约）。"""
+    """An unknown stage string raises ValueError (the same contract as EcosystemStageStatus())."""
     with pytest.raises(ValueError):
         derive_status_from_stage("not-a-stage")
 
 
 # ---------------------------------------------------------------------------
-# T2: create_deep_review choke point — 强制派生，忽略调用方 status
+# T2: create_deep_review choke point — forced derivation, ignoring the caller's status
 # ---------------------------------------------------------------------------
 
 
 async def test_create_forces_derived_status(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """建行时 status 被强制派生，调用方传入的 RUNNING 被忽略。"""
+    """At row creation the status is forcibly derived; the RUNNING passed in by the caller is ignored."""
     row = EcosystemDeepReview(
         repo_id=sample_repo_id,
-        status=EcosystemDeepReviewStatus.RUNNING,  # 调用方伪造，应被忽略
+        status=EcosystemDeepReviewStatus.RUNNING,  # Forged by the caller; should be ignored
         stage_status=EcosystemStageStatus.QUEUED,
     )
     await repo.create_deep_review(row)
 
     fetched = await repo.get_deep_review(row.id)
     assert fetched is not None
-    assert fetched.status == EcosystemDeepReviewStatus.QUEUED  # 派生自 stage
+    assert fetched.status == EcosystemDeepReviewStatus.QUEUED  # Derived from the stage
 
 
 async def test_create_derives_completed_for_shallow_done(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """lifecycle 建行范式：stage=shallow_done → status 派生 completed。"""
+    """The lifecycle row-creation paradigm: stage=shallow_done → status derived as completed."""
     row = EcosystemDeepReview(
         repo_id=sample_repo_id,
         stage_status=EcosystemStageStatus.SHALLOW_DONE,
@@ -176,14 +181,15 @@ async def test_create_derives_completed_for_shallow_done(
 
 
 # ---------------------------------------------------------------------------
-# T3: update_deep_review_stage choke point — 派生 + 清认领 + COALESCE 补时间戳
+# T3: update_deep_review_stage choke point — derivation + claim clearing + COALESCE timestamp filling
 # ---------------------------------------------------------------------------
 
 
 async def test_stage_advance_derives_failed_and_fills_completed_at(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """推 SHALLOW_FAILED：status 派生 failed、认领释放、completed_at 补齐。"""
+    """Advancing to SHALLOW_FAILED: the status is derived as failed, the claim is released, and completed_at is
+    filled in."""
     row = EcosystemDeepReview(
         repo_id=sample_repo_id,
         stage_status=EcosystemStageStatus.QUEUED,
@@ -205,7 +211,8 @@ async def test_stage_advance_derives_failed_and_fills_completed_at(
 async def test_stage_advance_never_overwrites_completed_at(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """COALESCE 语义：行已有 completed_at 时 stage 推进绝不覆盖（历史不可改写）。"""
+    """COALESCE semantics: when a row already has a completed_at, stage progression never overwrites it (history
+    cannot be rewritten)."""
     historic_ts = datetime(2025, 1, 1, tzinfo=UTC)
     row = EcosystemDeepReview(
         repo_id=sample_repo_id,
@@ -219,7 +226,8 @@ async def test_stage_advance_never_overwrites_completed_at(
     )
     assert advanced is not None
     assert advanced.status == EcosystemDeepReviewStatus.COMPLETED
-    # SQLite 落库剥 tzinfo，按 naive wall time 比较：原值保留、未被覆盖为 now
+    # SQLite storage strips tzinfo; compare by naive wall time: the original value is preserved, not overwritten with
+    # now
     assert advanced.completed_at is not None
     assert advanced.completed_at.replace(tzinfo=None) == historic_ts.replace(
         tzinfo=None
@@ -227,24 +235,25 @@ async def test_stage_advance_never_overwrites_completed_at(
 
 
 # ---------------------------------------------------------------------------
-# T4: 回填矩阵 — 真实组合一一有归属，分规则 rowcount 可对账
+# T4: Backfill matrix — every real combination has an owner, and per-rule rowcounts can be reconciled
 # ---------------------------------------------------------------------------
 
 
 async def test_backfill_matrix_covers_real_combinations(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """8 类真实历史组合单跑一次回填：R1=1 R2=1 F1=2 F2=1 F3=2，干净行零触碰。"""
+    """Running the backfill once over 8 classes of real historical combinations: R1=1 R2=1 F1=2 F2=1 F3=2, with clean
+    rows untouched."""
     ts = datetime(2025, 6, 1, tzinfo=UTC)
 
-    # R1: 老 reviewer 完成行 (completed, queued) → stage 推到 shallow_done
+    # R1: an old reviewer's completed row (completed, queued) → the stage advances to shallow_done
     r1_row = await _make_legacy_row(
         repo, sample_repo_id,
         status=EcosystemDeepReviewStatus.COMPLETED,
         stage=EcosystemStageStatus.QUEUED,
         completed_at=ts,
     )
-    # R2: 老 reviewer 失败行 (failed, queued) 带派遣证据 → shallow_failed
+    # R2: an old reviewer's failed row (failed, queued) with dispatch evidence → shallow_failed
     r2_row = await _make_legacy_row(
         repo, sample_repo_id,
         status=EcosystemDeepReviewStatus.FAILED,
@@ -252,37 +261,37 @@ async def test_backfill_matrix_covers_real_combinations(
         started_at=ts,
         dispatch_prompt="dispatched once",
     )
-    # F3(b): (failed, queued) 无任何派遣证据 → 不过 R2 gate，重置回真排队
+    # F3(b): (failed, queued) with no dispatch evidence at all → does not pass the R2 gate; reset to truly queued
     f3_no_evidence = await _make_legacy_row(
         repo, sample_repo_id,
         status=EcosystemDeepReviewStatus.FAILED,
         stage=EcosystemStageStatus.QUEUED,
     )
-    # F1(a): v1.5.2 主病灶 (running, shallow_done) → status=completed
+    # F1(a): the v1.5.2 main lesion (running, shallow_done) → status=completed
     f1_running = await _make_legacy_row(
         repo, sample_repo_id,
         status=EcosystemDeepReviewStatus.RUNNING,
         stage=EcosystemStageStatus.SHALLOW_DONE,
     )
-    # F1(b): (queued, architecture_done) — 只推 stage 从不碰 status 的行
+    # F1(b): (queued, architecture_done) — a row that only advanced the stage and never touched the status
     f1_queued = await _make_legacy_row(
         repo, sample_repo_id,
         status=EcosystemDeepReviewStatus.QUEUED,
         stage=EcosystemStageStatus.ARCHITECTURE_DONE,
     )
-    # F2: (running, shallow_failed) — report_failure 只推 stage 的行
+    # F2: (running, shallow_failed) — a row where report_failure only advanced the stage
     f2_row = await _make_legacy_row(
         repo, sample_repo_id,
         status=EcosystemDeepReviewStatus.RUNNING,
         stage=EcosystemStageStatus.SHALLOW_FAILED,
     )
-    # F3(a): (running, queued) — 漂移出生点在飞/死行
+    # F3(a): (running, queued) — an in-flight/dead row at the drift birthplace
     f3_running = await _make_legacy_row(
         repo, sample_repo_id,
         status=EcosystemDeepReviewStatus.RUNNING,
         stage=EcosystemStageStatus.QUEUED,
     )
-    # 干净行 (queued, queued) 双默认 → 全链 no-op
+    # A clean row (queued, queued) with dual defaults → a whole-chain no-op
     clean = EcosystemDeepReview(
         repo_id=sample_repo_id, stage_status=EcosystemStageStatus.QUEUED
     )
@@ -291,44 +300,44 @@ async def test_backfill_matrix_covers_real_combinations(
     counts = await repo.backfill_deep_review_dual_axis()
     assert counts == {"R1": 1, "R2": 1, "F1": 2, "F2": 1, "F3": 2}
 
-    # R1 终态：stage 推离 queued，shallow_completed_at COALESCE 自 completed_at
+    # R1 final state: the stage moves away from queued; shallow_completed_at is COALESCEd from completed_at
     r1_after = await repo.get_deep_review(r1_row.id)
     assert r1_after is not None
     assert r1_after.stage_status == EcosystemStageStatus.SHALLOW_DONE
     assert r1_after.status == EcosystemDeepReviewStatus.COMPLETED  # F1 no-op
-    # SQLite 落库剥 tzinfo，按 naive wall time 比较 COALESCE 结果
+    # SQLite storage strips tzinfo; compare the COALESCE result by naive wall time
     assert r1_after.shallow_completed_at is not None
     assert r1_after.shallow_completed_at.replace(tzinfo=None) == ts.replace(
         tzinfo=None
     )
 
-    # R2 终态：stage=shallow_failed，status 保持 failed（F2 no-op）
+    # R2 final state: stage=shallow_failed, the status stays failed (F2 no-op)
     r2_after = await repo.get_deep_review(r2_row.id)
     assert r2_after is not None
     assert r2_after.stage_status == EcosystemStageStatus.SHALLOW_FAILED
     assert r2_after.status == EcosystemDeepReviewStatus.FAILED
 
-    # F1 终态：status=completed + completed_at 补齐（COALESCE created_at）
+    # F1 final state: status=completed + completed_at filled in (COALESCE created_at)
     for fixed in (f1_running, f1_queued):
         after = await repo.get_deep_review(fixed.id)
         assert after is not None
         assert after.status == EcosystemDeepReviewStatus.COMPLETED
         assert after.completed_at is not None
 
-    # F2 终态：status=failed
+    # F2 final state: status=failed
     f2_after = await repo.get_deep_review(f2_row.id)
     assert f2_after is not None
     assert f2_after.status == EcosystemDeepReviewStatus.FAILED
     assert f2_after.completed_at is not None
 
-    # F3 终态：status 重置 queued，stage 仍 queued（可被重新 claim）
+    # F3 final state: the status is reset to queued, the stage stays queued (it can be claimed again)
     for reset in (f3_running, f3_no_evidence):
         after = await repo.get_deep_review(reset.id)
         assert after is not None
         assert after.status == EcosystemDeepReviewStatus.QUEUED
         assert after.stage_status == EcosystemStageStatus.QUEUED
 
-    # 干净行零触碰
+    # Clean rows are untouched
     clean_after = await repo.get_deep_review(clean.id)
     assert clean_after is not None
     assert clean_after.status == EcosystemDeepReviewStatus.QUEUED
@@ -338,8 +347,9 @@ async def test_backfill_matrix_covers_real_combinations(
 async def test_backfill_order_r1_before_f3_protects_completed_rows(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """顺序铁律：(completed, queued) 老行必须被 R1 推离 queued，绝不落入 F3
-    被误重置为 (queued, queued) —— 整链最高危陷阱的直接回归。"""
+    """The ordering iron law: a (completed, queued) legacy row must be pushed away from queued by R1 and must never fall
+    into F3 and
+    be wrongly reset to (queued, queued) — the direct regression for the whole chain's most dangerous trap."""
     legacy = await _make_legacy_row(
         repo, sample_repo_id,
         status=EcosystemDeepReviewStatus.COMPLETED,
@@ -351,7 +361,7 @@ async def test_backfill_order_r1_before_f3_protects_completed_rows(
 
     after = await repo.get_deep_review(legacy.id)
     assert after is not None
-    # 若顺序颠倒（F3 先跑），status 会被重置为 queued —— 此断言必红
+    # If the order were reversed (F3 runs first), the status would be reset to queued — this assertion must go red
     assert after.status == EcosystemDeepReviewStatus.COMPLETED
     assert after.stage_status == EcosystemStageStatus.SHALLOW_DONE
 
@@ -359,7 +369,8 @@ async def test_backfill_order_r1_before_f3_protects_completed_rows(
 async def test_backfill_r2_gate_requires_dispatch_evidence(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """R2 gate：report_id 单证据也可推 shallow_failed；三证据全空走 F3。"""
+    """R2 gate: a report_id as the sole evidence can also advance to shallow_failed; with all three evidences empty
+    it takes F3."""
     with_report = await _make_legacy_row(
         repo, sample_repo_id,
         status=EcosystemDeepReviewStatus.FAILED,
@@ -386,14 +397,15 @@ async def test_backfill_r2_gate_requires_dispatch_evidence(
 
 
 # ---------------------------------------------------------------------------
-# T5: 幂等 — 两跑第二遍 rowcount 恒 0
+# T5: Idempotency — on a second run, every rowcount is constantly 0
 # ---------------------------------------------------------------------------
 
 
 async def test_backfill_is_idempotent(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """每条 WHERE 都排除自身写后状态：第二跑全规则 rowcount=0、行零变化。"""
+    """Every WHERE excludes its own post-write state: on the second run, all rules have rowcount=0 and rows are
+    unchanged."""
     await _make_legacy_row(
         repo, sample_repo_id,
         status=EcosystemDeepReviewStatus.COMPLETED,
@@ -430,20 +442,20 @@ async def test_backfill_is_idempotent(
 
 
 async def test_backfill_empty_table_returns_zero(repo: StorageRepository) -> None:
-    """空库（本地 Win→Mac 未迁数据场景）回填安全返回全 0。"""
+    """Backfilling an empty database (the local Win→Mac unmigrated-data scenario) safely returns all zeros."""
     counts = await repo.backfill_deep_review_dual_axis()
     assert counts == {"R1": 0, "R2": 0, "F1": 0, "F2": 0, "F3": 0}
 
 
 # ---------------------------------------------------------------------------
-# T6: project 隔离 — 显式 project_id 只触本项目行（红线3 现范式）
+# T6: Project isolation — an explicit project_id touches only this project's rows (the current paradigm of red line 3)
 # ---------------------------------------------------------------------------
 
 
 async def test_backfill_respects_project_scope(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """backfill(project_id='p1') 只修 p1 的脏行；全局跑再收 p2。"""
+    """backfill(project_id='p1') fixes only p1's dirty rows; a global run then collects p2."""
     dirty_p1 = await _make_legacy_row(
         repo, sample_repo_id,
         status=EcosystemDeepReviewStatus.RUNNING,
@@ -464,7 +476,7 @@ async def test_backfill_respects_project_scope(
     p2_after = await repo.get_deep_review(dirty_p2.id, project_id="p2")
     assert p1_after is not None and p2_after is not None
     assert p1_after.status == EcosystemDeepReviewStatus.COMPLETED
-    assert p2_after.status == EcosystemDeepReviewStatus.RUNNING  # 未触碰
+    assert p2_after.status == EcosystemDeepReviewStatus.RUNNING  # Untouched
 
     global_counts = await repo.backfill_deep_review_dual_axis()
     assert global_counts["F1"] == 1

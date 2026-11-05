@@ -1,11 +1,13 @@
-"""批 3 ⑥：delete_project 级联漏了 scope='team' 的记忆（125 条孤儿记忆的直接成因）。
+"""Batch 3 (6): delete_project's cascade missed memories with scope='team' (the direct cause of 125 orphaned memories).
 
-团队知识（failure_alchemy / lesson_learned / loop_review）以 scope='team' +
-scope_id=<team_id> 落库。删项目时 teams 行被删掉，这些记忆却没人管，从此
-scope_id 指向一个不存在的团队 —— 既查不出来也删不掉。
+Team knowledge (failure_alchemy / lesson_learned / loop_review) is stored with scope='team' +
+scope_id=<team_id>. When a project is deleted the teams rows are deleted, but nobody looked after these memories, so
+from then on
+their scope_id points to a team that does not exist — they can neither be queried nor deleted.
 
-顺带锁住另外两条同类的"子查询在父行删除后失效"隐患：agents 与 events 都按
-team_ids 子查询清理，而 team_ids 必须在 teams 行删除**之前**取实。
+This also locks down two more sibling hazards of the 'subquery invalidated after the parent row is deleted' kind: agents
+and events are both cleaned
+by a team_ids subquery, and team_ids must be materialized **before** the teams rows are deleted.
 """
 
 from __future__ import annotations
@@ -34,15 +36,15 @@ async def test_team_scoped_memories_are_cascaded(db_repository):
     team = await db_repository.create_team(name="doomed-team", mode="coordinate", project_id=project.id)
     other_team = await db_repository.create_team(name="keeper-team", mode="coordinate", project_id=keep.id)
 
-    await db_repository.create_memory(scope="team", scope_id=team.id, content="团队知识")
-    await db_repository.create_memory(scope="team", scope_id=other_team.id, content="别项目的")
-    await db_repository.create_memory(scope="project", scope_id=project.id, content="项目记忆")
-    await db_repository.create_memory(scope="global", scope_id="global", content="全局的")
+    await db_repository.create_memory(scope="team", scope_id=team.id, content="Team knowledge")
+    await db_repository.create_memory(scope="team", scope_id=other_team.id, content="Another project's")
+    await db_repository.create_memory(scope="project", scope_id=project.id, content="Project memory")
+    await db_repository.create_memory(scope="global", scope_id="global", content="Global")
 
     assert await db_repository.delete_project(project.id) is True
 
     assert await _count(db_repository, MemoryModel, scope="team", scope_id=team.id) == 0
-    # 只清本项目的：别项目的团队记忆 + 全局记忆必须原封不动
+    # Clean up only this project's: another project's team memories + the global memories must remain exactly intact
     assert await _count(db_repository, MemoryModel, scope="team", scope_id=other_team.id) == 1
     assert await _count(db_repository, MemoryModel, scope="global") == 1
     assert await _count(db_repository, MemoryModel, scope="project", scope_id=project.id) == 0
@@ -50,7 +52,8 @@ async def test_team_scoped_memories_are_cascaded(db_repository):
 
 @pytest.mark.asyncio
 async def test_team_agents_and_events_are_cascaded(db_repository):
-    """team_ids 子查询必须在 teams 行删除前取实，否则按它清理的表全都清了个寂寞。"""
+    """The team_ids subquery must be materialized before the teams rows are deleted, otherwise every table cleaned by
+    it is cleaned in vain."""
     project = await db_repository.create_project(name="doomed2", root_path="/tmp/doomed2")
     team = await db_repository.create_team(name="doomed-team-2", mode="coordinate", project_id=project.id)
     await db_repository.create_agent(team_id=team.id, name="worker", role="dev")

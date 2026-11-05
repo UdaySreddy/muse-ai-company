@@ -1,4 +1,4 @@
-"""生态仓深扫报告存储层单元测试 — create / get / update / list 覆盖。"""
+"""Ecosystem repository deep-scan report storage-layer unit tests — create / get / update / list coverage."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from aiteam.types import (
 
 @pytest_asyncio.fixture()
 async def repo() -> StorageRepository:
-    """内存 SQLite 仓库用于测试。"""
+    """In-memory SQLite repository for testing."""
     r = StorageRepository(db_url="sqlite+aiosqlite://")
     await r.init_db()
     yield r  # type: ignore[misc]
@@ -31,7 +31,7 @@ async def repo() -> StorageRepository:
 
 @pytest_asyncio.fixture()
 async def sample_repo_id(repo: StorageRepository) -> str:
-    """先建一个 EcosystemRepoProfile 返回其 id 用作 FK。"""
+    """First create an EcosystemRepoProfile and return its id for use as an FK."""
     profile = EcosystemRepoProfile(
         repo_full_name="anthropics/claude-code",
         name="claude-code",
@@ -50,15 +50,15 @@ def _make_review(
     agent_id: str | None = None,
     **extra,
 ) -> EcosystemDeepReview:
-    # D5: status 由 create_deep_review 按 stage_status 派生，不再由调用方传入；
-    # 需要特定 status 的测试改传 stage_status（见 STAGE_TO_STATUS 映射）。
+    # D5: the status is derived by create_deep_review from stage_status and is no longer passed in by the caller;
+    # tests that need a specific status now pass stage_status instead (see the STAGE_TO_STATUS mapping).
     return EcosystemDeepReview(
         repo_id=repo_id,
         agent_id=agent_id,
         summary_md="# Summary",
-        architecture_md="架构说明",
-        risks_md="风险",
-        learnings_md="经验",
+        architecture_md="Architecture description",
+        risks_md="Risks",
+        learnings_md="Experience",
         **extra,
     )
 
@@ -71,7 +71,7 @@ def _make_review(
 async def test_create_deep_review_persists(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """创建深扫报告后能按 id 取回。"""
+    """After creating a deep-scan report it can be retrieved by id."""
     review = _make_review(sample_repo_id)
     await repo.create_deep_review(review)
 
@@ -82,7 +82,7 @@ async def test_create_deep_review_persists(
 
 
 async def test_get_deep_review_missing_returns_none(repo: StorageRepository) -> None:
-    """不存在的 id 返回 None。"""
+    """A non-existent id returns None."""
     fetched = await repo.get_deep_review("non-existent-id")
     assert fetched is None
 
@@ -95,7 +95,7 @@ async def test_get_deep_review_missing_returns_none(repo: StorageRepository) -> 
 async def test_update_deep_review_status_transition(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """status 由 queued -> running -> completed 可逐步更新。"""
+    """The status can be updated step by step: queued -> running -> completed."""
     review = _make_review(sample_repo_id)
     await repo.create_deep_review(review)
 
@@ -121,7 +121,7 @@ async def test_update_deep_review_status_transition(
 
 
 async def test_update_deep_review_missing_returns_none(repo: StorageRepository) -> None:
-    """更新不存在的 review 返回 None。"""
+    """Updating a non-existent review returns None."""
     result = await repo.update_deep_review(
         "missing-id", status=EcosystemDeepReviewStatus.RUNNING
     )
@@ -136,8 +136,8 @@ async def test_update_deep_review_missing_returns_none(repo: StorageRepository) 
 async def test_list_deep_reviews_filter_by_repo_id(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """按 repo_id 过滤只返回该仓的报告。"""
-    # 创建第二个 repo
+    """Filtering by repo_id returns only that repository's reports."""
+    # Create a second repo
     second_profile = EcosystemRepoProfile(
         repo_full_name="other/repo",
         name="repo",
@@ -163,10 +163,10 @@ async def test_list_deep_reviews_filter_by_repo_id(
 async def test_list_deep_reviews_filter_by_status(
     repo: StorageRepository, sample_repo_id: str
 ) -> None:
-    """按 status 过滤只返回符合状态的报告。
+    """Filtering by status returns only reports matching the status.
 
-    D5: create_deep_review 强制按 stage_status 派生 status（唯一真源
-    types.STAGE_TO_STATUS），因此通过 stage 构造各 status 值——
+    D5: create_deep_review forcibly derives the status from stage_status (the single source of truth,
+    types.STAGE_TO_STATUS), so each status value is constructed via a stage —
     queued→queued / shallow_done→completed / shallow_failed→failed。
     """
     from aiteam.types import EcosystemStageStatus
