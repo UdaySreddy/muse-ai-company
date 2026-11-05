@@ -170,7 +170,7 @@ class TaskWallEngine:
             if h in wall:
                 wall[h].append(item)
 
-        # 每组内Sort by score descending
+        # Sort by score descending within each group
         for key in wall:
             wall[key].sort(key=lambda x: x["score"], reverse=True)
 

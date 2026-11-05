@@ -38,7 +38,7 @@ class ReplayEngine:
                     "step_type": "lifecycle",
                     "event": "task_created",
                     "author": task.assigned_to or "system",
-                    "content": f"任务创建: {task.title}",
+                    "content": f"Task created: {task.title}",
                     "task_id": task_id,
                     "source": "main_task",
                 }
@@ -50,7 +50,7 @@ class ReplayEngine:
                     "step_type": "lifecycle",
                     "event": "task_started",
                     "author": task.assigned_to or "system",
-                    "content": "任务开始执行",
+                    "content": "Task execution started",
                     "task_id": task_id,
                     "source": "main_task",
                 }
@@ -85,7 +85,7 @@ class ReplayEngine:
                         "step_type": "lifecycle",
                         "event": "subtask_created",
                         "author": subtask.assigned_to or "system",
-                        "content": f"子任务创建: {subtask.title}",
+                        "content": f"Subtask created: {subtask.title}",
                         "task_id": subtask.id,
                         "source": "subtask",
                     }
@@ -114,7 +114,7 @@ class ReplayEngine:
                     "step_type": "lifecycle",
                     "event": "task_completed",
                     "author": task.assigned_to or "system",
-                    "content": "任务完成",
+                    "content": "Task completed",
                     "task_id": task_id,
                     "source": "main_task",
                 }

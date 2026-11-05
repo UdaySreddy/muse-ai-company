@@ -57,12 +57,16 @@ class FailureAlchemist:
         if template_name:
             failure_meta["template_name"] = template_name
 
-        # 归属层级：project 而非 team（2026-07-27 裁定）。团队在 CC v2.1.219 下是
-        # 会话级/单次 workflow 级的短命容器——一支队关掉，挂在它名下的失败教训就
-        # 再没人读得到；实测本机已有 125 条这样的孤儿。项目才是教训真正该沉淀的
-        # 层级（同一项目的下一支队、下一次 workflow 都该读得到）。
-        # 历史 125 条**不迁移**（留作 team 层归档，避免改写历史行的归属）。
-        # 拿不到项目归属时（无 team 或队未绑定项目）退回 team 层，绝不丢记录。
+        # Ownership level: project rather than team (2026-07-27 ruling). Under CC v2.1.219 a team is
+        # a session-level / single-workflow-level short-lived container — once a team closes, the failure lessons filed
+        # under its name
+        # can no longer be read by anyone; measured on this machine, 125 such orphans already exist. The project is the
+        # level where lessons should truly settle
+        # (the next team and the next workflow of the same project should all be able to read them).
+        # The historical 125 entries are **not migrated** (kept as a team-layer archive, avoiding rewriting the
+        # ownership of historical rows).
+        # When no project ownership can be obtained (no team, or the team is not bound to a project), fall back to the
+        # team layer; never drop a record.
         scope, scope_id = "team", team_id
         try:
             team = await self._repo.get_team(team_id)
@@ -71,21 +75,22 @@ class FailureAlchemist:
                 scope, scope_id = "project", project_id
                 failure_meta["team_id"] = team_id
         except Exception:
-            logger.debug("FailureAlchemist: 项目归属解析失败，记忆退回 team 层")
+            logger.debug("FailureAlchemist: project ownership resolution failed; the memory falls back to the team "
+                         "layer")
 
         await self._repo.create_memory(
             scope=scope,
             scope_id=scope_id,
             content=(
-                f"失败分析: {task.title}\n\n"
-                f"抗体: {antibody}\n\n"
-                f"疫苗: {vaccine}\n\n"
-                f"催化剂: {catalyst}"
+                f"Failure analysis: {task.title}\n\n"
+                f"Antibody: {antibody}\n\n"
+                f"Vaccine: {vaccine}\n\n"
+                f"Catalyst: {catalyst}"
             ),
             metadata=failure_meta,
         )
 
-        logger.info("FailureAlchemist: 失败任务 '%s' 已提炼为学习产物", task.title)
+        logger.info("FailureAlchemist: failed task '%s' has been distilled into a learning artifact", task.title)
 
         # Emitted here rather than in the route handler so direct callers are
         # covered too.  Best-effort: a bookkeeping miss must never sink the
@@ -106,7 +111,8 @@ class FailureAlchemist:
                 entity_type="task",
             )
         except Exception:
-            logger.debug("FailureAlchemist: 失败炼金事件落库失败（不影响分析结果）")
+            logger.debug("FailureAlchemist: persisting the failure-alchemy event failed (does not affect the analysis "
+                         "result)")
 
         return {"antibody": antibody, "vaccine": vaccine, "catalyst": catalyst}
 
@@ -114,45 +120,45 @@ class FailureAlchemist:
         """Extract defense rule suggestions from a failure."""
         result = task.result or ""
         error_info = task.config.get("error", "") if isinstance(task.config, dict) else ""
-        failure_context = result or error_info or "未记录失败原因"
+        failure_context = result or error_info or "No failure reason recorded"
 
         return (
-            f"防御规则建议：任务「{task.title}」失败。\n"
-            f"失败原因：{failure_context[:200]}\n"
-            f"建议：在类似任务开始前检查相关前置条件"
+            f"Defense rule suggestion: task '{task.title}' failed.\n"
+            f"Failure reason: {failure_context[:200]}\n"
+            f"Suggestion: check the relevant prerequisites before similar tasks start"
         )
 
     def _generate_vaccine(self, task) -> str:
         """Generate a structured failure case for new agent onboarding."""
-        description = task.description[:150] if task.description else "无"
-        result_summary = (task.result or "未记录")[:200]
+        description = task.description[:150] if task.description else "None"
+        result_summary = (task.result or "Not recorded")[:200]
         prevention = (
-            task.config.get("error", "检查前置条件")
+            task.config.get("error", "Check the prerequisites")
             if isinstance(task.config, dict)
-            else "检查前置条件"
+            else "Check the prerequisites"
         )
 
         return (
-            f"## 失败案例：{task.title}\n"
-            f"- 任务描述：{description}\n"
-            f"- 分配给：{task.assigned_to or '未分配'}\n"
-            f"- 失败结果：{result_summary}\n"
-            f"- 教训：执行此类任务前应先确认环境和依赖就绪\n"
-            f"- 预防措施：{prevention}"
+            f"## Failure case: {task.title}\n"
+            f"- Task description: {description}\n"
+            f"- Assigned to: {task.assigned_to or 'Unassigned'}\n"
+            f"- Failure result: {result_summary}\n"
+            f"- Lesson: before executing this kind of task, confirm the environment and dependencies are ready first\n"
+            f"- Prevention: {prevention}"
         )
 
     def _generate_catalyst(self, task) -> str:
         """Generate a system improvement proposal."""
         tags = task.tags if task.tags else []
-        domain = ", ".join(tags) if tags else "通用"
+        domain = ", ".join(tags) if tags else "General"
 
         return (
-            f"改进提案：「{task.title}」失败分析\n"
-            f"- 涉及领域：{domain}\n"
-            f"- 建议：\n"
-            f"  1) 检查此类任务的前置条件清单\n"
-            f"  2) 增加相关自动化测试\n"
-            f"  3) 考虑添加Watchdog检测规则"
+            f"Improvement proposal: '{task.title}' failure analysis\n"
+            f"- Domains involved: {domain}\n"
+            f"- Suggestions:\n"
+            f"  1) Check the prerequisite checklist for this kind of task\n"
+            f"  2) Add relevant automated tests\n"
+            f"  3) Consider adding a Watchdog detection rule"
         )
 
     async def diagnose_failure(self, task_id: str) -> dict[str, Any]:
@@ -177,21 +183,21 @@ class FailureAlchemist:
         memos: list[dict] = task.config.get("memo", []) if isinstance(task.config, dict) else []
 
         # Identify failure point — last memo with type "issue" or containing error keywords
-        failed_at = "未记录"
+        failed_at = "Not recorded"
         error_memo: dict | None = None
-        error_keywords = ("失败", "error", "exception", "failed", "blocked", "超时", "timeout")
+        error_keywords = ("\u5931\u8d25", "error", "exception", "failed", "blocked", "\u8d85\u65f6", "timeout")
         for memo in reversed(memos):
             content_lower = (memo.get("content", "") or "").lower()
             if memo.get("type") == "issue" or any(kw in content_lower for kw in error_keywords):
                 error_memo = memo
-                failed_at = memo.get("timestamp", "未知时间")
+                failed_at = memo.get("timestamp", "Unknown time")
                 break
 
         # Determine root cause from task result / error config / memos
         result_text = task.result or ""
         config_error = task.config.get("error", "") if isinstance(task.config, dict) else ""
         memo_error = (error_memo.get("content", "") if error_memo else "")
-        root_cause_raw = result_text or config_error or memo_error or "未记录失败原因"
+        root_cause_raw = result_text or config_error or memo_error or "No failure reason recorded"
         root_cause = root_cause_raw[:300]
 
         # Count similar successful tasks in the same team (keyword overlap >= 2 in title)
@@ -215,7 +221,7 @@ class FailureAlchemist:
         rollback_recommendation = _build_rollback_recommendation(task)
 
         logger.info(
-            "FailureAlchemist.diagnose_failure: 任务 '%s' 诊断完成，根因: %s",
+            "FailureAlchemist.diagnose_failure: task '%s' diagnosis complete, root cause: %s",
             task.title,
             root_cause[:80],
         )
@@ -250,7 +256,8 @@ class FailureAlchemist:
                 entity_type="task",
             )
         except Exception:
-            logger.debug("FailureAlchemist: 失败诊断事件落库失败（不影响诊断结果）")
+            logger.debug("FailureAlchemist: persisting the failure-diagnosis event failed (does not affect the "
+                         "diagnosis result)")
 
         return diagnosis
 
@@ -261,36 +268,39 @@ def _generate_fix_suggestions(task: Any, root_cause: str, memos: list[dict]) -> 
     root_lower = root_cause.lower()
 
     # Dependency / blocked failures
-    if "blocked" in root_lower or "依赖" in root_lower or "depend" in root_lower:
-        fixes.append("检查并完成所有前置依赖任务后再重试")
+    if "blocked" in root_lower or "\u4f9d\u8d56" in root_lower or "depend" in root_lower:
+        fixes.append("Check and complete all prerequisite dependency tasks before retrying")
 
     # Timeout failures
-    if "timeout" in root_lower or "超时" in root_lower or "timed out" in root_lower:
-        fixes.append("增加超时阈值或将任务拆分为更小的子任务")
+    if "timeout" in root_lower or "\u8d85\u65f6" in root_lower or "timed out" in root_lower:
+        fixes.append("Increase the timeout threshold or split the task into smaller subtasks")
 
     # Import / module errors
     if "importerror" in root_lower or "modulenot" in root_lower or "import" in root_lower:
-        fixes.append("检查依赖包是否已安装（pip install -r requirements.txt）")
+        fixes.append("Check that the dependency packages are installed (pip install -r requirements.txt)")
 
     # Permission / auth failures
     if any(k in root_lower for k in ("permission", "unauthorized", "forbidden", "403", "401")):
-        fixes.append("检查认证凭证和权限配置是否正确")
+        fixes.append("Check that the authentication credentials and permission configuration are correct")
 
     # Network / connection failures
     if any(k in root_lower for k in ("connection", "network", "unreachable", "refused")):
-        fixes.append("检查网络连接和目标服务是否可用")
+        fixes.append("Check the network connection and whether the target service is available")
 
     # Generic fallback suggestions always appended
     if task.assigned_to:
-        fixes.append(f"联系执行agent「{task.assigned_to}」确认具体错误详情")
+        fixes.append(f"Contact the executing agent '{task.assigned_to}' to confirm the specific error details")
     if memos:
         issue_memos = [m for m in memos if m.get("type") == "issue"]
         if issue_memos:
-            fixes.append(f"参考任务memo中 {len(issue_memos)} 条issue记录排查根因")
+            fixes.append(
+                f"Refer to the {len(issue_memos)} issue records in the task memos "
+                f"to troubleshoot the root cause"
+            )
 
     if not fixes:
-        fixes.append("查看任务执行日志并确认环境前置条件")
-        fixes.append("尝试降低任务复杂度后重新执行")
+        fixes.append("View the task execution logs and confirm the environment prerequisites")
+        fixes.append("Try reducing the task complexity and then re-execute")
 
     return fixes[:5]  # Return at most 5 suggestions
 
@@ -302,10 +312,10 @@ def _build_rollback_recommendation(task: Any) -> str:
     status_val = task.status.value if hasattr(task.status, "value") else str(task.status)
 
     if status_val == TaskStatus.FAILED.value if hasattr(TaskStatus, "FAILED") else "failed":
-        return "将任务状态重置为 pending，修复根因后重新分配执行"
+        return "Reset the task status to pending, fix the root cause, then reassign for execution"
 
     if status_val == TaskStatus.BLOCKED.value if hasattr(TaskStatus, "BLOCKED") else "blocked":
-        return "解决依赖阻塞后，任务将自动解锁恢复执行"
+        return "After the dependency blockage is resolved, the task will automatically unlock and resume execution"
 
     # Running but suspected failed
-    return "可将任务状态更新为 pending 并清空 result 字段后重新执行"
+    return "You can update the task status to pending and clear the result field, then re-execute"

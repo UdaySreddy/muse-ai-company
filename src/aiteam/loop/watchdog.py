@@ -88,8 +88,8 @@ class WatchdogChecker:
 
                 # Record recovery event to memory (agent scope)
                 memo_content = (
-                    f"因agent '{agent.name}' 卡死（无活动 {elapsed_minutes:.0f} 分钟）"
-                    f"被自动重置，任务从RUNNING退回PENDING。"
+                    f"Because agent '{agent.name}' was stuck (no activity for {elapsed_minutes:.0f} minutes), "
+                    f"it was automatically reset and the task returned from RUNNING to PENDING."
                 )
                 await self._repo.create_memory(
                     scope="agent",
@@ -110,7 +110,7 @@ class WatchdogChecker:
             }
             recovered.append(record)
             logger.warning(
-                "Watchdog自动恢复: Agent '%s' 卡死 %.0f 分钟，重置 %d 个任务",
+                "Watchdog auto-recovery: Agent '%s' stuck for %.0f minutes, reset %d tasks",
                 agent.name,
                 elapsed_minutes,
                 len(reset_tasks),
@@ -153,7 +153,7 @@ class WatchdogChecker:
                 }
                 results.append(record)
                 logger.info(
-                    "失败任务重试: '%s' (retry=%d)",
+                    "Failed task retry: '%s' (retry=%d)",
                     title,
                     retry_count + 1,
                 )
@@ -183,7 +183,7 @@ class WatchdogChecker:
                         },
                     )
                 logger.warning(
-                    "失败任务超过重试上限: '%s' (retry=%d)，需Leader介入",
+                    "Failed task exceeded the retry limit: '%s' (retry=%d), Leader intervention required",
                     title,
                     retry_count,
                 )
@@ -207,15 +207,15 @@ class WatchdogChecker:
                         {
                             "severity": "warning",
                             "category": "agent",
-                            "title": f"Agent BUSY超时: {agent.name}",
+                            "title": f"Agent BUSY timeout: {agent.name}",
                             "description": (
-                                f"Agent '{agent.name}' 已处于BUSY状态 "
-                                f"{elapsed_minutes:.0f} 分钟（阈值 {AGENT_BUSY_TIMEOUT_MINUTES} 分钟）。"
-                                f"上次活动: {ref_time.isoformat()}"
+                                f"Agent '{agent.name}' has been in the BUSY state for "
+                                f"{elapsed_minutes:.0f} minutes (threshold {AGENT_BUSY_TIMEOUT_MINUTES} minutes). "
+                                f"Last activity: {ref_time.isoformat()}"
                             ),
                             "suggested_action": (
-                                f"检查Agent '{agent.name}' 是否卡死，"
-                                "考虑通过StateReaper重置或手动设为IDLE"
+                                f"Check whether Agent '{agent.name}' is stuck; "
+                                "consider resetting via StateReaper or manually setting it to IDLE"
                             ),
                             "agent_id": agent.id,
                             "agent_name": agent.name,
@@ -243,13 +243,13 @@ class WatchdogChecker:
                         {
                             "severity": "warning",
                             "category": "task",
-                            "title": f"任务长时间PENDING: {task.title}",
+                            "title": f"Task PENDING for a long time: {task.title}",
                             "description": (
-                                f"任务 '{task.title}' 已等待 {elapsed_minutes:.0f} 分钟"
-                                f"（阈值 {TASK_PENDING_TIMEOUT_MINUTES} 分钟），"
-                                f"优先级: {task.priority}"
+                                f"Task '{task.title}' has waited {elapsed_minutes:.0f} minutes "
+                                f"(threshold {TASK_PENDING_TIMEOUT_MINUTES} minutes), "
+                                f"priority: {task.priority}"
                             ),
-                            "suggested_action": ("分配Agent执行此任务，或降低优先级"),
+                            "suggested_action": ("Assign an Agent to execute this task, or lower its priority"),
                             "task_id": task.id,
                         }
                     )
@@ -270,11 +270,11 @@ class WatchdogChecker:
                         {
                             "severity": "warning",
                             "category": "task",
-                            "title": f"任务可解除阻塞: {task.title}",
+                            "title": f"Task can be unblocked: {task.title}",
                             "description": (
-                                f"任务 '{task.title}' 状态为BLOCKED，但所有依赖任务已完成"
+                                f"Task '{task.title}' is in the BLOCKED state, but all dependency tasks are complete"
                             ),
-                            "suggested_action": ("将此任务状态从BLOCKED更新为PENDING"),
+                            "suggested_action": ("Update this task's status from BLOCKED to PENDING"),
                             "task_id": task.id,
                         }
                     )
@@ -293,9 +293,9 @@ class WatchdogChecker:
                 {
                     "severity": "critical",
                     "category": "system",
-                    "title": "数据库连接异常",
-                    "description": f"无法查询数据库: {e}",
-                    "suggested_action": "检查数据库配置和连接状态",
+                    "title": "Database connection anomaly",
+                    "description": f"Unable to query the database: {e}",
+                    "suggested_action": "Check the database configuration and connection state",
                 }
             )
 
@@ -318,18 +318,18 @@ class WatchdogRunner:
         self._event_bus = event_bus
         self._task: asyncio.Task | None = None
         self._running = False
-        # D3 阶段C：与同进程 StateReaper 共用 f"api-{pid}" 租约持有者标识，
-        # 同进程两个治理循环互为续约、绝不互抢。
+        # D3 stage C: shares the f"api-{pid}" lease-holder identity with the same-process StateReaper,
+        # so the two governance loops in the same process renew each other and never contend.
         self._lease_holder = f"api-{os.getpid()}"
 
     def start(self) -> None:
         """Start the background patrol loop."""
         if self._task is not None:
-            logger.warning("WatchdogRunner已在运行，跳过重复启动")
+            logger.warning("WatchdogRunner is already running; skipping the duplicate start")
             return
         self._running = True
         self._task = asyncio.create_task(self._run_loop(), name="watchdog-runner")
-        logger.info("WatchdogRunner已启动，间隔=%ds", WATCHDOG_CHECK_INTERVAL)
+        logger.info("WatchdogRunner started, interval=%ds", WATCHDOG_CHECK_INTERVAL)
 
     async def stop(self) -> None:
         """Stop the background patrol loop."""
@@ -341,7 +341,7 @@ class WatchdogRunner:
             except asyncio.CancelledError:
                 pass
             self._task = None
-            logger.info("WatchdogRunner已停止")
+            logger.info("WatchdogRunner stopped")
 
     async def _run_loop(self) -> None:
         """Main patrol loop — executes once every WATCHDOG_CHECK_INTERVAL seconds."""
@@ -349,11 +349,11 @@ class WatchdogRunner:
             try:
                 await asyncio.wait_for(self._run_cycle(), timeout=30.0)
             except TimeoutError:
-                logger.warning("Watchdog巡检周期超时（30s），跳过本轮")
+                logger.warning("Watchdog inspection cycle timed out (30s); skipping this round")
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("Watchdog巡检周期异常")
+                logger.exception("Watchdog inspection cycle error")
 
             try:
                 await asyncio.sleep(WATCHDOG_CHECK_INTERVAL)
@@ -362,8 +362,9 @@ class WatchdogRunner:
 
     async def _run_cycle(self) -> None:
         """Patrol cycle — processes the default DB only."""
-        # D3 阶段C：治理 leader 租约（审计 M50）——多 API 实例并存时仅租约持有者
-        # 巡检；同进程 holder 相同即互为续约。租约层故障 fail-open（单实例无损）。
+        # D3 stage C: governance leader lease (audit M50) — when multiple API instances coexist, only the lease holder
+        # inspects; the same holder in the same process means mutual renewal. Lease-layer failures fail open (lossless
+        # for a single instance).
         try:
             is_leader = await self._checker._repo.try_acquire_governance_lease(
                 self._lease_holder, ttl_seconds=WATCHDOG_CHECK_INTERVAL * 3
@@ -420,6 +421,6 @@ class WatchdogRunner:
                 alert_count += 1
 
         if alert_count > 0:
-            logger.warning("Watchdog巡检发现 %d 个告警", alert_count)
+            logger.warning("Watchdog inspection found %d alerts", alert_count)
         else:
-            logger.debug("Watchdog巡检完成，无告警")
+            logger.debug("Watchdog inspection complete, no alerts")

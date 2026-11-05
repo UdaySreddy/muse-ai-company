@@ -32,11 +32,11 @@ class WhatIfAnalyzer:
         best_match = self._find_best_agent(task, idle_agents)
         approaches.append(
             {
-                "name": "方案A：最佳匹配",
-                "description": f"分配给 {best_match.name if best_match else '待定'}（角色匹配度最高）",
+                "name": "Plan A: Best match",
+                "description": f"Assign to {best_match.name if best_match else 'TBD'} (highest role match)",
                 "agent": best_match.name if best_match else None,
-                "estimated_risk": "低",
-                "rationale": "按角色匹配度分配，风险最小",
+                "estimated_risk": "Low",
+                "rationale": "Assign by role match; the risk is minimal",
             }
         )
 
@@ -44,11 +44,11 @@ class WhatIfAnalyzer:
         if len(idle_agents) >= 2:
             approaches.append(
                 {
-                    "name": "方案B：并行拆分",
-                    "description": f"拆分为{min(len(idle_agents), 3)}个子任务并行执行",
+                    "name": "Plan B: Parallel split",
+                    "description": f"Split into {min(len(idle_agents), 3)} subtasks executed in parallel",
                     "agents": [a.name for a in idle_agents[:3]],
-                    "estimated_risk": "中",
-                    "rationale": "速度更快，但需要协调成本",
+                    "estimated_risk": "Medium",
+                    "rationale": "Faster, but incurs coordination cost",
                 }
             )
 
@@ -56,11 +56,11 @@ class WhatIfAnalyzer:
         if knowledge:
             approaches.append(
                 {
-                    "name": "方案C：经验驱动",
-                    "description": "基于团队历史经验调整策略",
+                    "name": "Plan C: Experience-driven",
+                    "description": "Adjust the strategy based on the team's historical experience",
                     "knowledge_refs": [k.content[:100] for k in knowledge[:2]],
-                    "estimated_risk": "低",
-                    "rationale": f"参考{len(knowledge)}条历史经验",
+                    "estimated_risk": "Low",
+                    "rationale": f"References {len(knowledge)} historical experience entries",
                 }
             )
 
@@ -68,7 +68,7 @@ class WhatIfAnalyzer:
             "task_id": task.id,
             "task_title": task.title,
             "approaches": approaches,
-            "recommendation": approaches[0]["name"] if approaches else "无可用方案",
+            "recommendation": approaches[0]["name"] if approaches else "No available plan",
             "analyzed_at": utc_now().isoformat(),
         }
 
@@ -76,7 +76,10 @@ class WhatIfAnalyzer:
         await self._repo.create_memory(
             scope="team",
             scope_id=team_id,
-            content=f"What-If分析: {task.title}\n方案数: {len(approaches)}\n推荐: {result['recommendation']}",
+            content=(
+                f"What-If analysis: {task.title}\nPlans: {len(approaches)}\n"
+                f"Recommendation: {result['recommendation']}"
+            ),
             metadata={
                 "type": "what_if_analysis",
                 "task_id": task.id,

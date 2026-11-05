@@ -104,8 +104,8 @@ def check_completion_signal(message: str) -> bool:
     completion_keywords = [
         # English
         "completed", "done", "finished", "task complete", "implementation complete",
-        # Chinese
-        "完成", "已完成", "实现完成", "任务完成", "完毕",
+        # Chinese (kept as unicode escapes so this file stays ASCII; matching is bilingual by design)
+        "\u5b8c\u6210", "\u5df2\u5b8c\u6210", "\u5b9e\u73b0\u5b8c\u6210", "\u4efb\u52a1\u5b8c\u6210", "\u5b8c\u6bd5",
     ]
     lower = message.lower()
     return any(kw.lower() in lower for kw in completion_keywords)
