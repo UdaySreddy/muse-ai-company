@@ -2,7 +2,7 @@
 import sys
 
 io_setup = sys.stdout.reconfigure(encoding='utf-8') if hasattr(sys.stdout, 'reconfigure') else None
-from playwright.sync_api import sync_playwright  # noqa: E402 — stdout 编码须在导入前设置
+from playwright.sync_api import sync_playwright  # noqa: E402 — the stdout encoding must be set before importing
 
 QA_PROJ = "acce0f17-0d4b-4a88-ae47-1940fc07c1e1"
 TOPICS_REPO = "8690021d-4a58-41bb-ad86-4a19f49cd498"
@@ -40,7 +40,7 @@ def main():
 
             content = page.content()
             print(f"  HTML size: {len(content)} chars")
-            for keyword in ["事件历史", "EventTimeline", "discovered", "topics_changed", "stars_jumped"]:
+            for keyword in ["Event History", "EventTimeline", "discovered", "topics_changed", "stars_jumped"]:
                 marker = "OK" if keyword in content else "MISSING"
                 print(f"  [{marker}] '{keyword}'")
 
@@ -55,9 +55,9 @@ def main():
 
             # Try clicking event-history tab
             try:
-                event_tab = page.get_by_text("事件历史", exact=False).first
+                event_tab = page.get_by_text("Event History", exact=False).first
                 if event_tab.is_visible(timeout=2000):
-                    print("  found 事件历史 tab, clicking...")
+                    print("  found the Event History tab, clicking...")
                     event_tab.click()
                     page.wait_for_timeout(2000)
                     page.screenshot(path=f"C:/tmp/event_timeline_{name}_tab.png", full_page=True)

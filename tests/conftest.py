@@ -1,4 +1,4 @@
-"""AI Team OS — pytest 全局 fixtures."""
+"""AI Team OS — global pytest fixtures."""
 
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ from aiteam.storage.repository import StorageRepository
 
 @pytest.fixture(autouse=True)
 def _ensure_event_loop():
-    """为同步测试兜底一个可用 event loop（Python 3.12 + pytest-asyncio）.
+    """Provide a usable event loop as a fallback for sync tests (Python 3.12 + pytest-asyncio).
 
-    pytest-asyncio 在 async 测试结束后会关闭并清除 MainThread 的 loop，
-    之后排队的同步测试再调旧式 asyncio.get_event_loop().run_until_complete
-    会 RuntimeError（单独跑通过、全量跑报错的测试间污染）。
+    pytest-asyncio closes and clears the MainThread loop after async tests finish,
+    so a sync test queued afterwards that calls the legacy asyncio.get_event_loop().run_until_complete
+    would raise RuntimeError (cross-test pollution: passes alone, fails in a full run).
     """
     try:
         closed = asyncio.get_event_loop().is_closed()
@@ -31,7 +31,7 @@ def _ensure_event_loop():
 
 @pytest.fixture()
 def tmp_project_dir(tmp_path: Path) -> Path:
-    """创建临时目录作为项目目录."""
+    """Create a temporary directory to use as the project directory."""
     project_dir = tmp_path / "test-project"
     project_dir.mkdir()
     aiteam_dir = project_dir / ".aiteam"
@@ -41,9 +41,9 @@ def tmp_project_dir(tmp_path: Path) -> Path:
 
 @pytest_asyncio.fixture()
 async def db_repository() -> StorageRepository:
-    """创建内存 SQLite 的 StorageRepository 实例.
+    """Create a StorageRepository instance backed by in-memory SQLite.
 
-    使用 sqlite+aiosqlite:// 内存数据库，测试结束后自动清理。
+    Uses an sqlite+aiosqlite:// in-memory database, automatically cleaned up after the test.
     """
     repo = StorageRepository(db_url="sqlite+aiosqlite://")
     await repo.init_db()

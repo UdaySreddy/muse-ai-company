@@ -1,17 +1,17 @@
 """
-AI Team OS Dashboard — 补充 E2E 测试
-覆盖现有测试未包含的页面和场景：
+AI Team OS Dashboard — supplementary E2E tests
+Covers pages and scenarios not included in the existing tests:
 - ProjectsPage (/projects)
 - ProjectDetailPage (/projects/:id)
 - MeetingsPage (/meetings)
-- TeamsPage (通过 dashboard / team detail 路由的 /teams 实际上是 ProjectDetail 内嵌)
+- TeamsPage (the /teams route via dashboard / team detail is actually embedded in ProjectDetail)
 
-前置条件:
-- 后端 API 运行在 http://localhost:8000
-- Dashboard (Vite) 运行在 http://localhost:5173
-- playwright 已安装: pip install playwright && playwright install chromium
+Prerequisites:
+- The backend API is running at http://localhost:8000
+- The Dashboard (Vite) is running at http://localhost:5173
+- playwright is installed: pip install playwright && playwright install chromium
 
-运行方式:
+How to run:
     cd ai-team-os
     python tests/e2e_dashboard_coverage.py
 """
@@ -28,7 +28,7 @@ API_URL = "http://localhost:8000"
 RESULTS: list[str] = []
 
 
-# ─── 工具函数 ─────────────────────────────────────────────────────────────────
+# ─── Helper functions ─────────────────────────────────────────────────────────────────
 
 
 def log(msg: str) -> None:
@@ -52,120 +52,121 @@ def screenshot(page, name: str) -> None:
     log(f"  Screenshot: {name}")
 
 
-# ─── 健康检查 ─────────────────────────────────────────────────────────────────
+# ─── Health check ─────────────────────────────────────────────────────────────────
 
 
 def test_api_health(page):
-    """TC-000: 后端 API 可达性检查"""
-    test = "TC000-API健康检查"
+    """TC-000: Backend API reachability check"""
+    test = "TC000-API health check"
     try:
-        log(f"\n{'=' * 60}\n开始 {test}\n{'=' * 60}")
+        log(f"\n{'=' * 60}\nStarting {test}\n{'=' * 60}")
         resp = page.request.get(f"{API_URL}/api/health")
         if resp.status == 200:
-            record(test, "GET /api/health 返回 200", "PASS")
+            record(test, "GET /api/health returns 200", "PASS")
         else:
             record(test, "GET /api/health", "FAIL", f"HTTP {resp.status}")
     except Exception as e:
-        record(test, "API连通性", "FAIL", str(e))
+        record(test, "API connectivity", "FAIL", str(e))
 
 
 # ─── TC-001: ProjectsPage ─────────────────────────────────────────────────────
 
 
 def test_projects_page(page):
-    """TC-001: 项目列表页 — 页面可访问、核心元素渲染、创建项目对话框"""
+    """TC-001: Project list page — page is accessible, core elements render, create-project dialog"""
     test = "TC001-ProjectsPage"
     try:
-        log(f"\n{'=' * 60}\n开始 {test}\n{'=' * 60}")
+        log(f"\n{'=' * 60}\nStarting {test}\n{'=' * 60}")
 
         page.goto(f"{BASE_URL}/projects", wait_until="networkidle")
         page.wait_for_timeout(1500)
         screenshot(page, "e2e-projects-list.png")
 
-        # 1. 页面标题可见
+        # 1. Page heading is visible
         try:
             heading = page.locator("h1").first
             heading_text = heading.inner_text() if heading.count() > 0 else ""
-            record(test, f"页面标题可见: '{heading_text}'", "PASS" if heading_text else "WARN")
+            record(test, f"Page heading is visible: '{heading_text}'", "PASS" if heading_text else "WARN")
         except Exception as e:
-            record(test, "页面标题", "FAIL", str(e))
+            record(test, "Page heading", "FAIL", str(e))
 
-        # 2. 核心元素: 表格 或 空状态
+        # 2. Core elements: table or empty state
         try:
             table = page.locator("table")
-            empty_hint = page.locator("text=暂无项目, text=没有项目")
+            empty_hint = page.locator("text=No projects yet, text=No projects")
             if table.count() > 0:
                 rows = page.locator("table tbody tr")
-                record(test, f"项目表格可见，行数: {rows.count()}", "PASS")
+                record(test, f"Project table is visible, row count: {rows.count()}", "PASS")
             elif empty_hint.count() > 0:
-                record(test, "空状态提示可见", "PASS")
+                record(test, "Empty-state hint is visible", "PASS")
             else:
-                record(test, "表格或空状态", "WARN", "两者均未找到")
+                record(test, "Table or empty state", "WARN", "Neither was found")
         except Exception as e:
-            record(test, "表格渲染验证", "FAIL", str(e))
+            record(test, "Table rendering verification", "FAIL", str(e))
 
-        # 3. 创建项目按钮可见
+        # 3. Create-project button is visible
         try:
-            create_btn = page.locator("button:has-text('创建项目'), button:has-text('新建项目')")
+            create_btn = page.locator("button:has-text('Create Project'), button:has-text('New Project')")
             if create_btn.count() > 0:
-                record(test, "创建项目按钮存在", "PASS")
+                record(test, "Create-project button exists", "PASS")
             else:
-                # 尝试 Plus 图标按钮
+                # Try the Plus icon button
                 plus_btn = page.locator("button svg.lucide-plus").locator("..")
-                record(test, "创建按钮 (Plus图标)", "PASS" if plus_btn.count() > 0 else "WARN")
+                record(test, "Create button (Plus icon)", "PASS" if plus_btn.count() > 0 else "WARN")
         except Exception as e:
-            record(test, "创建按钮验证", "FAIL", str(e))
+            record(test, "Create button verification", "FAIL", str(e))
 
-        # 4. 打开创建项目对话框
+        # 4. Open the create-project dialog
         try:
-            create_btn = page.locator("button").filter(has_text="创建").first
+            create_btn = page.locator("button").filter(has_text="Create").first
             if create_btn.count() > 0:
                 create_btn.click()
                 page.wait_for_timeout(600)
                 dialog = page.locator("[role='dialog']")
                 if dialog.count() > 0:
                     screenshot(page, "e2e-projects-create-dialog.png")
-                    record(test, "创建项目对话框打开", "PASS")
-                    # 验证表单字段
+                    record(test, "Create-project dialog opened", "PASS")
+                    # Verify form fields
                     name_input = page.locator("[role='dialog'] input").first
                     if name_input.count() > 0:
-                        record(test, "对话框包含输入字段", "PASS")
+                        record(test, "Dialog contains input fields", "PASS")
                     else:
-                        record(test, "对话框表单字段", "WARN", "未找到input")
-                    # 关闭对话框
+                        record(test, "Dialog form fields", "WARN", "No input found")
+                    # Close the dialog
                     page.keyboard.press("Escape")
                     page.wait_for_timeout(400)
                 else:
-                    record(test, "创建对话框打开", "WARN", "dialog元素未出现")
+                    record(test, "Create dialog opened", "WARN", "The dialog element did not appear")
         except Exception as e:
-            record(test, "创建对话框交互", "FAIL", str(e))
+            record(test, "Create dialog interaction", "FAIL", str(e))
 
-        # 5. 边界测试: 空名称创建（如对话框已打开）
+        # 5. Edge-case test: create with an empty name (if the dialog is already open)
         try:
-            create_btn = page.locator("button").filter(has_text="创建").first
+            create_btn = page.locator("button").filter(has_text="Create").first
             if create_btn.count() > 0:
                 create_btn.click()
                 page.wait_for_timeout(500)
                 dialog = page.locator("[role='dialog']")
                 if dialog.count() > 0:
-                    # 不填名称，点提交
+                    # Submit without filling in a name
                     submit = (
                         page.locator("[role='dialog'] button[type='submit'], [role='dialog'] button")
-                        .filter(has_text="创建")
+                        .filter(has_text="Create")
                         .last
                     )
                     submit.click()
                     page.wait_for_timeout(500)
-                    # 对话框应仍然存在（未提交成功）
+                    # The dialog should still be present (submission did not succeed)
                     still_open = page.locator("[role='dialog']").count() > 0
-                    record(test, "空名称不提交(对话框未关闭)", "PASS" if still_open else "WARN", "空名称应被阻止提交")
+                    record(test, "Empty name is not submitted (dialog did not close)", "PASS" if still_open else "WARN",
+                        "An empty name should be blocked from submission")
                     page.keyboard.press("Escape")
                     page.wait_for_timeout(300)
         except Exception as e:
-            record(test, "空名称边界测试", "WARN", str(e))
+            record(test, "Empty-name edge-case test", "WARN", str(e))
 
     except Exception as e:
-        record(test, "整体", "FAIL", str(e))
+        record(test, "Overall", "FAIL", str(e))
         traceback.print_exc()
 
 
@@ -173,16 +174,17 @@ def test_projects_page(page):
 
 
 def test_project_detail_page(page):
-    """TC-002: 项目详情页 — 通过首个项目进入，验证活动日志、决策时间线"""
+    """TC-002: Project detail page — navigate in via the first project and verify the activity log and decision
+    timeline"""
     test = "TC002-ProjectDetailPage"
     try:
-        log(f"\n{'=' * 60}\n开始 {test}\n{'=' * 60}")
+        log(f"\n{'=' * 60}\nStarting {test}\n{'=' * 60}")
 
-        # 先获取项目列表，拿到第一个项目ID
+        # First get the project list and take the first project ID
         page.goto(f"{BASE_URL}/projects", wait_until="networkidle")
         page.wait_for_timeout(1500)
 
-        # 优先通过 API 获取第一个项目 ID，直接导航到详情页（最可靠）
+        # Prefer getting the first project ID via the API and navigating directly to the detail page (most reliable)
         resp = page.request.get(f"{API_URL}/api/projects?limit=1")
         if resp.status == 200:
             data = resp.json()
@@ -192,102 +194,103 @@ def test_project_detail_page(page):
                 page.goto(f"{BASE_URL}/projects/{project_id}", wait_until="networkidle")
                 page.wait_for_timeout(2000)
             else:
-                # 无项目时尝试点击列表页的查看按钮
+                # When there are no projects, try clicking the View button on the list page
                 view_btn = page.locator(
-                    "button:has-text('查看'), a:has-text('查看'), "
-                    "button:has-text('详情'), a:has-text('详情'), "
+                    "button:has-text('View'), a:has-text('View'), "
+                    "button:has-text('Details'), a:has-text('Details'), "
                     "tr td a, table a"
                 ).first
                 if view_btn.count() > 0:
                     view_btn.click()
                     page.wait_for_timeout(2000)
                 else:
-                    record(test, "无项目数据，跳过详情页测试", "WARN", "需要先创建项目")
+                    record(test, "No project data, skipping the detail-page test", "WARN",
+                        "A project needs to be created first")
                     return
         else:
-            record(test, "无法获取项目列表", "WARN", f"API {resp.status}")
+            record(test, "Could not get the project list", "WARN", f"API {resp.status}")
             return
 
         current_url = page.url
         if "/projects/" not in current_url:
-            record(test, "URL应包含/projects/:id", "FAIL", f"当前URL: {current_url}")
+            record(test, "URL should contain /projects/:id", "FAIL", f"current URL: {current_url}")
             return
 
         screenshot(page, "e2e-project-detail.png")
-        record(test, f"进入项目详情页: {current_url}", "PASS")
+        record(test, f"Entered the project detail page: {current_url}", "PASS")
 
-        # 1. 项目名称/标题可见
+        # 1. Project name/title is visible
         try:
             heading = page.locator("h1, h2").first
             heading_text = heading.inner_text() if heading.count() > 0 else ""
-            record(test, f"项目标题可见: '{heading_text[:30]}'", "PASS" if heading_text else "WARN")
+            record(test, f"Project title is visible: '{heading_text[:30]}'", "PASS" if heading_text else "WARN")
         except Exception as e:
-            record(test, "项目标题", "FAIL", str(e))
+            record(test, "Project title", "FAIL", str(e))
 
-        # 2. 团队/Agent 区域
+        # 2. Team/Agent section
         try:
-            agent_section = page.locator("text=Agent, text=成员, text=团队成员")
+            agent_section = page.locator("text=Agent, text=Members, text=Team Members")
             if agent_section.count() > 0:
-                record(test, "Agent/成员区域可见", "PASS")
+                record(test, "Agent/Members section is visible", "PASS")
             else:
-                record(test, "Agent/成员区域", "WARN", "未找到相关标签")
+                record(test, "Agent/Members section", "WARN", "No related labels found")
         except Exception as e:
-            record(test, "Agent区域验证", "FAIL", str(e))
+            record(test, "Agent section verification", "FAIL", str(e))
 
-        # 3. 活动日志区域
+        # 3. Activity log section
         try:
-            activity_labels = ["活动", "日志", "Activity", "历史"]
+            activity_labels = ["Activity", "Log", "Activity", "History"]
             found_activity = False
             for label in activity_labels:
                 if page.locator(f"text={label}").count() > 0:
                     found_activity = True
-                    record(test, f"活动区域可见 (匹配: '{label}')", "PASS")
+                    record(test, f"Activity section is visible (matched: '{label}')", "PASS")
                     break
             if not found_activity:
-                record(test, "活动日志区域", "WARN", "未找到活动/日志标签")
+                record(test, "Activity log section", "WARN", "No Activity/Log labels found")
         except Exception as e:
-            record(test, "活动日志验证", "FAIL", str(e))
+            record(test, "Activity log verification", "FAIL", str(e))
 
-        # 4. 决策时间线
+        # 4. Decision timeline
         try:
-            decision_labels = ["决策", "时间线", "Decision"]
+            decision_labels = ["Decisions", "Timeline", "Decision"]
             found_decision = False
             for label in decision_labels:
                 if page.locator(f"text={label}").count() > 0:
                     found_decision = True
-                    record(test, f"决策区域可见 (匹配: '{label}')", "PASS")
+                    record(test, f"Decision section is visible (matched: '{label}')", "PASS")
                     break
             if not found_decision:
-                record(test, "决策时间线区域", "WARN", "未找到决策相关标签")
+                record(test, "Decision timeline section", "WARN", "No decision-related labels found")
         except Exception as e:
-            record(test, "决策时间线验证", "FAIL", str(e))
+            record(test, "Decision timeline verification", "FAIL", str(e))
 
-        # 5. 返回按钮
+        # 5. Back button
         try:
-            back_btn = page.locator("button:has-text('返回'), a:has-text('返回'), [aria-label='back']")
+            back_btn = page.locator("button:has-text('Back'), a:has-text('Back'), [aria-label='back']")
             if back_btn.count() > 0:
-                record(test, "返回按钮存在", "PASS")
+                record(test, "Back button exists", "PASS")
             else:
-                record(test, "返回按钮", "WARN", "未找到返回按钮")
+                record(test, "Back button", "WARN", "No back button found")
         except Exception as e:
-            record(test, "返回按钮验证", "FAIL", str(e))
+            record(test, "Back button verification", "FAIL", str(e))
 
-        # 6. 执行任务按钮
+        # 6. Run-task button
         try:
             run_task_btn = page.locator(
-                "button:has-text('执行任务'), button:has-text('运行任务'), button:has-text('派发')"
+                "button:has-text('Run Task'), button:has-text('Execute Task'), button:has-text('Dispatch')"
             )
             if run_task_btn.count() > 0:
-                record(test, "执行任务按钮可见", "PASS")
+                record(test, "Run-task button is visible", "PASS")
             else:
-                record(test, "执行任务按钮", "WARN", "未找到")
+                record(test, "Run-task button", "WARN", "Not found")
         except Exception as e:
-            record(test, "执行任务按钮验证", "FAIL", str(e))
+            record(test, "Run-task button verification", "FAIL", str(e))
 
         screenshot(page, "e2e-project-detail-full.png")
 
     except Exception as e:
-        record(test, "整体", "FAIL", str(e))
+        record(test, "Overall", "FAIL", str(e))
         traceback.print_exc()
 
 
@@ -295,207 +298,209 @@ def test_project_detail_page(page):
 
 
 def test_meetings_page(page):
-    """TC-003: 会议列表页 — 页面可访问、状态筛选、创建会议对话框"""
+    """TC-003: Meeting list page — page is accessible, status filtering, create-meeting dialog"""
     test = "TC003-MeetingsPage"
     try:
-        log(f"\n{'=' * 60}\n开始 {test}\n{'=' * 60}")
+        log(f"\n{'=' * 60}\nStarting {test}\n{'=' * 60}")
 
         page.goto(f"{BASE_URL}/meetings", wait_until="networkidle")
         page.wait_for_timeout(1500)
         screenshot(page, "e2e-meetings-list.png")
 
-        # 1. 页面标题
+        # 1. Page title
         try:
             heading = page.locator("h1").first
             heading_text = heading.inner_text() if heading.count() > 0 else ""
-            record(test, f"页面标题: '{heading_text}'", "PASS" if heading_text else "WARN")
+            record(test, f"Page title: '{heading_text}'", "PASS" if heading_text else "WARN")
         except Exception as e:
-            record(test, "页面标题", "FAIL", str(e))
+            record(test, "Page title", "FAIL", str(e))
 
-        # 2. 状态筛选按钮组 (全部/进行中/已结束)
+        # 2. Status filter button group (All / In Progress / Ended)
         try:
-            filter_buttons = ["全部", "进行中", "已结束"]
+            filter_buttons = ["All", "In Progress", "Ended"]
             found_filters = 0
             for label in filter_buttons:
                 btn = page.locator(f"button:has-text('{label}')")
                 if btn.count() > 0:
                     found_filters += 1
             if found_filters >= 2:
-                record(test, f"状态筛选按钮组存在 ({found_filters}/3)", "PASS")
+                record(test, f"Status filter button group exists ({found_filters}/3)", "PASS")
             else:
-                record(test, f"状态筛选按钮 ({found_filters}/3)", "WARN", "部分筛选按钮未找到")
+                record(test, f"Status filter buttons ({found_filters}/3)", "WARN", "Some filter buttons were not found")
         except Exception as e:
-            record(test, "状态筛选验证", "FAIL", str(e))
+            record(test, "Status filter verification", "FAIL", str(e))
 
-        # 3. 点击"进行中"筛选
+        # 3. Click the "In Progress" filter
         try:
-            active_btn = page.locator("button").filter(has_text="进行中").first
+            active_btn = page.locator("button").filter(has_text="In Progress").first
             if active_btn.count() > 0:
                 active_btn.click()
                 page.wait_for_timeout(800)
                 screenshot(page, "e2e-meetings-active-filter.png")
-                record(test, "点击'进行中'筛选", "PASS")
+                record(test, "Clicked the 'In Progress' filter", "PASS")
             else:
-                record(test, "'进行中'筛选按钮", "WARN", "未找到")
+                record(test, "'In Progress' filter button", "WARN", "Not found")
         except Exception as e:
-            record(test, "筛选交互", "FAIL", str(e))
+            record(test, "Filter interaction", "FAIL", str(e))
 
-        # 4. 点击"已结束"筛选
+        # 4. Click the "Ended" filter
         try:
-            concluded_btn = page.locator("button").filter(has_text="已结束").first
+            concluded_btn = page.locator("button").filter(has_text="Ended").first
             if concluded_btn.count() > 0:
                 concluded_btn.click()
                 page.wait_for_timeout(800)
                 screenshot(page, "e2e-meetings-concluded-filter.png")
-                record(test, "点击'已结束'筛选", "PASS")
+                record(test, "Clicked the 'Ended' filter", "PASS")
         except Exception as e:
-            record(test, "'已结束'筛选", "WARN", str(e))
+            record(test, "'Ended' filter", "WARN", str(e))
 
-        # 5. 回到"全部"
+        # 5. Back to "All"
         try:
-            all_btn = page.locator("button").filter(has_text="全部").first
+            all_btn = page.locator("button").filter(has_text="All").first
             if all_btn.count() > 0:
                 all_btn.click()
                 page.wait_for_timeout(600)
         except Exception:
             pass
 
-        # 6. 创建会议按钮（只有存在团队时才显示）
+        # 6. Create-meeting button (only shown when a team exists)
         try:
-            create_btn = page.locator("button:has-text('创建会议'), button:has-text('新建会议')")
+            create_btn = page.locator("button:has-text('Create Meeting'), button:has-text('New Meeting')")
             if create_btn.count() > 0:
-                record(test, "创建会议按钮可见", "PASS")
-                # 打开对话框
+                record(test, "Create-meeting button is visible", "PASS")
+                # Open the dialog
                 create_btn.first.click()
                 page.wait_for_timeout(600)
                 dialog = page.locator("[role='dialog']")
                 if dialog.count() > 0:
                     screenshot(page, "e2e-meetings-create-dialog.png")
-                    record(test, "创建会议对话框打开", "PASS")
-                    # 验证 team 选择器 和 topic 输入
+                    record(test, "Create-meeting dialog opened", "PASS")
+                    # Verify the team selector and topic input
                     topic_input = page.locator("#meeting-topic")
                     if topic_input.count() > 0:
-                        record(test, "会议主题输入框存在", "PASS")
+                        record(test, "Meeting topic input exists", "PASS")
                     else:
-                        record(test, "会议主题输入框", "WARN", "未找到 #meeting-topic")
+                        record(test, "Meeting topic input", "WARN", "#meeting-topic not found")
                     team_select = page.locator("#meeting-team")
                     if team_select.count() > 0:
-                        record(test, "团队选择器存在", "PASS")
-                    # 边界: 空主题点提交，按钮应为 disabled
+                        record(test, "Team selector exists", "PASS")
+                    # Edge case: submit with an empty topic; the button should be disabled
                     submit_btn = page.locator("[role='dialog'] button[disabled]")
-                    record(test, "空主题时提交按钮为禁用", "PASS" if submit_btn.count() > 0 else "WARN")
+                    record(test, "Submit button is disabled when the topic is empty",
+                        "PASS" if submit_btn.count() > 0 else "WARN")
                     page.keyboard.press("Escape")
                     page.wait_for_timeout(400)
                 else:
-                    record(test, "创建对话框", "WARN", "dialog未出现")
+                    record(test, "Create dialog", "WARN", "The dialog did not appear")
             else:
-                record(test, "创建会议按钮不可见（无团队时预期）", "WARN")
+                record(test, "Create-meeting button is not visible (expected when there is no team)", "WARN")
         except Exception as e:
-            record(test, "创建会议交互", "FAIL", str(e))
+            record(test, "Create-meeting interaction", "FAIL", str(e))
 
-        # 7. 空状态 或 会议卡片
+        # 7. Empty state or meeting cards
         try:
             meeting_cards = page.locator("[class*='card'], [class*='Card']")
-            no_meetings = page.locator("text=暂无会议, text=没有会议")
-            if meeting_cards.count() > 2:  # 页面上有内容卡片
-                record(test, f"会议卡片渲染 (约{meeting_cards.count()}个元素)", "PASS")
+            no_meetings = page.locator("text=No meetings yet, text=No meetings")
+            if meeting_cards.count() > 2:  # The page has content cards
+                record(test, f"Meeting cards rendered (about {meeting_cards.count()} elements)", "PASS")
             elif no_meetings.count() > 0:
-                record(test, "空状态提示可见", "PASS")
+                record(test, "Empty-state hint is visible", "PASS")
             else:
-                record(test, "会议列表或空状态", "WARN", "两者均未找到明确标识")
+                record(test, "Meeting list or empty state", "WARN", "Neither had a clear marker")
         except Exception as e:
-            record(test, "会议内容验证", "FAIL", str(e))
+            record(test, "Meeting content verification", "FAIL", str(e))
 
     except Exception as e:
-        record(test, "整体", "FAIL", str(e))
+        record(test, "Overall", "FAIL", str(e))
         traceback.print_exc()
 
 
-# ─── TC-004: Navigation — 导航完整性 ─────────────────────────────────────────
+# ─── TC-004: Navigation — navigation completeness ─────────────────────────────────────────
 
 
 def test_navigation_completeness(page):
-    """TC-004: 侧边栏导航完整性 — 所有路由可访问无 404"""
-    test = "TC004-导航完整性"
+    """TC-004: Sidebar navigation completeness — all routes accessible with no 404"""
+    test = "TC004-Navigation completeness"
     routes = [
-        ("/", "首页/Dashboard"),
-        ("/projects", "项目列表"),
-        ("/tasks", "任务看板"),
-        ("/events", "事件日志"),
-        ("/meetings", "会议列表"),
-        ("/analytics", "数据分析"),
-        ("/settings", "系统设置"),
+        ("/", "Home/Dashboard"),
+        ("/projects", "Project list"),
+        ("/tasks", "Task board"),
+        ("/events", "Event log"),
+        ("/meetings", "Meeting list"),
+        ("/analytics", "Analytics"),
+        ("/settings", "System settings"),
     ]
     try:
-        log(f"\n{'=' * 60}\n开始 {test}\n{'=' * 60}")
+        log(f"\n{'=' * 60}\nStarting {test}\n{'=' * 60}")
         for route, name in routes:
             try:
                 resp = page.goto(f"{BASE_URL}{route}", wait_until="domcontentloaded")
                 page.wait_for_timeout(800)
                 status = resp.status if resp else -1
-                # React SPA 所有路由都返回 200（index.html），通过页面渲染判断
+                # A React SPA returns 200 (index.html) for all routes; judge by page rendering
                 has_content = page.locator("main, #root, [class*='layout']").count() > 0
                 record(
                     test,
-                    f"{route} ({name}) 可访问",
+                    f"{route} ({name}) is accessible",
                     "PASS" if has_content and status == 200 else "FAIL",
                     f"HTTP {status}",
                 )
             except Exception as e:
-                record(test, f"{route} 访问", "FAIL", str(e))
+                record(test, f"Accessing {route}", "FAIL", str(e))
     except Exception as e:
-        record(test, "整体", "FAIL", str(e))
+        record(test, "Overall", "FAIL", str(e))
         traceback.print_exc()
 
 
-# ─── TC-005: 边界条件 — 无效路由 ─────────────────────────────────────────────
+# ─── TC-005: Edge cases — invalid routes ─────────────────────────────────────────────
 
 
 def test_invalid_routes(page):
-    """TC-005: 无效路由处理 — 404 页面或重定向"""
-    test = "TC005-无效路由"
+    """TC-005: Invalid route handling — 404 page or redirect"""
+    test = "TC005-Invalid route"
     try:
-        log(f"\n{'=' * 60}\n开始 {test}\n{'=' * 60}")
+        log(f"\n{'=' * 60}\nStarting {test}\n{'=' * 60}")
 
-        # 不存在的项目ID
+        # Non-existent project ID
         page.goto(f"{BASE_URL}/projects/nonexistent-id-99999", wait_until="networkidle")
         page.wait_for_timeout(1500)
         screenshot(page, "e2e-invalid-project.png")
 
         has_error = (
-            page.locator("text=404, text=找不到, text=不存在, text=加载失败").count() > 0
+            page.locator("text=404, text=Not found, text=Does not exist, text=Failed to load").count() > 0
             or page.locator("[class*='error'], [class*='destructive']").count() > 0
         )
-        record(test, "无效项目ID有错误处理", "PASS" if has_error else "WARN", "建议显示404或错误提示")
+        record(test, "Invalid project ID has error handling", "PASS" if has_error else "WARN",
+            "Recommend showing a 404 or error hint")
 
-        # 完全不存在的路由
+        # A completely non-existent route
         page.goto(f"{BASE_URL}/this-route-does-not-exist", wait_until="domcontentloaded")
         page.wait_for_timeout(800)
         has_any_content = page.locator("#root").count() > 0
-        record(test, "未知路由有内容渲染（SPA回退）", "PASS" if has_any_content else "FAIL")
+        record(test, "Unknown route renders content (SPA fallback)", "PASS" if has_any_content else "FAIL")
 
     except Exception as e:
-        record(test, "整体", "FAIL", str(e))
+        record(test, "Overall", "FAIL", str(e))
         traceback.print_exc()
 
 
-# ─── TC-006: TeamsPage（通过项目详情访问） ────────────────────────────────────
+# ─── TC-006: TeamsPage (accessed via project details) ────────────────────────────────────
 
 
 def test_teams_via_project_detail(page):
-    """TC-006: 团队管理 — 通过项目详情页访问团队/Agent管理功能"""
-    test = "TC006-团队Agent管理"
+    """TC-006: Team management — access team/Agent management features via the project detail page"""
+    test = "TC006-Team/Agent management"
     try:
-        log(f"\n{'=' * 60}\n开始 {test}\n{'=' * 60}")
+        log(f"\n{'=' * 60}\nStarting {test}\n{'=' * 60}")
 
-        # 获取首个项目
+        # Get the first project
         resp = page.request.get(f"{API_URL}/api/projects?limit=1")
         if resp.status != 200:
-            record(test, "无法获取项目列表", "WARN", "跳过团队测试")
+            record(test, "Could not get the project list", "WARN", "Skipping the team test")
             return
         projects = resp.json().get("data", [])
         if not projects:
-            record(test, "无项目，跳过", "WARN")
+            record(test, "No projects, skipping", "WARN")
             return
 
         project_id = projects[0]["id"]
@@ -503,55 +508,56 @@ def test_teams_via_project_detail(page):
         page.wait_for_timeout(2000)
         screenshot(page, "e2e-team-via-project.png")
 
-        # 1. 验证页面渲染了团队列表
+        # 1. Verify the page rendered the team list
         try:
-            team_section = page.locator("text=团队, text=Teams").first
-            record(test, "团队区域存在", "PASS" if team_section.count() > 0 else "WARN")
+            team_section = page.locator("text=Team, text=Teams").first
+            record(test, "Team section exists", "PASS" if team_section.count() > 0 else "WARN")
         except Exception as e:
-            record(test, "团队区域", "FAIL", str(e))
+            record(test, "Team section", "FAIL", str(e))
 
-        # 2. 添加 Agent 按钮
+        # 2. Add Agent button
         try:
             add_agent_btn = page.locator(
-                "button:has-text('添加 Agent'), button:has-text('添加Agent'), button:has-text('新增成员')"
+                "button:has-text('Add Agent'), button:has-text('AddAgent'), button:has-text('Add Member')"
             )
             if add_agent_btn.count() > 0:
-                record(test, "添加Agent按钮存在", "PASS")
-                # 打开 dialog
+                record(test, "Add Agent button exists", "PASS")
+                # Open the dialog
                 add_agent_btn.first.click()
                 page.wait_for_timeout(600)
                 if page.locator("[role='dialog']").count() > 0:
                     screenshot(page, "e2e-add-agent-dialog.png")
-                    record(test, "添加Agent对话框打开", "PASS")
-                    # 边界: 空 name 提交
+                    record(test, "Add Agent dialog opened", "PASS")
+                    # Edge case: submit with an empty name
                     submit_btn = page.locator("[role='dialog'] button[disabled]")
-                    record(test, "空Agent名称时提交按钮禁用", "PASS" if submit_btn.count() > 0 else "WARN")
+                    record(test, "Submit button is disabled when the Agent name is empty",
+                        "PASS" if submit_btn.count() > 0 else "WARN")
                     page.keyboard.press("Escape")
                     page.wait_for_timeout(400)
             else:
-                record(test, "添加Agent按钮", "WARN", "未找到（可能无团队）")
+                record(test, "Add Agent button", "WARN", "Not found (possibly no team)")
         except Exception as e:
-            record(test, "添加Agent交互", "FAIL", str(e))
+            record(test, "Add Agent interaction", "FAIL", str(e))
 
-        # 3. Agent 状态显示
+        # 3. Agent status display
         try:
             agent_badges = page.locator("[class*='badge'], [class*='Badge']")
-            record(test, f"状态标签数量: {agent_badges.count()}", "PASS")
+            record(test, f"Number of status badges: {agent_badges.count()}", "PASS")
         except Exception as e:
-            record(test, "Agent状态标签", "WARN", str(e))
+            record(test, "Agent status badges", "WARN", str(e))
 
     except Exception as e:
-        record(test, "整体", "FAIL", str(e))
+        record(test, "Overall", "FAIL", str(e))
         traceback.print_exc()
 
 
-# ─── 主入口 ───────────────────────────────────────────────────────────────────
+# ─── Main entry point ───────────────────────────────────────────────────────────────────
 
 
 def main():
     log("=" * 60)
-    log("AI Team OS Dashboard — 补充 E2E 测试")
-    log(f"时间: {utc_now().strftime('%Y-%m-%d %H:%M:%S')}")
+    log("AI Team OS Dashboard — supplementary E2E tests")
+    log(f"Time: {utc_now().strftime('%Y-%m-%d %H:%M:%S')}")
     log(f"Dashboard: {BASE_URL}")
     log(f"API: {API_URL}")
     log("=" * 60)
@@ -566,7 +572,7 @@ def main():
             locale="zh-CN",
         )
         page = context.new_page()
-        # 设置合理超时
+        # Set a reasonable timeout
         page.set_default_timeout(15_000)
 
         test_api_health(page)
@@ -580,9 +586,9 @@ def main():
         page.wait_for_timeout(1500)
         browser.close()
 
-    # ── 汇总 ──────────────────────────────────────────────────────────────────
+    # ── Summary ──────────────────────────────────────────────────────────────────
     log("\n" + "=" * 60)
-    log("测试结果汇总")
+    log("Test result summary")
     log("=" * 60)
 
     pass_count = sum(1 for r in RESULTS if "[PASS]" in r)
@@ -592,24 +598,24 @@ def main():
     for r in RESULTS:
         log(r)
 
-    log(f"\n总计: {len(RESULTS)} 项 | PASS: {pass_count} | FAIL: {fail_count} | WARN: {warn_count}")
+    log(f"\nTotal: {len(RESULTS)} items | PASS: {pass_count} | FAIL: {fail_count} | WARN: {warn_count}")
 
-    # ── 写入报告 ──────────────────────────────────────────────────────────────
+    # ── Write the report ──────────────────────────────────────────────────────────────
     report_dir = os.path.join(os.path.dirname(__file__), "..", "test-screenshots")
     os.makedirs(report_dir, exist_ok=True)
     report_path = os.path.join(report_dir, "e2e_coverage_report.txt")
 
     with open(report_path, "w", encoding="utf-8") as f:
-        f.write("AI Team OS Dashboard — 补充 E2E 测试报告\n")
-        f.write(f"日期: {utc_now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write("AI Team OS Dashboard — supplementary E2E test report\n")
+        f.write(f"Date: {utc_now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"Dashboard: {BASE_URL} | API: {API_URL}\n")
         f.write("=" * 60 + "\n\n")
         for r in RESULTS:
             f.write(r + "\n")
         f.write(f"\n{'=' * 60}\n")
-        f.write(f"总计: {len(RESULTS)} 项 | PASS: {pass_count} | FAIL: {fail_count} | WARN: {warn_count}\n")
+        f.write(f"Total: {len(RESULTS)} items | PASS: {pass_count} | FAIL: {fail_count} | WARN: {warn_count}\n")
 
-    log(f"\n报告保存至: {report_path}")
+    log(f"\nReport saved to: {report_path}")
     return fail_count
 
 

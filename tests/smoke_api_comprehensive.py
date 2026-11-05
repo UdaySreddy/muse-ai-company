@@ -1,9 +1,9 @@
-"""AI Team OS 后端API全面冒烟测试脚本（手动运行）.
+"""AI Team OS backend API comprehensive smoke test script (run manually).
 
-使用Python urllib发送请求，不依赖第三方库。
-**故意命名为 smoke_*.py 而非 test_*.py 以避免被 pytest 自动收集**——
-这是个会污染 DB 的副作用脚本（创建真实 meeting/team），
-只能手动通过 `python tests/smoke_api_comprehensive.py` 显式运行。
+Uses Python urllib to send requests; does not depend on third-party libraries.
+**Deliberately named smoke_*.py rather than test_*.py to avoid being auto-collected by pytest** —
+This is a side-effecting script that pollutes the DB (it creates real meetings/teams),
+it can only be run manually and explicitly via `python tests/smoke_api_comprehensive.py`.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import Any
 
 BASE_URL = "http://localhost:8000"
 
-# 测试结果收集
+# Collect test results
 results: list[dict[str, Any]] = []
 
 
@@ -26,7 +26,7 @@ def req(
     body: dict | None = None,
     expected_status: int = 200,
 ) -> tuple[int, Any]:
-    """发送HTTP请求，返回 (status_code, json_body)."""
+    """Send an HTTP request; returns (status_code, json_body)."""
     url = BASE_URL + path
     data = json.dumps(body).encode("utf-8") if body else None
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -58,7 +58,7 @@ def check(
     expected_status: int = 200,
     assertions: list[str] | None = None,
 ) -> bool:
-    """记录并打印一条测试结果."""
+    """Record and print one test result."""
     status_ok = status == expected_status
     body_str = (
         json.dumps(body, ensure_ascii=False)[:200] if not isinstance(body, str) else body[:200]
@@ -67,7 +67,7 @@ def check(
     assertion_failures: list[str] = []
     if assertions and status_ok:
         for assertion in assertions:
-            # 简单的字段存在性检查
+            # Simple field-existence check
             if not eval(assertion, {"body": body}):  # noqa: S307
                 assertion_failures.append(assertion)
 
@@ -75,13 +75,13 @@ def check(
     marker = "PASS" if passed else "FAIL"
     fail_reason = ""
     if not status_ok:
-        fail_reason = f" (期望{expected_status}，实际{status})"
+        fail_reason = f" (expected {expected_status}, actual {status})"
     elif assertion_failures:
-        fail_reason = f" (断言失败: {assertion_failures})"
+        fail_reason = f" (assertion failed: {assertion_failures})"
 
     print(f"{marker} | {label}{fail_reason}")
     if not passed:
-        print(f"       响应: {body_str}")
+        print(f"       Response: {body_str}")
 
     results.append(
         {
@@ -96,261 +96,261 @@ def check(
 
 
 # ================================================================
-# 第一步：获取基础数据（team_id、project_id）
+# Step one: get the base data (team_id, project_id)
 # ================================================================
 
 print("\n" + "=" * 60)
-print("【第1组】核心API端点测试")
+print("[Group 1] Core API endpoint tests")
 print("=" * 60)
 
 # 1. GET /api/teams
 status, body = req("GET", "/api/teams")
-check("GET /api/teams — 团队列表", status, body, 200)
+check("GET /api/teams — team list", status, body, 200)
 team_id = None
 if isinstance(body, dict) and body.get("data"):
     team_id = body["data"][0]["id"]
-    print(f"       取得 team_id: {team_id}")
+    print(f"       Obtained team_id: {team_id}")
 elif isinstance(body, list) and body:
     team_id = body[0].get("id")
-    print(f"       取得 team_id: {team_id}")
+    print(f"       Obtained team_id: {team_id}")
 
 # 2. GET /api/projects
 status, body = req("GET", "/api/projects")
-check("GET /api/projects — 项目列表", status, body, 200)
+check("GET /api/projects — project list", status, body, 200)
 project_id = "3aa58dc7-a771-4745-8fa6-efbd5819956a"
 
 # 3. GET /api/projects/{id}/task-wall
 status, body = req("GET", f"/api/projects/{project_id}/task-wall")
-check("GET /api/projects/{id}/task-wall — 任务墙", status, body, 200)
+check("GET /api/projects/{id}/task-wall — task wall", status, body, 200)
 
 # 4. GET /api/system/rules
 status, body = req("GET", "/api/system/rules")
-check("GET /api/system/rules — 规则列表", status, body, 200)
+check("GET /api/system/rules — rule list", status, body, 200)
 
 # 5. GET /api/agent-templates
 status, body = req("GET", "/api/agent-templates")
-check("GET /api/agent-templates — 模板列表", status, body, 200)
+check("GET /api/agent-templates — template list", status, body, 200)
 if isinstance(body, dict):
     total = body.get("total", 0)
-    print(f"       共 {total} 个模板")
+    print(f"       {total} templates in total")
 
 # 6. GET /api/agent-templates/recommend
 status, body = req("GET", "/api/agent-templates/recommend?task_type=frontend")
-check("GET /api/agent-templates/recommend?task_type=frontend — 模板推荐", status, body, 200)
+check("GET /api/agent-templates/recommend?task_type=frontend — template recommendation", status, body, 200)
 
 # 7. GET /api/decisions
 status, body = req("GET", "/api/decisions?limit=10")
-check("GET /api/decisions?limit=10 — 决策日志", status, body, 200)
+check("GET /api/decisions?limit=10 — decision log", status, body, 200)
 
 # ================================================================
-# 第二组：MCP工具端点
+# Group two: MCP tool endpoints
 # ================================================================
 
 print("\n" + "=" * 60)
-print("【第2组】MCP工具端点 / Hook事件")
+print("[Group 2] MCP tool endpoints / Hook events")
 print("=" * 60)
 
 # 8. POST /api/hooks/event
 hook_payload = {
     "event_type": "test.ping",
     "source": "api-qa-test",
-    "payload": {"message": "API测试心跳", "timestamp": "2026-03-20T00:00:00Z"},
+    "payload": {"message": "API test heartbeat", "timestamp": "2026-03-20T00:00:00Z"},
 }
 status, body = req("POST", "/api/hooks/event", hook_payload)
-check("POST /api/hooks/event — Hook事件接收", status, body, expected_status=200)
-# 也可能是202 Accepted
+check("POST /api/hooks/event — Hook event reception", status, body, expected_status=200)
+# It may also be 202 Accepted
 if status == 202:
     results[-1]["passed"] = True
-    print("       (202也视为通过)")
+    print("       (202 also counts as a pass)")
 
 # ================================================================
-# 第三组：会议系统测试
+# Group three: meeting system tests
 # ================================================================
 
 print("\n" + "=" * 60)
-print("【第3组】会议系统")
+print("[Group 3] Meeting system")
 print("=" * 60)
 
 meeting_id = None
 if team_id:
-    # 9. 创建会议
+    # 9. Create a meeting
     meeting_payload = {
-        "topic": "API测试会议",
+        "topic": "API test meeting",
         "participants": ["api-qa", "team-lead"],
     }
     status, body = req("POST", f"/api/teams/{team_id}/meetings", meeting_payload)
-    check("POST /api/teams/{id}/meetings — 创建会议", status, body, expected_status=201)
+    check("POST /api/teams/{id}/meetings — create a meeting", status, body, expected_status=201)
     if status == 201 and isinstance(body, dict):
         data = body.get("data", {})
         meeting_id = data.get("id")
         print(f"       meeting_id: {meeting_id}")
 
-    # 10. 发送消息
+    # 10. Send a message
     if meeting_id:
         msg_payload = {
             "agent_id": "api-qa-agent",
             "agent_name": "api-qa",
-            "content": "这是API测试发送的消息",
+            "content": "This is a message sent by the API test",
             "round_number": 1,
         }
         status, body = req("POST", f"/api/meetings/{meeting_id}/messages", msg_payload)
-        check("POST /api/meetings/{id}/messages — 发送消息", status, body, expected_status=201)
+        check("POST /api/meetings/{id}/messages — send a message", status, body, expected_status=201)
 
-    # 11. 读取消息
+    # 11. Read messages
     if meeting_id:
         status, body = req("GET", f"/api/meetings/{meeting_id}/messages")
-        check("GET /api/meetings/{id}/messages — 读取消息", status, body, 200)
+        check("GET /api/meetings/{id}/messages — read messages", status, body, 200)
         if isinstance(body, dict):
             total = body.get("total", 0)
-            print(f"       消息数: {total}")
+            print(f"       Message count: {total}")
 
-    # 12. 关闭会议
+    # 12. Close the meeting
     if meeting_id:
         status, body = req("PUT", f"/api/meetings/{meeting_id}/conclude")
-        check("PUT /api/meetings/{id}/conclude — 关闭会议", status, body, 200)
+        check("PUT /api/meetings/{id}/conclude — close the meeting", status, body, 200)
 else:
-    print("SKIP | 会议系统测试 (无可用team_id)")
+    print("SKIP | Meeting system tests (no team_id available)")
     for _ in range(4):
         results.append(
             {
-                "label": "会议系统-跳过",
+                "label": "Meeting system - skipped",
                 "passed": None,
                 "status": 0,
                 "expected_status": 0,
-                "fail_reason": "无team_id",
+                "fail_reason": "No team_id",
             }
         )
 
 # ================================================================
-# 第四组：任务系统
+# Group four: task system
 # ================================================================
 
 print("\n" + "=" * 60)
-print("【第4组】任务系统")
+print("[Group 4] Task system")
 print("=" * 60)
 
 task_id = None
 if team_id:
-    # 13. 创建任务
+    # 13. Create a task
     task_payload = {
-        "title": "API测试任务",
-        "description": "由api-qa自动化测试创建的临时任务，用于验证任务CRUD流程",
+        "title": "API test task",
+        "description": "A temporary task created by the api-qa automated test to verify the task CRUD flow",
         "priority": "medium",
     }
     status, body = req("POST", f"/api/teams/{team_id}/tasks/run", task_payload)
-    check("POST /api/teams/{id}/tasks/run — 创建任务", status, body, 200)
+    check("POST /api/teams/{id}/tasks/run — create a task", status, body, 200)
     if isinstance(body, dict) and body.get("data"):
         task_id = body["data"].get("id")
         print(f"       task_id: {task_id}")
 
-    # 14. 查询任务状态
+    # 14. Query the task status
     if task_id:
         status, body = req("GET", f"/api/tasks/{task_id}")
-        check("GET /api/tasks/{id} — 查询任务状态", status, body, 200)
+        check("GET /api/tasks/{id} — query task status", status, body, 200)
 
-    # 15. 标记任务完成
+    # 15. Mark the task complete
     if task_id:
         status, body = req("PUT", f"/api/tasks/{task_id}/complete")
-        check("PUT /api/tasks/{id}/complete — 标记完成", status, body, 200)
+        check("PUT /api/tasks/{id}/complete — mark complete", status, body, 200)
         if isinstance(body, dict):
             data = body.get("data", {})
             task_status = data.get("status", "")
-            print(f"       任务状态: {task_status}")
+            print(f"       Task status: {task_status}")
 
-    # 16. 验证task-wall更新
+    # 16. Verify the task-wall update
     if project_id:
         status, body = req("GET", f"/api/projects/{project_id}/task-wall")
-        check("GET /api/projects/{id}/task-wall — 验证任务墙更新", status, body, 200)
+        check("GET /api/projects/{id}/task-wall — verify the task-wall update", status, body, 200)
 else:
-    print("SKIP | 任务系统测试 (无可用team_id)")
+    print("SKIP | Task system tests (no team_id available)")
     for _ in range(4):
         results.append(
             {
-                "label": "任务系统-跳过",
+                "label": "Task system - skipped",
                 "passed": None,
                 "status": 0,
                 "expected_status": 0,
-                "fail_reason": "无team_id",
+                "fail_reason": "No team_id",
             }
         )
 
 # ================================================================
-# 第五组：新功能 — 单个模板、活动追踪、智能匹配
+# Group five: new features — single template, activity tracking, smart matching
 # ================================================================
 
 print("\n" + "=" * 60)
-print("【第5组】新功能")
+print("[Group 5] New features")
 print("=" * 60)
 
 # 17. GET /api/agent-templates/{name}
 status, body = req("GET", "/api/agent-templates/engineering-frontend-developer")
-check("GET /api/agent-templates/{name} — 单个模板", status, body, 200)
+check("GET /api/agent-templates/{name} — single template", status, body, 200)
 if isinstance(body, dict) and "error" in body:
-    print(f"       提示: {body['error']}")
+    print(f"       Hint: {body['error']}")
 
 if team_id:
     # 18. GET /api/teams/{team_id}/activities
     status, body = req("GET", f"/api/teams/{team_id}/activities")
-    check("GET /api/teams/{id}/activities — 活动追踪", status, body, 200)
+    check("GET /api/teams/{id}/activities — activity tracking", status, body, 200)
 
     # 19. GET /api/teams/{team_id}/task-matches
     status, body = req("GET", f"/api/teams/{team_id}/task-matches")
-    check("GET /api/teams/{id}/task-matches — 智能匹配", status, body, 200)
+    check("GET /api/teams/{id}/task-matches — smart matching", status, body, 200)
 else:
-    print("SKIP | 活动追踪和智能匹配 (无可用team_id)")
+    print("SKIP | Activity tracking and smart matching (no team_id available)")
     for _ in range(2):
         results.append(
             {
-                "label": "新功能-跳过",
+                "label": "New features - skipped",
                 "passed": None,
                 "status": 0,
                 "expected_status": 0,
-                "fail_reason": "无team_id",
+                "fail_reason": "No team_id",
             }
         )
 
 # ================================================================
-# 第六组：边界条件和异常场景
+# Group six: edge conditions and exception scenarios
 # ================================================================
 
 print("\n" + "=" * 60)
-print("【第6组】边界条件 / 异常场景")
+print("[Group 6] Edge conditions / exception scenarios")
 print("=" * 60)
 
-# 20. 不存在的项目task-wall
+# 20. A non-existent project's task-wall
 status, body = req("GET", "/api/projects/nonexistent-id-00000000/task-wall")
-check("GET /api/projects/不存在ID/task-wall — 期望404", status, body, expected_status=404)
+check("GET /api/projects/nonexistent-id/task-wall — expect 404", status, body, expected_status=404)
 
-# 21. 不存在的任务
+# 21. A non-existent task
 status, body = req("GET", "/api/tasks/nonexistent-task-id-000")
-check("GET /api/tasks/不存在ID — 期望404", status, body, expected_status=404)
+check("GET /api/tasks/nonexistent-id — expect 404", status, body, expected_status=404)
 
-# 22. 不存在的会议
+# 22. A non-existent meeting
 status, body = req("GET", "/api/meetings/nonexistent-meeting-id")
-check("GET /api/meetings/不存在ID — 期望404", status, body, expected_status=404)
+check("GET /api/meetings/nonexistent-id — expect 404", status, body, expected_status=404)
 
-# 23. 向已关闭会议发送消息（期望400）
+# 23. Send a message to a closed meeting (expect 400)
 if meeting_id:
     msg_payload = {
         "agent_id": "api-qa-agent",
         "agent_name": "api-qa",
-        "content": "向已结束会议发消息（期望400）",
+        "content": "Sending a message to an ended meeting (expect 400)",
         "round_number": 2,
     }
     status, body = req("POST", f"/api/meetings/{meeting_id}/messages", msg_payload)
-    check("POST 向已关闭会议发消息 — 期望400", status, body, expected_status=400)
+    check("POST sending a message to a closed meeting — expect 400", status, body, expected_status=400)
 else:
-    print("SKIP | 无meeting_id，跳过已关闭会议发消息测试")
+    print("SKIP | No meeting_id, skipping the closed-meeting message test")
 
-# 24. 模板名称包含路径遍历字符（期望返回error字段）
+# 24. A template name containing path-traversal characters (expect an error field in the response)
 status, body = req("GET", "/api/agent-templates/../../etc/passwd")
-# 路径遍历可能被FastAPI路由解析拦截返回404或200带error
+# Path traversal may be intercepted by the FastAPI route parsing, returning 404, or 200 with an error
 traversal_blocked = status in (200, 400, 404, 422)
 marker = "PASS" if traversal_blocked else "FAIL"
-print(f"{marker} | GET /api/agent-templates/路径遍历 — 期望被拦截(实际{status})")
+print(f"{marker} | GET /api/agent-templates/path-traversal — expect it to be blocked (actual {status})")
 results.append(
     {
-        "label": "路径遍历防护",
+        "label": "Path traversal protection",
         "passed": traversal_blocked,
         "status": status,
         "expected_status": -1,
@@ -358,16 +358,16 @@ results.append(
     }
 )
 
-# 25. Hook事件缺少必要字段（期望422）
+# 25. A Hook event missing required fields (expect 422)
 status, body = req("POST", "/api/hooks/event", {})
-check("POST /api/hooks/event 空body — 期望422", status, body, expected_status=422)
+check("POST /api/hooks/event with an empty body — expect 422", status, body, expected_status=422)
 
 # ================================================================
-# 汇总报告
+# Summary report
 # ================================================================
 
 print("\n" + "=" * 60)
-print("【测试汇总】")
+print("[Test summary]")
 print("=" * 60)
 
 passed_count = sum(1 for r in results if r["passed"] is True)
@@ -376,11 +376,11 @@ skipped_count = sum(1 for r in results if r["passed"] is None)
 total_count = len(results)
 
 print(
-    f"\n通过: {passed_count} | 失败: {failed_count} | 跳过: {skipped_count} | 总计: {total_count}"
+    f"\nPassed: {passed_count} | Failed: {failed_count} | Skipped: {skipped_count} | Total: {total_count}"
 )
 
 if failed_count > 0:
-    print("\n失败详情:")
+    print("\nFailure details:")
     for r in results:
         if r["passed"] is False:
             print(f"  FAIL | {r['label']}{r['fail_reason']}")
@@ -388,28 +388,28 @@ if failed_count > 0:
 print()
 
 # ================================================================
-# 清理：删除测试过程中创建的 meeting / task，避免污染数据库
+# Cleanup: delete the meeting / task created during the test to avoid polluting the database
 # ================================================================
 print("=" * 60)
-print("【清理】删除测试创建的临时记录")
+print("[Cleanup] Deleting the temporary records created by the test")
 print("=" * 60)
 
 cleanup_count = 0
 if meeting_id:
     s, _ = req("DELETE", f"/api/meetings/{meeting_id}")
     if s in (200, 204, 404):
-        print(f"  ✓ 删除 meeting {meeting_id[:8]}")
+        print(f"  ✓ Deleted meeting {meeting_id[:8]}")
         cleanup_count += 1
     else:
-        print(f"  ! 删除 meeting 失败 status={s}")
+        print(f"  ! Failed to delete meeting, status={s}")
 
 if task_id:
     s, _ = req("DELETE", f"/api/tasks/{task_id}")
     if s in (200, 204, 404):
-        print(f"  ✓ 删除 task {task_id[:8]}")
+        print(f"  ✓ Deleted task {task_id[:8]}")
         cleanup_count += 1
     else:
-        print(f"  ! 删除 task 失败 status={s}")
+        print(f"  ! Failed to delete task, status={s}")
 
-print(f"\n清理完成: {cleanup_count} 条记录")
+print(f"\nCleanup complete: {cleanup_count} records")
 print()

@@ -191,24 +191,26 @@ class TestCheckAgentTeamName:
     """Tests for _check_agent_team_name."""
 
     # ------------------------------------------------------------------ #
-    # 拦截退役（2026-07-22 缔造者裁定「全面放开+一律自动追踪」，commit 75dcb18）  #
-    # 无 team_name 的实施型直派一律放行——SubagentStart 自动收编进会话容器队。      #
-    # 本类与 tests/unit/test_agent_check.py 同口径。                              #
+    # Interception retired (2026-07-22, the Creator's ruling of 'full opening + always auto-track', commit 75dcb18)  #
+    # Implementation-style direct dispatches without a team_name are all allowed through — SubagentStart automatically
+    # enrolls them into the session container team.      #
+    # This class uses the same convention as tests/unit/test_agent_check.py.                              #
     # ------------------------------------------------------------------ #
 
     def test_impl_keywords_no_team_name_allowed(self):
-        """实施关键词（中英）无 team_name → 放行，不 exit 不告警。"""
+        """Implementation keywords (Chinese and English) without a team_name → allowed through, no exit and no
+        warning."""
         prompts = [
             "write the module", "create the database schema",
             "implement the login flow", "fix the bug in auth module",
-            "开发用户认证模块", "修复登录接口的500错误",
+            "Develop the user authentication module", "Fix the 500 error in the login endpoint",
         ]
         for prompt in prompts:
             event = {"tool_name": "Agent", "tool_input": {"prompt": prompt}}
             with patch.object(sys, "exit") as mock_exit:
                 result = _check_agent_team_name(event)
             mock_exit.assert_not_called()
-            assert result is None, f"prompt={prompt!r} 应放行"
+            assert result is None, f"prompt={prompt!r} should be allowed through"
 
     # ------------------------------------------------------------------ #
     # Negative: should return None (no exit)                               #
@@ -268,7 +270,8 @@ class TestCheckAgentTeamName:
             assert result is None, f"Expected None for tool={tool}"
 
     def test_agent_no_impl_keywords_allowed(self):
-        """无实施关键词、无 team_name → 同样放行（全面放开后无差别）。"""
+        """No implementation keywords and no team_name → likewise allowed through (no distinction after the full
+        opening)."""
         event = {
             "tool_name": "Agent",
             "tool_input": {"prompt": "please check the logs"},
@@ -279,7 +282,8 @@ class TestCheckAgentTeamName:
         assert result is None
 
     def test_empty_tool_input_allowed(self):
-        """空 tool_input → 放行（收编由 SubagentStart 兜底，hook 不再拦）。"""
+        """An empty tool_input → allowed through (enrollment is backed up by SubagentStart; the hook no longer
+        intercepts)."""
         event = {"tool_name": "Agent", "tool_input": {}}
         with patch.object(sys, "exit") as mock_exit:
             result = _check_agent_team_name(event)
@@ -331,10 +335,10 @@ class TestCheckLeaderDoingTooMuch:
         assert state["leader_consecutive_calls"] == 0
 
     def test_workflow_resets_counter(self):
-        """Workflow 编排也是委派动作，重置计数器。
+        """A Workflow orchestration is also a delegation action and resets the counter.
 
-        （原 TeamCreate 版本：该工具于 CC v2.1.219 已不存在，已从
-        _DELEGATION_TOOLS 移除，此处改测仍在编制内的 Workflow。）"""
+        (The original TeamCreate version: that tool no longer exists in CC v2.1.219 and has been removed from
+        _DELEGATION_TOOLS; this now tests Workflow, which is still on the roster.)"""
         state = {"leader_consecutive_calls": 7}
         event = {"tool_name": "Workflow"}
         result = _check_leader_doing_too_much(event, state)
@@ -404,7 +408,7 @@ class TestRule1TeamCreateTaskWall:
         event = {"tool_name": "TeamCreate"}
         with patch("urllib.request.urlopen", side_effect=Exception("no api")):
             warnings = _check_workflow_reminders(event, state)
-        assert any("任务墙" in w for w in warnings)
+        assert any("task wall" in w for w in warnings)
         assert any("task_create" in w or "task_run" in w for w in warnings)
 
     def test_non_team_create_no_rule1_warning(self):
@@ -412,7 +416,7 @@ class TestRule1TeamCreateTaskWall:
         state = {"last_taskwall_view": time.time(), "bottleneck_check_count": 0}
         event = {"tool_name": "Bash", "tool_input": {"command": "echo hello"}}
         warnings = _check_workflow_reminders(event, state)
-        assert not any("新团队已创建" in w for w in warnings)
+        assert not any("New team created" in w for w in warnings)
 
 
 # ===========================================================================
@@ -448,7 +452,7 @@ class TestRule2AgentTeamName:
         urlopen_mock = _make_urlopen_mock([api_teams, api_tasks])
         with patch("urllib.request.urlopen", side_effect=urlopen_mock):
             warnings = _check_workflow_reminders(self._agent_event(), state)
-        assert not any("无进行中任务" in w for w in warnings)
+        assert not any("no in-progress tasks" in w for w in warnings)
 
     def test_api_unavailable_does_not_block(self):
         """If API is unreachable, the check must not raise and must not block."""
@@ -506,7 +510,7 @@ class TestRule3SendMessageShutdown:
         }
         with patch("urllib.request.urlopen", side_effect=Exception("no api")):
             warnings = _check_workflow_reminders(event, state)
-        assert any("关闭Agent" in w for w in warnings)
+        assert any("Close Agent" in w for w in warnings)
         assert any("task_memo_add" in w for w in warnings)
 
     def test_shutdown_case_insensitive(self):
@@ -518,18 +522,18 @@ class TestRule3SendMessageShutdown:
         }
         with patch("urllib.request.urlopen", side_effect=Exception("no api")):
             warnings = _check_workflow_reminders(event, state)
-        assert any("关闭Agent" in w for w in warnings)
+        assert any("Close Agent" in w for w in warnings)
 
     def test_non_shutdown_send_message_no_rule3(self):
         """Regular SendMessage without 'shutdown' must not trigger Rule 3."""
         state: dict = {}
         event = {
             "tool_name": "SendMessage",
-            "tool_input": {"to": "dev-agent", "message": "请继续当前任务"},
+            "tool_input": {"to": "dev-agent", "message": "Please continue with the current task"},
         }
         with patch("urllib.request.urlopen", side_effect=Exception("no api")):
             warnings = _check_workflow_reminders(event, state)
-        assert not any("关闭Agent" in w for w in warnings)
+        assert not any("Close Agent" in w for w in warnings)
 
 
 # ===========================================================================
@@ -662,7 +666,7 @@ class TestRule4TeamDelete:
         with patch("urllib.request.urlopen", side_effect=router):
             warnings = _check_workflow_reminders(self._event({}), state)
         assert put_urls == []
-        assert any("无法" in w and "TeamDelete" in w for w in warnings)
+        assert any("cannot" in w and "TeamDelete" in w for w in warnings)
 
     def test_no_match_is_advisory_only_no_write(self):
         """Identifier matching no active team → advisory reminder, zero PUT calls."""
@@ -672,7 +676,7 @@ class TestRule4TeamDelete:
         with patch("urllib.request.urlopen", side_effect=router):
             warnings = _check_workflow_reminders(self._event({"team_name": "ghost"}), state)
         assert put_urls == []
-        assert any("ghost" in w and "未匹配" in w for w in warnings)
+        assert any("ghost" in w and "unmatched" in w for w in warnings)
 
     def test_does_not_close_inactive_team_with_matching_name(self):
         """A completed team with the target name is not re-closed (only active matched)."""
@@ -682,7 +686,7 @@ class TestRule4TeamDelete:
         with patch("urllib.request.urlopen", side_effect=router):
             warnings = _check_workflow_reminders(self._event({"team_name": "alpha"}), state)
         assert put_urls == []
-        assert any("未匹配" in w for w in warnings)
+        assert any("unmatched" in w for w in warnings)
 
 
 # ===========================================================================
@@ -706,7 +710,7 @@ class TestRule5ExistingActiveTeams:
         urlopen_mock = _make_urlopen_mock([api_resp])
         with patch("urllib.request.urlopen", side_effect=urlopen_mock):
             warnings = _check_workflow_reminders(event, state)
-        assert any("已存在活跃团队" in w for w in warnings)
+        assert any("An active team already exists" in w for w in warnings)
 
     def test_only_one_active_team_no_rule5_warning(self):
         """When only 1 active team exists (newly created), no Rule 5 warning."""
@@ -716,7 +720,7 @@ class TestRule5ExistingActiveTeams:
         urlopen_mock = _make_urlopen_mock([api_resp])
         with patch("urllib.request.urlopen", side_effect=urlopen_mock):
             warnings = _check_workflow_reminders(event, state)
-        assert not any("已存在活跃团队" in w for w in warnings)
+        assert not any("An active team already exists" in w for w in warnings)
 
     def test_api_error_silently_skipped(self):
         """Rule 5 API failure must not raise; just skip the check."""
@@ -725,7 +729,7 @@ class TestRule5ExistingActiveTeams:
         with patch("urllib.request.urlopen", side_effect=OSError("timeout")):
             warnings = _check_workflow_reminders(event, state)
         # No Rule 5 warning and no exception
-        assert not any("已存在活跃团队" in w for w in warnings)
+        assert not any("An active team already exists" in w for w in warnings)
 
 
 # ===========================================================================
@@ -734,7 +738,7 @@ class TestRule5ExistingActiveTeams:
 
 
 class TestRule7TaskwallStaleness:
-    """Rule 7: warn if taskwall not viewed for >30 minutes (催办治理：900→1800s)."""
+    """Rule 7: warn if taskwall not viewed for >30 minutes (reminder governance: 900→1800s)."""
 
     def test_stale_taskwall_produces_warning(self):
         """After >30 min without a task-wall op, a staleness warning appears."""
@@ -742,7 +746,7 @@ class TestRule7TaskwallStaleness:
         state = {"last_taskwall_view": stale_ago}
         event = {"tool_name": "Read"}
         warnings = _check_workflow_reminders(event, state)
-        assert any("距上次查看任务墙" in w for w in warnings)
+        assert any("since the task wall was last viewed" in w for w in warnings)
 
     def test_stale_warning_resets_timer(self):
         """After showing staleness warning, last_taskwall_view is reset to now."""
@@ -759,7 +763,7 @@ class TestRule7TaskwallStaleness:
         state = {"last_taskwall_view": five_min_ago}
         event = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
         warnings = _check_workflow_reminders(event, state)
-        assert not any("距上次查看任务墙" in w for w in warnings)
+        assert not any("since the task wall was last viewed" in w for w in warnings)
 
     def test_first_call_initializes_timer_no_warning(self):
         """On first call (last_taskwall_view=0), the timer is initialized without warning."""
@@ -767,7 +771,7 @@ class TestRule7TaskwallStaleness:
         before = time.time()
         event = {"tool_name": "Edit"}
         warnings = _check_workflow_reminders(event, state)
-        assert not any("距上次查看任务墙" in w for w in warnings)
+        assert not any("since the task wall was last viewed" in w for w in warnings)
         assert state.get("last_taskwall_view", 0) >= before
 
     def test_taskwall_view_tool_resets_timer(self):
@@ -776,7 +780,7 @@ class TestRule7TaskwallStaleness:
         event = {"tool_name": "taskwall_view"}
         before = time.time()
         warnings = _check_workflow_reminders(event, state)
-        assert not any("距上次查看任务墙" in w for w in warnings)
+        assert not any("since the task wall was last viewed" in w for w in warnings)
         assert state["last_taskwall_view"] >= before
 
     def test_mcp_taskwall_view_alias_resets_timer(self):
@@ -799,7 +803,7 @@ class TestRule9HandoffReminder:
     def _completion_event(self, extra: str = "") -> dict:
         return {
             "tool_name": "SendMessage",
-            "tool_input": {"to": "leader", "message": f"任务已完成，请确认{extra}"},
+            "tool_input": {"to": "leader", "message": f"The task is complete, please confirm{extra}"},
         }
 
     def test_completion_message_with_pending_tasks_warns(self):
@@ -814,7 +818,7 @@ class TestRule9HandoffReminder:
         urlopen_mock = _make_urlopen_mock([api_teams, api_tasks])
         with patch("urllib.request.urlopen", side_effect=urlopen_mock):
             warnings = _check_workflow_reminders(self._completion_event(), state)
-        assert any("待分配任务" in w or "Fix tests" in w for w in warnings)
+        assert any("unassigned tasks" in w or "Fix tests" in w for w in warnings)
 
     def test_completion_message_no_pending_no_rule9_warning(self):
         """No pending tasks → no Rule 9 handoff warning."""
@@ -824,7 +828,7 @@ class TestRule9HandoffReminder:
         urlopen_mock = _make_urlopen_mock([api_teams, api_tasks])
         with patch("urllib.request.urlopen", side_effect=urlopen_mock):
             warnings = _check_workflow_reminders(self._completion_event(), state)
-        assert not any("待分配任务" in w for w in warnings)
+        assert not any("unassigned tasks" in w for w in warnings)
 
     def test_shutdown_message_not_treated_as_completion(self):
         """Message containing both 'done' and 'shutdown' must not trigger Rule 9."""
@@ -836,18 +840,18 @@ class TestRule9HandoffReminder:
         with patch("urllib.request.urlopen", side_effect=Exception("no api")):
             warnings = _check_workflow_reminders(event, state)
         # Rule 9 fires only when not shutdown
-        assert not any("待分配任务" in w for w in warnings)
+        assert not any("unassigned tasks" in w for w in warnings)
 
     def test_non_completion_send_message_no_rule9(self):
         """Non-completion keywords → no Rule 9 warning."""
         state: dict = {}
         event = {
             "tool_name": "SendMessage",
-            "tool_input": {"to": "leader", "message": "正在处理中，请稍等"},
+            "tool_input": {"to": "leader", "message": "Still working on it, please wait"},
         }
         with patch("urllib.request.urlopen", side_effect=Exception("no api")):
             warnings = _check_workflow_reminders(event, state)
-        assert not any("待分配任务" in w for w in warnings)
+        assert not any("unassigned tasks" in w for w in warnings)
 
 
 # ===========================================================================
@@ -863,21 +867,21 @@ class TestRule10MeetingCreate:
         state: dict = {}
         event = {"tool_name": "meeting_create"}
         warnings = _check_workflow_reminders(event, state)
-        assert any("通知参与者" in w or "meeting_id" in w for w in warnings)
+        assert any("Notify participants" in w or "meeting_id" in w for w in warnings)
 
     def test_mcp_meeting_create_alias_produces_reminder(self):
         """MCP-namespaced meeting_create also produces reminder."""
         state: dict = {}
         event = {"tool_name": "mcp__ai-team-os__meeting_create"}
         warnings = _check_workflow_reminders(event, state)
-        assert any("通知参与者" in w or "meeting_id" in w for w in warnings)
+        assert any("Notify participants" in w or "meeting_id" in w for w in warnings)
 
     def test_other_tool_no_rule10_warning(self):
         """Non-meeting tools must not produce Rule 10 reminder."""
         state = {"last_taskwall_view": time.time()}
         event = {"tool_name": "Bash", "tool_input": {"command": "echo test"}}
         warnings = _check_workflow_reminders(event, state)
-        assert not any("通知参与者" in w for w in warnings)
+        assert not any("Notify participants" in w for w in warnings)
 
 
 # ===========================================================================
@@ -893,21 +897,21 @@ class TestRule11MeetingConclude:
         state: dict = {}
         event = {"tool_name": "meeting_conclude"}
         warnings = _check_workflow_reminders(event, state)
-        assert any("行动项" in w or "task_create" in w for w in warnings)
+        assert any("action items" in w or "task_create" in w for w in warnings)
 
     def test_mcp_meeting_conclude_alias_produces_reminder(self):
         """MCP-namespaced meeting_conclude also triggers the reminder."""
         state: dict = {}
         event = {"tool_name": "mcp__ai-team-os__meeting_conclude"}
         warnings = _check_workflow_reminders(event, state)
-        assert any("行动项" in w or "task_create" in w for w in warnings)
+        assert any("action items" in w or "task_create" in w for w in warnings)
 
     def test_other_tool_no_rule11_warning(self):
         """Other tools must not produce Rule 11 reminder."""
         state = {"last_taskwall_view": time.time()}
         event = {"tool_name": "Read"}
         warnings = _check_workflow_reminders(event, state)
-        assert not any("行动项" in w for w in warnings)
+        assert not any("action items" in w for w in warnings)
 
 
 # ===========================================================================
@@ -982,36 +986,37 @@ class TestRule13BottleneckDetection:
         urlopen_mock = _make_urlopen_mock([api_wall])
         with patch("urllib.request.urlopen", side_effect=urlopen_mock):
             warnings = _check_workflow_reminders(event, state, project_id="p1")
-        assert any("阻塞" in w or "blocked" in w.lower() for w in warnings)
+        assert any("blocked" in w or "blocked" in w.lower() for w in warnings)
 
     def test_50th_call_without_project_id_skips_scan(self):
-        """v1.8.1: no project_id → scan silently skipped (no false '全完成')."""
+        """v1.8.1: no project_id → scan silently skipped (no false 'all complete')."""
         state = {"bottleneck_check_count": 49, "last_taskwall_view": time.time()}
         event = {"tool_name": "Read"}
         with patch("urllib.request.urlopen", side_effect=OSError("must not be called")):
             warnings = _check_workflow_reminders(event, state, project_id=None)
-        assert not any("任务墙已清空" in w or "阻塞" in w for w in warnings)
+        assert not any("The task wall is clear" in w or "blocked" in w for w in warnings)
 
     def test_all_tasks_done_produces_empty_wall_notice(self):
-        """Project-wide pending+running+blocked all zero → 报事实（不规定必须开会）。"""
+        """Project-wide pending+running+blocked all zero → report the fact (does not mandate holding a meeting)."""
         state = {"bottleneck_check_count": 49, "last_taskwall_view": time.time()}
         event = {"tool_name": "Read"}
         api_wall = {"stats": {"by_status": {"completed": 2}}}
         urlopen_mock = _make_urlopen_mock([api_wall])
         with patch("urllib.request.urlopen", side_effect=urlopen_mock):
             warnings = _check_workflow_reminders(event, state, project_id="p1")
-        assert any("任务墙已清空" in w for w in warnings)
-        assert not any("会议" in w for w in warnings)
+        assert any("The task wall is clear" in w for w in warnings)
+        assert not any("meeting" in w for w in warnings)
 
     def test_team_empty_but_project_pending_no_false_positive(self):
-        """2026-07-12 修复回归锚：项目级仍有 pending 时绝不误报全完成。"""
+        """Regression anchor for the 2026-07-12 fix: while project-level tasks are still pending, never falsely
+        report that everything is complete."""
         state = {"bottleneck_check_count": 49, "last_taskwall_view": time.time()}
         event = {"tool_name": "Read"}
         api_wall = {"stats": {"by_status": {"completed": 18, "pending": 5, "running": 3}}}
         urlopen_mock = _make_urlopen_mock([api_wall])
         with patch("urllib.request.urlopen", side_effect=urlopen_mock):
             warnings = _check_workflow_reminders(event, state, project_id="p1")
-        assert not any("任务墙已清空" in w for w in warnings)
+        assert not any("The task wall is clear" in w for w in warnings)
 
     def test_bottleneck_count_increments_every_call(self):
         """bottleneck_check_count must increment on every call."""
@@ -1042,29 +1047,29 @@ class TestRule14ReportFormatValidation:
     def test_long_completion_report_missing_fields_warns(self):
         """Long completion report from a member (subagent) session warns on missing fields."""
         state: dict = {}
-        long_body = "x" * 101 + " 任务已完成"
+        long_body = "x" * 101 + " Task completed"
         event = {
             "tool_name": "SendMessage",
             "tool_input": {"to": "leader", "message": long_body},
             "session_id": "member-sess",
         }
-        # ⑤ 汇报格式提醒改为仅子agent会话触发
+        # (5) The report-format reminder is now triggered only in subagent sessions
         with patch("urllib.request.urlopen", side_effect=Exception("no api")), patch(
             "aiteam.hooks.workflow_reminder._is_subagent_session", return_value=True
         ):
             warnings = _check_workflow_reminders(event, state)
-        assert any("完成内容" in w or "修改文件" in w or "测试结果" in w for w in warnings)
+        assert any("Completed content" in w or "Modified files" in w or "Test results" in w for w in warnings)
 
     def test_report_with_all_required_fields_no_format_warning(self):
         """Report containing all required fields must not produce format warning."""
         state: dict = {}
         full_report = (
-            "任务已完成。\n"
-            "完成内容: 实现了登录功能\n"
-            "修改文件: src/auth.py\n"
-            "测试结果: 全部通过\n"
-            "建议任务状态: completed\n"
-            "建议memo: 登录功能已上线"
+            "The task is complete.\n"
+            "Completed content: Implemented the login feature\n"
+            "Modified files: src/auth.py\n"
+            "Test results: All passed\n"
+            "Suggested task status: completed\n"
+            "Suggested memo: The login feature is live"
         )
         event = {
             "tool_name": "SendMessage",
@@ -1072,7 +1077,7 @@ class TestRule14ReportFormatValidation:
         }
         with patch("urllib.request.urlopen", side_effect=Exception("no api")):
             warnings = _check_workflow_reminders(event, state)
-        assert not any("缺少标准字段" in w for w in warnings)
+        assert not any("Missing standard fields" in w for w in warnings)
 
     def test_short_completion_message_skips_format_check(self):
         """Short messages (<=100 chars) are exempt from format validation."""
@@ -1083,7 +1088,7 @@ class TestRule14ReportFormatValidation:
         }
         with patch("urllib.request.urlopen", side_effect=Exception("no api")):
             warnings = _check_workflow_reminders(event, state)
-        assert not any("缺少标准字段" in w for w in warnings)
+        assert not any("Missing standard fields" in w for w in warnings)
 
     def test_shutdown_report_skips_format_check(self):
         """Shutdown messages are excluded from Rule 14 format check."""
@@ -1095,7 +1100,7 @@ class TestRule14ReportFormatValidation:
         }
         with patch("urllib.request.urlopen", side_effect=Exception("no api")):
             warnings = _check_workflow_reminders(event, state)
-        assert not any("缺少标准字段" in w for w in warnings)
+        assert not any("Missing standard fields" in w for w in warnings)
 
 
 # ===========================================================================
@@ -1145,7 +1150,7 @@ class TestSafetyS1DangerousBash:
         with patch.object(sys, "exit") as mock_exit:
             warnings = _check_workflow_reminders(event, state)
         mock_exit.assert_not_called()
-        assert any("递归删除" in w or "通配符" in w for w in warnings)
+        assert any("recursive deletion" in w or "wildcards" in w for w in warnings)
 
     # DROP TABLE → warning
     def test_drop_table_produces_warning(self):
@@ -1153,21 +1158,21 @@ class TestSafetyS1DangerousBash:
         state: dict = {}
         event = {"tool_name": "Bash", "tool_input": {"command": "psql -c 'DROP TABLE users'"}}
         warnings = _check_workflow_reminders(event, state)
-        assert any("DROP" in w or "数据库" in w for w in warnings)
+        assert any("DROP" in w or "database" in w for w in warnings)
 
     def test_drop_database_produces_warning(self):
         """SQL DROP DATABASE must produce a safety warning."""
         state: dict = {}
         event = {"tool_name": "Bash", "tool_input": {"command": "DROP DATABASE production"}}
         warnings = _check_workflow_reminders(event, state)
-        assert any("DROP" in w or "数据库" in w for w in warnings)
+        assert any("DROP" in w or "database" in w for w in warnings)
 
     def test_truncate_produces_warning(self):
         """SQL TRUNCATE must produce a safety warning."""
         state: dict = {}
         event = {"tool_name": "Bash", "tool_input": {"command": "TRUNCATE TABLE orders"}}
         warnings = _check_workflow_reminders(event, state)
-        assert any("TRUNCATE" in w or "破坏性" in w for w in warnings)
+        assert any("TRUNCATE" in w or "destructive" in w for w in warnings)
 
     # git push --force → warning
     def test_force_push_produces_warning(self):
@@ -1183,14 +1188,14 @@ class TestSafetyS1DangerousBash:
         state: dict = {}
         event = {"tool_name": "Bash", "tool_input": {"command": "chmod 777 /etc/passwd"}}
         warnings = _check_workflow_reminders(event, state)
-        assert any("chmod 777" in w or "权限" in w for w in warnings)
+        assert any("chmod 777" in w or "permissions" in w for w in warnings)
 
     def test_safe_bash_command_no_s1_warning(self):
         """Normal safe Bash commands must not produce S1 warnings."""
         state = {"last_taskwall_view": time.time()}
         event = {"tool_name": "Bash", "tool_input": {"command": "ls -la /tmp"}}
         warnings = _check_workflow_reminders(event, state)
-        s1_keywords = ["危险", "rm -rf", "DROP", "force push", "chmod 777"]
+        s1_keywords = ["dangerous", "rm -rf", "DROP", "force push", "chmod 777"]
         assert not any(any(kw in w for kw in s1_keywords) for w in warnings)
 
 
@@ -1259,7 +1264,7 @@ class TestSafetyS3GitAddSensitive:
         with patch.object(sys, "exit") as mock_exit:
             warnings = _check_workflow_reminders(event, state)
         mock_exit.assert_not_called()
-        assert not any("敏感文件" in w or "id_rsa" in w for w in warnings)
+        assert not any("sensitive files" in w or "id_rsa" in w for w in warnings)
 
     def test_non_bash_tool_git_add_not_checked(self):
         """S3 check only applies to Bash tool, not Write/Edit."""
@@ -1307,7 +1312,7 @@ class TestSafetyS4WorktreeTeardown:
             with patch.object(sys.stderr, "write") as mock_write:
                 _check_workflow_reminders(event, {})
         mock_exit.assert_called_once_with(2)
-        assert any("未提交" in str(c) for c in mock_write.call_args_list)
+        assert any("uncommitted" in str(c) for c in mock_write.call_args_list)
 
     def test_dirty_worktree_hard_blocks_even_with_force(self, tmp_path):
         """--force must not bypass the guard: it is exactly the flag that skips
@@ -1337,7 +1342,7 @@ class TestSafetyS4WorktreeTeardown:
             with patch.object(sys.stderr, "write") as mock_write:
                 _check_workflow_reminders(event, {})
         mock_exit.assert_called_once_with(2)
-        assert any("未推送" in str(c) or "未合并" in str(c) for c in mock_write.call_args_list)
+        assert any("unpushed" in str(c) or "unmerged" in str(c) for c in mock_write.call_args_list)
 
     def test_pushed_unmerged_commit_warns_not_blocks(self, tmp_path):
         """A commit pushed to a configured upstream but not yet merged is
@@ -1351,7 +1356,7 @@ class TestSafetyS4WorktreeTeardown:
         with patch.object(sys, "exit") as mock_exit:
             warnings = _check_workflow_reminders(event, {})
         mock_exit.assert_not_called()
-        assert any("已推送" in w and "未合并" in w for w in warnings)
+        assert any("pushed" in w and "unmerged" in w for w in warnings)
 
     def test_locally_merged_but_unpushed_worktree_is_removable(self, tmp_path):
         """Regression for task 1c97d7d9: a branch merged into local master with a
@@ -1404,7 +1409,7 @@ class TestSafetyS4WorktreeTeardown:
         mock_exit.assert_called_once_with(2)
         blocked_text = " ".join(str(c) for c in mock_write.call_args_list)
         assert "cherry" in blocked_text
-        assert "1/2" in blocked_text or "个不等价" in blocked_text
+        assert "1/2" in blocked_text or "are not equivalent" in blocked_text
 
     def test_rm_rf_worktree_dir_hard_blocks_same_as_worktree_remove(self, tmp_path):
         """rm -rf on a .claude/worktrees/ path bypasses git's own safety net
@@ -1454,7 +1459,7 @@ class TestSafetyS4WorktreeTeardown:
             with patch.object(sys.stderr, "write") as mock_write:
                 _check_workflow_reminders(event, {})
         mock_exit.assert_called_once_with(2)
-        assert any("强删分支" in str(c) for c in mock_write.call_args_list)
+        assert any("force-deleted branch" in str(c) for c in mock_write.call_args_list)
 
     def test_branch_dash_capital_d_allows_landed_branch(self, tmp_path):
         """git branch -D on a branch that is fully merged (or never diverged)
@@ -1520,7 +1525,7 @@ class TestSafetyS2HardcodedSecrets:
             "tool_input": {"file_path": "src/config.py", "content": content},
         }
         warnings = _check_workflow_reminders(event, state)
-        assert any("硬编码" in w or "环境变量" in w for w in warnings), (
+        assert any("hard-coded" in w or "environment variables" in w for w in warnings), (
             f"No secret warning for field={field}, content={content!r}"
         )
 
@@ -1539,7 +1544,7 @@ class TestSafetyS2HardcodedSecrets:
             "tool_input": {"file_path": "src/config.py", "new_string": content},
         }
         warnings = _check_workflow_reminders(event, state)
-        assert any("硬编码" in w or "环境变量" in w for w in warnings)
+        assert any("hard-coded" in w or "environment variables" in w for w in warnings)
 
     def test_env_placeholder_no_secret_warning(self):
         """os.environ.get usage is not flagged as a hardcoded secret."""
@@ -1552,7 +1557,7 @@ class TestSafetyS2HardcodedSecrets:
             },
         }
         warnings = _check_workflow_reminders(event, state)
-        assert not any("硬编码" in w for w in warnings)
+        assert not any("hard-coded" in w for w in warnings)
 
     def test_write_to_env_file_produces_warning(self):
         """.env file writes must produce a gitignore reminder."""
@@ -1595,7 +1600,7 @@ class TestSafetyS2HardcodedSecrets:
             "tool_input": {"command": "echo password='secret'"},
         }
         warnings = _check_workflow_reminders(event, state)
-        assert not any("硬编码" in w for w in warnings)
+        assert not any("hard-coded" in w for w in warnings)
 
 
 # ===========================================================================
@@ -1639,7 +1644,7 @@ class TestSafetyS1HeredocFalsePositive:
         state: dict = {}
         event = {"tool_name": "Bash", "tool_input": {"command": cmd}}
         warnings = _check_workflow_reminders(event, state)
-        assert not any("DROP" in w or "数据库" in w for w in warnings)
+        assert not any("DROP" in w or "database" in w for w in warnings)
 
     def test_actual_rm_rf_root_outside_heredoc_still_blocked(self):
         """A real 'rm -rf /' outside any heredoc must still trigger exit(2).
@@ -1704,7 +1709,7 @@ class TestStatePersistence:
 
         # Immediately after reset, no second warning
         w2 = _check_workflow_reminders(event, state)
-        assert not any("距上次查看任务墙" in w for w in w2)
+        assert not any("since the task wall was last viewed" in w for w in w2)
 
     def test_bottleneck_count_state_persists(self):
         """bottleneck_check_count accumulates correctly across calls."""
@@ -1811,8 +1816,10 @@ class TestGetRunningPipelineSubtask:
 class TestBindSubtaskRunning:
     """Tests for _bind_subtask_running — CP1: advisory-only pipeline stage detection on dispatch.
 
-    pipeline 退役后（对齐 pipeline_gate.py:413-419）这个 helper 只读探测存量 pipeline
-    并返回提示，绝不再 PUT running——原自动写库有 active_teams[0] 启发式错绑风险。
+    After the pipeline was retired (aligned with pipeline_gate.py:413-419), this helper only probes existing pipelines
+    read-only
+    and returns a hint; it never PUTs running again — the original automatic database writes carried a mis-binding risk
+    from the active_teams[0] heuristic.
     """
 
     def test_returns_advisory_without_writing(self):
@@ -1827,7 +1834,7 @@ class TestBindSubtaskRunning:
         assert msg is not None
         assert "sub-42" in msg
         assert "Design" in msg
-        assert "不会自动" in msg  # advisory only, no write
+        assert "will not automatically" in msg  # advisory only, no write
 
     def test_returns_none_when_no_pipeline(self):
         """Returns None silently when no running pipeline is found."""
@@ -1869,7 +1876,7 @@ class TestBindSubtaskRunning:
                 patch("aiteam.hooks.workflow_reminder._api_call") as api_mock:
             warnings = _check_workflow_reminders(event, state)
         api_mock.assert_not_called()
-        assert any("sub-99" in w and "不会自动" in w for w in warnings)
+        assert any("sub-99" in w and "will not automatically" in w for w in warnings)
 
 
 # ===========================================================================
@@ -1880,9 +1887,11 @@ class TestBindSubtaskRunning:
 class TestAdvancePipelineOnCompletion:
     """Tests for _advance_pipeline_on_completion — CP2: advisory-only on completion report.
 
-    pipeline 退役后（对齐 pipeline_gate.py:413-419）这个 helper 只读探测存量 pipeline
-    并返回提示，绝不再 PUT completed / POST advance——原自动写库有 SendMessage 完成关键词
-    误判 + active_teams[0] 错绑双重缺陷。
+    After the pipeline was retired (aligned with pipeline_gate.py:413-419), this helper only probes existing pipelines
+    read-only
+    and returns a hint; it never PUTs completed / POSTs advance again — the original automatic database writes had the
+    dual defects of SendMessage completion-keyword
+    false positives + active_teams[0] mis-binding.
     """
 
     def test_returns_next_stage_advisory_without_writing(self):
@@ -1897,7 +1906,7 @@ class TestAdvancePipelineOnCompletion:
         api_mock.assert_not_called()
         assert msg is not None
         assert "Test" in msg  # Next stage name
-        assert "不会自动" in msg  # advisory only, no write
+        assert "will not automatically" in msg  # advisory only, no write
 
     def test_returns_last_stage_advisory_without_writing(self):
         """Detects a legacy pipeline at its last stage; advisory only, no write."""
@@ -1909,8 +1918,8 @@ class TestAdvancePipelineOnCompletion:
             msg = _advance_pipeline_on_completion("http://localhost:8000")
         api_mock.assert_not_called()
         assert msg is not None
-        assert "不会自动" in msg  # advisory only, no write
-        assert "最后阶段" in msg
+        assert "will not automatically" in msg  # advisory only, no write
+        assert "final phase" in msg
 
     def test_returns_none_when_no_pipeline(self):
         """Returns None when there is no active pipeline to advance."""
@@ -1957,52 +1966,56 @@ class TestAdvancePipelineOnCompletion:
         state: dict = {}
         event = {
             "tool_name": "SendMessage",
-            "tool_input": {"to": "team-lead", "message": "任务已完成，请确认"},
+            "tool_input": {"to": "team-lead", "message": "The task is complete, please confirm"},
         }
         with patch("urllib.request.urlopen", side_effect=url_router):
             warnings = _check_workflow_reminders(event, state)
-        assert not write_calls, f"pipeline 退役后不应有写库调用，实测: {write_calls}"
-        assert any("不会自动" in w and "Review" in w for w in warnings)
+        assert not write_calls, (
+            f"After the pipeline was retired there should be no database write calls, actual: {write_calls}"
+        )
+        assert any("will not automatically" in w and "Review" in w for w in warnings)
 
 
 class TestReminderThrottles:
-    """催办治理⑤：汇报格式提醒改为子agent会话专属 + 每会话最多 1 次（替代旧 3600s 全局节流）。"""
+    """Reminder governance (5): the report-format reminder is now exclusive to subagent sessions + at most once per
+    session (replacing the old 3600s global throttle)."""
 
     def _completion_event(self, session_id: str = "member-throttle") -> dict:
         return {
             "tool_name": "SendMessage",
-            "tool_input": {"to": "leader", "message": "x" * 101 + " 任务已完成"},
+            "tool_input": {"to": "leader", "message": "x" * 101 + " Task completed"},
             "session_id": session_id,
         }
 
     def test_report_format_fires_for_member_session(self):
-        """子agent会话（成员汇报）触发汇报格式提醒。"""
+        """A subagent session (a member report) triggers the report-format reminder."""
         state: dict = {}
         with patch("urllib.request.urlopen", side_effect=Exception("no api")), patch(
             "aiteam.hooks.workflow_reminder._is_subagent_session", return_value=True
         ):
             warnings = _check_workflow_reminders(self._completion_event(), state)
-        assert any("汇报可能缺少标准字段" in w for w in warnings)
+        assert any("The report may be missing standard fields" in w for w in warnings)
 
     def test_report_format_throttled_within_session(self):
-        """同一会话内第二次不再重复提醒（每会话最多 1 次）。"""
+        """A second time within the same session does not repeat the reminder (at most once per session)."""
         state: dict = {}
         with patch("urllib.request.urlopen", side_effect=Exception("no api")), patch(
             "aiteam.hooks.workflow_reminder._is_subagent_session", return_value=True
         ):
             first = _check_workflow_reminders(self._completion_event(), state)
             second = _check_workflow_reminders(self._completion_event(), state)
-        assert any("汇报可能缺少标准字段" in w for w in first)
-        assert not any("汇报可能缺少标准字段" in w for w in second)
+        assert any("The report may be missing standard fields" in w for w in first)
+        assert not any("The report may be missing standard fields" in w for w in second)
 
     def test_report_format_excluded_for_leader_session(self):
-        """非子agent（Leader/主会话）发出的完成类消息不触发汇报格式提醒。"""
+        """A completion-style message sent by a non-subagent (Leader/main session) does not trigger the report-format
+        reminder."""
         state: dict = {}
         with patch("urllib.request.urlopen", side_effect=Exception("no api")), patch(
             "aiteam.hooks.workflow_reminder._is_subagent_session", return_value=False
         ):
             warnings = _check_workflow_reminders(self._completion_event(), state)
-        assert not any("汇报可能缺少标准字段" in w for w in warnings)
+        assert not any("The report may be missing standard fields" in w for w in warnings)
 
 
 # ---------------------------------------------------------------------------
@@ -2014,7 +2027,7 @@ class TestTaskwallSyncSendMessageAdvisory:
     """SendMessage completion keywords must NEVER auto-write task status.
 
     Regression guard for the 2026-07-14 incident: Leader's outbound
-    instruction "完成后向我汇报" hit the substring match and the hook
+    instruction "Report back to me when done" hit the substring match and the hook
     auto-PUT the in-progress task to completed, bypassing acceptance.
     The branch is now advisory-only: it reminds Leader to use task_update.
     """
@@ -2022,7 +2035,7 @@ class TestTaskwallSyncSendMessageAdvisory:
     def _state_with_dispatch(self) -> dict:
         return {
             "last_dispatched_task_id": "task-123",
-            "last_dispatched_task_title": "修复 hooks 误置 completed",
+            "last_dispatched_task_title": "Fix hooks wrongly setting completed",
         }
 
     def test_completion_message_makes_no_task_write_and_emits_advisory(self):
@@ -2031,7 +2044,7 @@ class TestTaskwallSyncSendMessageAdvisory:
             "tool_name": "SendMessage",
             "tool_input": {
                 "to": "worker-1",
-                "message": "完成后向我汇报，不要自己置 completed",
+                "message": "Report back to me when done; do not set completed yourself",
             },
         }
         state = self._state_with_dispatch()
@@ -2039,16 +2052,17 @@ class TestTaskwallSyncSendMessageAdvisory:
             warnings = _post_tool_taskwall_sync(event, state, project_id="proj-1")
         api_mock.assert_not_called()
         assert any(
-            "检测到完成类消息" in w and "task_update" in w and "hook 不自动写库" in w
+            "Completion-style message detected" in w and "task_update" in w
+            and "the hook does not write to the database automatically" in w
             for w in warnings
         )
-        assert any("修复 hooks 误置 completed" in w for w in warnings)
+        assert any("Fix hooks wrongly setting completed" in w for w in warnings)
 
     def test_state_cleared_after_single_advisory(self):
         """Remind once then clear tracking keys — no repeated nagging."""
         event = {
             "tool_name": "SendMessage",
-            "tool_input": {"to": "leader", "message": "任务已完成，请验收"},
+            "tool_input": {"to": "leader", "message": "The task is complete, please review and accept"},
         }
         state = self._state_with_dispatch()
         with patch("aiteam.hooks.workflow_reminder._api_call") as api_mock:
@@ -2057,14 +2071,14 @@ class TestTaskwallSyncSendMessageAdvisory:
         api_mock.assert_not_called()
         assert "last_dispatched_task_id" not in state
         assert "last_dispatched_task_title" not in state
-        assert any("检测到完成类消息" in w for w in first)
+        assert any("Completion-style message detected" in w for w in first)
         assert second == []
 
     def test_shutdown_message_suppresses_advisory_and_keeps_state(self):
         """is_shutdown exclusion: no advisory, no write, state untouched."""
         event = {
             "tool_name": "SendMessage",
-            "tool_input": {"to": "worker-1", "message": "工作完成，shutdown 收队"},
+            "tool_input": {"to": "worker-1", "message": "Work is done, shut down and disband the team"},
         }
         state = self._state_with_dispatch()
         with patch("aiteam.hooks.workflow_reminder._api_call") as api_mock:
@@ -2077,7 +2091,7 @@ class TestTaskwallSyncSendMessageAdvisory:
         """Without last_dispatched_task_id there is nothing to remind about."""
         event = {
             "tool_name": "SendMessage",
-            "tool_input": {"to": "leader", "message": "阶段一 done"},
+            "tool_input": {"to": "leader", "message": "Phase one done"},
         }
         state: dict = {}
         with patch("aiteam.hooks.workflow_reminder._api_call") as api_mock:
