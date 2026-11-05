@@ -1,18 +1,20 @@
-"""工具分组开关 + 只读档解析（工具渐进式加载 P2，注册期静态 gating）。
+"""Tool grouping switches + read-only tier parsing (tool progressive loading P2, registration-time static gating).
 
-两个正交维度，均在 ``register_all(mcp)`` 注册循环处生效：
+Two orthogonal dimensions, both taking effect in the ``register_all(mcp)`` registration loop:
 
-1. ``AITEAM_TOOLSETS`` — 按能力域分组挑选注册哪些模块。取值：
-   - 缺省 / ``all`` → 全部工具（向后兼容，等于历史行为）；
-   - ``default`` → 核心组集合 :data:`DEFAULT_TOOLSETS`（注册后工具数硬顶 ≤50）；
-   - 逗号分隔的组名列表，可混入 ``default`` 做增量（如 ``"default,ecosystem"``）；
-   - 未知组名 → stderr 警告并忽略该项，绝不因配置错拉不起 server。
+1. ``AITEAM_TOOLSETS`` — select which modules to register, grouped by capability domain. Values:
+   - absent / ``all`` → all tools (backward compatible, equal to the historical behavior);
+   - ``default`` → the core set collection :data:`DEFAULT_TOOLSETS` (a hard cap of ≤50 tools after registration);
+   - a comma-separated list of set names, which may mix in ``default`` for increments (e.g. ``"default,ecosystem"``);
+   - an unknown set name → a stderr warning and the item is ignored; a configuration error never prevents the server
+   from starting.
 
-2. ``AITEAM_READONLY=1`` — 与分组正交叠加，注册后剔除全部写类工具，
-   只留读类。写工具用 :data:`WRITE_TOOLS` **显式清单**判定（不靠命名模式猜，
-   避免误伤难查）；清单旁注明生成方法便于维护。
+2. ``AITEAM_READONLY=1`` — orthogonally overlaid on grouping; after registration it removes all write-class tools,
+   keeping only read-class ones. Write tools are judged by the :data:`WRITE_TOOLS` **explicit list** (not guessed by
+   naming pattern,
+   avoiding hard-to-trace false hits); the generation method is noted beside the list for maintainability.
 
-设计规格见 docs/tool-loading-design.md §P2 与 §2.5。
+Design spec: docs/tool-loading-design.md §P2 and §2.5.
 """
 
 from __future__ import annotations
@@ -20,10 +22,11 @@ from __future__ import annotations
 import sys
 
 # ============================================================
-# 能力域分组：模块短名 -> toolset 名
-# 分组键按能力域而非动词或物理来源（Composio/JARVIS/ToolBench 行业一致）。
-# 组名与模块同名（历史上的 git_ops→git / error_budget_tool→error_budget 两处
-# 归并重命名已随两个模块 2026-07-27 退役一同消失）。
+# Capability-domain grouping: module short name -> toolset name
+# The grouping keys are by capability domain rather than verb or physical origin (consistent with
+# Composio/JARVIS/ToolBench industry practice).
+# Set names equal module names (the historical git_ops→git / error_budget_tool→error_budget two
+# merge-renames disappeared together with the two modules' retirement on 2026-07-27).
 # ============================================================
 MODULE_TOOLSET: dict[str, str] = {
     "team": "team",
@@ -44,29 +47,32 @@ MODULE_TOOLSET: dict[str, str] = {
     "workflows": "workflows",
 }
 
-# 全部合法组名（AITEAM_TOOLSETS=all 展开为此集合）。
+# All valid set names (AITEAM_TOOLSETS=all expands to this set).
 ALL_TOOLSETS: frozenset[str] = frozenset(MODULE_TOOLSET.values())
 
 # ------------------------------------------------------------
-# default 组 = 每会话真正常用的核心能力域。
-# 硬顶 ≤50 工具（AnyTool 64 / JARVIS top-5 / 官方 30-50 拐点同源普适护栏）。
-# 当前成员工具数：task8 + team5 + memory6 + infra7 + reports3 = 29（留 21 头寸）。
-# project / agent 等按需以 "default,project" 增量挂载，不进 default 免破顶。
+# The default set = the core capability domains actually used in every session.
+# Hard cap ≤50 tools (AnyTool 64 / JARVIS top-5 / the official 30-50 inflection point — a same-origin universal
+# guardrail).
+# Current member tool count: task8 + team5 + memory6 + infra7 + reports3 = 29 (21 headroom left).
+# project / agent and the like mount incrementally as "default,project" on demand, not entering default, to keep from
+# breaking the cap.
 # ------------------------------------------------------------
 DEFAULT_TOOLSETS: frozenset[str] = frozenset(
     {"task", "team", "memory", "infra", "reports"}
 )
 
 # ============================================================
-# 写类工具显式清单（AITEAM_READONLY=1 时剔除）。
+# The explicit list of write-class tools (removed when AITEAM_READONLY=1).
 #
-# 生成方法（可复核维护）：逐工具看其调用的后端 HTTP 动词——
-#   POST / PUT / DELETE = 写；GET = 读。在此基础上人工校正两类边角：
-#   (a) GET 却有副作用者补入写清单：os_restart_api（重启进程）；
-#   (b) POST 却纯分析无持久化者留在读侧：diagnose_task_failure（只回诊断）。
-# 未列入者即读类（*_list/*_get/*_search/*_read/*_status/*_check/*_trace/
-#   *_query/*_summary/*_recommend 等），只读档保留。
-# 按模块分组便于对照 tools/*.py 维护。
+# Generation method (re-checkable for maintenance): look tool by tool at the backend HTTP verb it calls —
+#   POST / PUT / DELETE = write; GET = read. On top of that, manually correct two edge classes:
+#   (a) GET but with side effects are added to the write list: os_restart_api (restarts the process);
+#   (b) POST but purely analytical with no persistence stays on the read side: diagnose_task_failure (returns only a
+# diagnosis).
+# Anything not listed is read-class (*_list/*_get/*_search/*_read/*_status/*_check/*_trace/
+#   *_query/*_summary/*_recommend, etc.), kept in the read-only tier.
+# Grouped by module for maintenance against tools/*.py.
 # ============================================================
 WRITE_TOOLS: frozenset[str] = frozenset(
     {
@@ -79,7 +85,7 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "briefing_dismiss",
         # channels
         "channel_send",
-        # ecosystem（scan/apply/tag/claim/pin/mark 等一律写；summary/search/status 为读）
+        # ecosystem (scan/apply/tag/claim/pin/mark etc. are all writes; summary/search/status are reads)
         "ecosystem_scan",
         "ecosystem_scan_periodic",
         "ecosystem_refresh",
@@ -104,7 +110,7 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "ecosystem_release_claim",
         "ecosystem_quick_setup",
         "ecosystem_index_update",
-        # infra（os_restart_api 虽走 GET 但重启进程，显式补入）
+        # infra (os_restart_api goes through GET but restarts the process; explicitly added)
         "os_restart_api",
         "model_config_set",
         # meeting
@@ -130,36 +136,38 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "task_create",
         "task_update",
         "task_memo_add",
-        # task_analysis（failure_analysis 会沉淀防御规则/训练用例，属写；
-        #   diagnose_task_failure 只回诊断，留读侧）
+        # task_analysis (failure_analysis precipitates defense rules/training cases, a write;
+        #   diagnose_task_failure returns only a diagnosis, staying on the read side)
         "failure_analysis",
         # team
         "team_close",
         "team_delete",
-        # watchdog（verify_completion 记录核验结果，属写）
+        # watchdog (verify_completion records the verification result, a write)
         "verify_completion",
         # workflows
         "workflow_reconcile",
     }
 )
 
-# 只读档识别的真值集合。
+# The truth set the read-only tier recognizes.
 _READONLY_TRUE = frozenset({"1", "true", "yes", "on"})
 
 
 def _warn(msg: str) -> None:
-    """向 stderr 打警告——stdio server 的 stdout 是 MCP 协议信道，绝不可污染。"""
+    """Print a warning to stderr — a stdio server's stdout is the MCP protocol channel and must never be polluted."""
     print(f"[aiteam.toolsets] {msg}", file=sys.stderr)
 
 
 def resolve_toolsets(raw: str | None) -> set[str]:
-    """解析 AITEAM_TOOLSETS，返回启用的 toolset 名集合。
+    """Parse AITEAM_TOOLSETS, returning the set of enabled toolset names.
 
-    - None / "" / "all" → 全部组（等于历史全量行为）；
-    - "default" → :data:`DEFAULT_TOOLSETS`；
-    - 逗号列表：``default`` 展开为核心组、``all`` 展开为全部，其余按组名收录；
-      未知组名 → stderr 警告并忽略；
-    - 全部 token 无效 → 警告并回退全部组（保证 server 照常拉起，功能纯增益）。
+    - None / "" / "all" → all sets (equal to the historical full behavior);
+    - "default" → :data:`DEFAULT_TOOLSETS`;
+    - a comma list: ``default`` expands to the core sets, ``all`` expands to everything, the rest are taken in by set
+    name;
+      an unknown set name → a stderr warning and it is ignored;
+    - all tokens invalid → warn and fall back to all sets (guaranteeing the server starts as usual; pure functionality
+    gain).
     """
     if raw is None:
         return set(ALL_TOOLSETS)
@@ -179,23 +187,24 @@ def resolve_toolsets(raw: str | None) -> set[str]:
         elif name in ALL_TOOLSETS:
             enabled.add(name)
         else:
-            _warn(f"未知 toolset «{name}» 已忽略；合法组名：{sorted(ALL_TOOLSETS)}")
+            _warn(f"Unknown toolset «{name}» ignored; valid set names: {sorted(ALL_TOOLSETS)}")
 
     if not enabled:
-        _warn("AITEAM_TOOLSETS 无任何合法组名，回退全部组。")
+        _warn("AITEAM_TOOLSETS has no valid set names; falling back to all sets.")
         return set(ALL_TOOLSETS)
     return enabled
 
 
 def resolve_readonly(raw: str | None) -> bool:
-    """解析 AITEAM_READONLY；取值 1/true/yes/on（大小写不敏感）为只读档。"""
+    """Parse AITEAM_READONLY; the values 1/true/yes/on (case-insensitive) mean the read-only tier."""
     if raw is None:
         return False
     return raw.strip().lower() in _READONLY_TRUE
 
 
 def module_enabled(module_shortname: str, enabled_toolsets: set[str]) -> bool:
-    """判定某模块是否应注册；未映射模块 fail-open（永远注册）保住全量兜底。"""
+    """Judge whether a module should register; unmapped modules fail open (always register), preserving the full
+    fallback."""
     toolset = MODULE_TOOLSET.get(module_shortname)
     if toolset is None:
         return True

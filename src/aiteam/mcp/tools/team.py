@@ -19,8 +19,9 @@ from aiteam.mcp.tools.views import (
     resolve_view,
 )
 
-# team_status 里 active_tasks 的展示帽子：超出部分只报数并指路 task_list_project，
-# 免得一支任务爆炸的团队把状态摘要重新撑爆（名册刚修好，别从另一条边漏回去）。
+# The display cap for active_tasks in team_status: the excess is only counted and pointed to task_list_project,
+# so a team with an exploding task count does not burst the status summary again (the roster was just fixed; do not
+# leak back through another edge).
 _ACTIVE_TASK_CAP = 30
 
 
@@ -68,7 +69,8 @@ def register(mcp):
         if view is None:
             return {"success": False, "error": FIELDS_ERROR}
         envelope = _api_call("GET", f"/api/teams/{team_id}/status")
-        # 错误响应/结构不认识就原样透传——投影只作用在成功的摘要上。
+        # Error responses/unrecognized structures pass through verbatim — the projection applies only to a successful
+        # summary.
         result = envelope.get("data") if isinstance(envelope, dict) else None
         if not isinstance(result, dict) or "agents" not in result:
             return envelope
@@ -99,7 +101,8 @@ def register(mcp):
             out["offline"] = roster["offline"]
         if len(shown) < len(tasks):
             out["active_tasks_omitted"] = (
-                f"另有 {len(tasks) - len(shown)} 个在办任务未展开，全量用 task_list_project(team_id=...)"
+                f"{len(tasks) - len(shown)} more in-progress tasks are not expanded; for the full set use "
+                f"task_list_project(team_id=...)"
             )
         return out
 
@@ -226,7 +229,7 @@ def register(mcp):
         Use this when the team's mission is fully done. Members are not deleted,
         but their status is set to offline automatically.
 
-        team_id is REQUIRED — closing a team is not reversible from the tool面, so
+        team_id is REQUIRED — closing a team is not reversible from the tool side, so
         it never falls back to auto-resolving "the active team".
 
         Args:
@@ -235,13 +238,16 @@ def register(mcp):
         Returns:
             Updated team info with status=completed
         """
-        # 不可逆动作禁用空参解析：自动解析出的"活跃队"可能是 workflow per-run 队
-        # 或别会话的容器队，关错队会把别人正在用的团队连人带状态一起收工。
+        # Empty-argument resolution is forbidden for irreversible actions: an automatically resolved "active team"
+        # might be a workflow per-run team
+        # or another session's container team; closing the wrong team would shut down a team others are using, people
+        # and state together.
         if not team_id.strip():
             return {
                 "success": False,
-                "error": "team_close 必须显式提供 team_id（关队不可逆，不做自动解析）",
-                "_recovery": "先用 team_list 找到目标团队 id，再显式传入。",
+                "error": "team_close requires an explicit team_id (closing a team is irreversible; no automatic "
+                         "resolution)",
+                "_recovery": "First find the target team id with team_list, then pass it explicitly.",
             }
         return _api_call("PUT", f"/api/teams/{team_id}", {"status": "completed"})
 
@@ -255,12 +261,14 @@ def register(mcp):
         Returns:
             Deletion result
         """
-        # 同 team_close：删队绝不靠猜。空串曾经会落进 _resolve_team_id 的
-        # "随便挑一支活跃队"分支，等于把删除动作指向未知对象。
+        # Same as team_close: deleting a team never relies on guessing. An empty string used to fall into
+        # _resolve_team_id's
+        # "just pick any active team" branch, which points the deletion at an unknown object.
         if not team_id.strip():
             return {
                 "success": False,
-                "error": "team_delete 必须显式提供 team_id（删队不可逆，不做自动解析）",
-                "_recovery": "先用 team_list 确认目标团队 id，再显式传入。",
+                "error": "team_delete requires an explicit team_id (deleting a team is irreversible; no automatic "
+                         "resolution)",
+                "_recovery": "First confirm the target team id with team_list, then pass it explicitly.",
             }
         return _api_call("DELETE", f"/api/teams/{team_id}")

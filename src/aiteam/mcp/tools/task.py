@@ -106,7 +106,8 @@ def register(mcp):
         """
         resolved = _resolve_project_id(project_id)
         if not resolved:
-            return {"success": False, "error": "未找到活跃项目，请提供 project_id 或先创建项目"}
+            return {"success": False, "error": "No active project found; please provide a project_id or create a "
+                                               "project first"}
         payload: dict[str, Any] = {
             "title": title,
             "description": description,
@@ -120,14 +121,16 @@ def register(mcp):
             task_id = result["data"]["id"]
             _api_call("PUT", f"/api/tasks/{task_id}", {"status": "running"})
             result["data"]["status"] = "running"
-            result["message"] = "任务已创建并开始执行"
-        # task_type 软退役（pipeline 已定向废弃，设计文档 §7 Phase1 断新增入口）：
-        # 参数保留以兼容既有调用方，但不再自动挂载 pipeline；编排请改用 CC Workflow
-        #（ultracode），运行档案见 workflow_list / Dashboard /workflows。
+            result["message"] = "Task created and execution started"
+        # task_type soft retirement (the pipeline is directionally deprecated; design doc §7 Phase1 cuts the new-entry
+        # point):
+        # the parameter is kept for compatibility with existing callers, but no pipeline is automatically mounted
+        # anymore; orchestration should switch to CC Workflow
+        #(ultracode); run archives are in workflow_list / Dashboard /workflows.
         if task_type and result.get("success"):
             result["message"] = (
-                result.get("message", "任务已创建")
-                + "（提示：task_type 已废弃，未挂载 pipeline；编排请用 CC Workflow）"
+                result.get("message", "Task created")
+                + " (Note: task_type is deprecated and no pipeline was mounted; use CC Workflow for orchestration)"
             )
         return result
 
@@ -250,7 +253,8 @@ def register(mcp):
             if not resolved:
                 return {
                     "success": False,
-                    "error": "未找到活跃项目，请提供 project_id / team_id，或先创建项目",
+                    "error": "No active project found; please provide a project_id / team_id, or create a project "
+                             "first",
                 }
             params = [
                 f"limit={limit}",
@@ -262,7 +266,8 @@ def register(mcp):
                 params.append(f"status={urllib.parse.quote(status)}")
             path = f"/api/projects/{resolved}/task-wall?{'&'.join(params)}"
         result = _api_call("GET", path)
-        # 精简投影只作用于成功的墙结构；错误响应/全量视图原样透传
+        # The lean projection applies only to a successful wall structure; error responses/full views pass through
+        # verbatim
         if view == "all" or not isinstance(result, dict) or "wall" not in result:
             return result
         out: dict[str, Any] = {
@@ -308,7 +313,7 @@ def register(mcp):
             memo_type: Type, one of "progress" / "decision" / "issue" / "summary"
             author: Author name, default "leader"
             supersedes: Optional memo ID this entry replaces; the old memo is
-                marked invalid (Zep 失效语义，不删除)
+                marked invalid (Zep invalidation semantics, no deletion)
 
         Returns:
             Added memo record

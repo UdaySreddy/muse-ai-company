@@ -1,8 +1,10 @@
 """Workflow observability MCP tools (I3a — database-backed via API).
 
-让 Leader / workflow agent 会话内查 CC ultracode/Workflow 运行状态，并手动把完成态
-富数据拉进 OS（应对 OS 曾离线）。回写台账继续复用既有 task_memo_add / report_save，
-不新造回写工具。
+Lets a Leader / workflow agent query CC ultracode/Workflow run state within the session, and manually pull the
+completed rich
+data into the OS (for when the OS was offline). Ledger write-back continues to reuse the existing task_memo_add /
+report_save;
+no new write-back tool is created.
 """
 
 from __future__ import annotations
@@ -18,9 +20,9 @@ from aiteam.mcp.tools.views import (
     resolve_view,
 )
 
-# 一次运行的 agent 遥测行上限（compact 视图）。实测一支 166 agent 的运行整档
-# 268,753 字符——远超 MCP 单次结果上限，而单看某一个 agent 的完整档案本就该走
-# fields="all" 或 workflow 台账页，不该由默认视图承担。
+# The cap on agent telemetry rows for one run (compact view). Measured: one run of 166 agents produced a whole file of
+# 268,753 characters — far beyond the MCP single-result cap, and viewing one agent's complete archive should go through
+# fields="all" or the workflow ledger page, not be carried by the default view.
 _WF_AGENT_CAP = 40
 
 
@@ -108,7 +110,8 @@ def register(mcp):
             return run or {"success": False, "error": "Workflow run not found"}
 
         if view == "compact":
-            # 大文本降级为摘要（不删除）：result 是运行的最终产出，summary 是一句话结论。
+            # Large text is degraded to a summary (not deleted): result is the run's final output, summary is the
+            # one-sentence conclusion.
             run = dict(run)
             run["result"] = excerpt(run.get("result"), 400)
             run["summary"] = excerpt(run.get("summary"), 200)
@@ -140,8 +143,8 @@ def register(mcp):
         out["agents"] = [compact_wf_agent_row(r) for r in rows[:size]]
         if len(rows) > size:
             out["agents_omitted"] = (
-                f"另有 {len(rows) - size} 个 agent 行未展开（compact 视图一次 {size} 行）；"
-                '全量用 fields="all"，或按 os_agent_id 单点查'
+                f"{len(rows) - size} more agent rows are not expanded (the compact view shows {size} rows at a time); "
+                'for the full set use fields="all", or query one by os_agent_id'
             )
         return out
 

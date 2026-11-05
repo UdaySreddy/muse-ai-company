@@ -48,46 +48,46 @@ def _build_participation_prompt(
         file_list = "\n".join(f"   - Read `{f}`" for f in all_files)
         read_steps = f"\n**Step 1 — Read required materials (MANDATORY):**\n{file_list}\n"
 
-    output_hint = expected_output or "清晰段落格式，含立场、理由、建议"
+    output_hint = expected_output or "clear paragraph format, including stance, reasoning, and recommendations"
 
-    return f"""你是 {name}，{role}
+    return f"""You are {name}, {role}
 
-## 会议信息
+## Meeting Info
 - meeting_id: `{meeting_id}`
-- 主题: {title}
-- 当前轮次: Round 1
+- Topic: {title}
+- Current round: Round 1
 {read_steps}
-**Step 2 — 发言规则:**
-{round_rule or "清晰表达你的立场、依据和建议。"}
+**Step 2 — Speaking rules:**
+{round_rule or "Clearly express your stance, basis, and recommendations."}
 
-**Step 3 — 预期产出格式:**
+**Step 3 — Expected output format:**
 {output_hint}
 
-**Step 4 — 必须执行的操作（顺序执行，不可跳过）:**
+**Step 4 — Operations you must perform (in order, none skippable):**
 
-1. 完成以上所有 Read 操作
-2. 用你自己的 LLM 生成发言内容（禁止复制他人内容或留空）
-3. 调用 `meeting_send_message`:
+1. Complete all the Read operations above
+2. Generate your speaking content with your own LLM (copying others' content or leaving it empty is forbidden)
+3. Call `meeting_send_message`:
    ```
    meeting_send_message(
        meeting_id="{meeting_id}",
        agent_id="{name}",
        agent_name="{name}",
        round_number=1,
-       content=<你生成的发言内容>
+       content=<the speaking content you generated>
    )
    ```
-4. 发言完成后调用 `SendMessage`:
+4. After speaking, call `SendMessage`:
    ```
-   SendMessage(to="team-lead", summary="已完成发言", message="round 1 completed for meeting {meeting_id}")
+   SendMessage(to="team-lead", summary="Speaking completed", message="round 1 completed for meeting {meeting_id}")
    ```
-5. **立即退出。不要做会议之外的任何事。不要代打其他参与者。**
+5. **Exit immediately. Do nothing outside the meeting. Do not speak on behalf of other participants.**
 
-## 警告
-- 禁止修改 meeting_id（必须使用 `{meeting_id}`）
-- 禁止代替其他人发言
-- 发言内容必须由你的 LLM 独立生成
-- 完成步骤 4 后立即停止，不要继续操作
+## Warnings
+- Do not modify meeting_id (you must use `{meeting_id}`)
+- Do not speak in place of others
+- The speaking content must be generated independently by your LLM
+- Stop immediately after completing step 4; do not continue operating
 """
 
 
@@ -131,7 +131,8 @@ def _build_dispatch_plan(
                 "participant": p,
                 "launch_call": {},
                 "ready_to_paste": False,
-                "warning": "请使用新结构化参数（MeetingParticipant）以获得完整 launch_call",
+                "warning": "Please use the new structured parameters (MeetingParticipant) to get the complete "
+                           "launch_call",
             })
             warnings.append(p)
             continue
@@ -155,13 +156,13 @@ def _build_dispatch_plan(
             expected_output=expected_output,
         )
 
-        # 三处修正（2026-07-27 CC 工具面对齐）：
-        #   ① 去 team_name —— CC v2.1.219 标注 Deprecated 且忽略（会话单一隐式团队），
-        #      OS 侧归属由 SubagentStart 自动收编负责；
-        #   ② 兜底模板 software-engineer 在 25 个 plugin/agents 模板里**不存在**，
-        #      照此 spawn 必失败 —— 换 CC 内置的 general-purpose（一定可用）；
-        #   ③ 显式 model=opus —— 派工宪章：Fable 编排、Opus 执行，不让参会 agent
-        #      无脑继承主会话的高档模型。
+        # Three corrections (2026-07-27 CC tool-surface alignment):
+        #   ① removed team_name — CC v2.1.219 marks it Deprecated and ignores it (a session has a single implicit team),
+        #      and OS-side ownership is handled by SubagentStart's automatic enrollment;
+        #   ② the fallback template software-engineer **does not exist** among the 25 plugin/agents templates,
+        #      so spawning with it would certainly fail — switched to CC's built-in general-purpose (always available);
+        #   ③ explicit model=opus — the dispatch charter: Fable orchestrates, Opus executes; do not let attending agents
+        #      mindlessly inherit the main session's high-tier model.
         subagent_type = agent_template or FALLBACK_SUBAGENT_TYPE
         spawn_types.append((subagent_type, name))
         launch_call = {
@@ -170,7 +171,7 @@ def _build_dispatch_plan(
                 "subagent_type": subagent_type,
                 "name": name,
                 "model": "opus",
-                "description": role or f"{name} 的会议发言任务",
+                "description": role or f"{name}'s meeting speaking task",
                 "prompt": prompt,
             },
         }
@@ -204,7 +205,8 @@ def register(mcp):
         1. Legacy (strings): participants=["arch-lead", "backend-arch"]
            Returns dispatch_plan with empty launch_call + deprecation warning.
         2. Structured (dicts): participants=[{"name": "arch-lead", "agent_template": "software-architect",
-           "role": "负责评估架构方案", "context_files": ["docs/arch.md"], "expected_output": "三段式"}]
+           "role": "Responsible for evaluating architecture proposals", "context_files": ["docs/arch.md"],
+           "expected_output": "three-paragraph form"}]
            Returns dispatch_plan with fully populated launch_call.params ready to paste into Agent tool.
 
         Available templates: brainstorm / decision / review / retrospective / standup / debate /
@@ -215,10 +217,11 @@ def register(mcp):
             team_id: Team ID or name (optional, auto-uses active team if empty)
             participants: Participant list — strings (legacy) or structured dicts (recommended)
             template: Meeting template, default "free"
-            rounds: Custom round structure e.g. [{"topic": "立场", "rule": "每人3段"}]
+            rounds: Custom round structure e.g. [{"topic": "Stance", "rule": "3 paragraphs per person"}]
             materials: Global materials all participants must read (file paths)
-            team_name: 会议归属的团队名（仅用于 OS 侧归属解析）；不会写进 launch_call
-                —— CC Agent 的 team_name 参数已废弃且被忽略
+            team_name: the name of the team the meeting belongs to (only for OS-side ownership resolution); not
+            written into the launch_call
+                — CC Agent's team_name parameter is deprecated and ignored
 
         Returns:
             Meeting info + dispatch_plan + attendance_check_command + template_warnings.
@@ -230,7 +233,7 @@ def register(mcp):
 
         resolved = _resolve_team_id(team_id)
         if not resolved:
-            return {"success": False, "error": "未找到活跃团队，请提供 team_id 或先创建团队"}
+            return {"success": False, "error": "No active team found; provide a team_id or create a team first"}
 
         participants_raw: list = participants or []
         materials_list: list[str] = materials or []
@@ -280,7 +283,7 @@ def register(mcp):
         else:
             result["_template"] = {
                 "name": "free",
-                "description": "自由讨论——无预设结构，按需进行多轮讨论",
+                "description": "Free discussion — no preset structure; multiple rounds as needed",
                 "total_rounds": None,
                 "rounds": [],
             }
@@ -298,13 +301,14 @@ def register(mcp):
         )
 
         dispatch_instructions = (
-            "Leader 按顺序调用 Agent(**dispatch_plan[i].launch_call.params) 来 spawn 每位参与者。"
-            " ready_to_paste=True 的项目可直接使用；False 的项目需补充结构化参数。"
+            "The Leader calls Agent(**dispatch_plan[i].launch_call.params) in order to spawn each participant."
+            " Items with ready_to_paste=True can be used directly; items with False need the structured parameters "
+            "filled in."
         )
         if legacy_warnings:
             dispatch_instructions += (
-                f"\n警告：{legacy_warnings} 使用了旧字符串格式，无法生成 launch_call。"
-                " 请升级为结构化 participants 参数。"
+                f"\nWarning: {legacy_warnings} used the legacy string format and cannot generate a launch_call."
+                " Please upgrade to the structured participants parameter."
             )
         for w in template_warnings:
             # Top level, not buried inside dispatch_plan[i] - the reader decides.
@@ -404,7 +408,8 @@ def register(mcp):
                 "force": force,
             },
         )
-        result["_hint"] = "会议结论已自动保存到团队记忆。可通过 memory_search 或 team_briefing 检索历史决策。"
+        result["_hint"] = ("The meeting conclusion has been automatically saved to the team memory. Historical "
+                          "decisions can be retrieved via memory_search or team_briefing.")
         return result
 
     @mcp.tool()
@@ -434,7 +439,7 @@ def register(mcp):
         """
         resolved = _resolve_team_id(team_id)
         if not resolved:
-            return {"success": False, "error": "未找到活跃团队，请提供 team_id 或先创建团队"}
+            return {"success": False, "error": "No active team found; provide a team_id or create a team first"}
         path = f"/api/teams/{resolved}/meetings"
         if status:
             path += f"?status={urllib.parse.quote(status)}"
@@ -470,7 +475,7 @@ def register(mcp):
 
         resolved = _resolve_team_id(team_id)
         if not resolved:
-            return {"success": False, "error": "未找到活跃团队，请提供 team_id 或先创建团队"}
+            return {"success": False, "error": "No active team found; provide a team_id or create a team first"}
 
         judge_name = judge or "team-lead"
         participants = list({advocate, critic, judge_name})
@@ -479,7 +484,7 @@ def register(mcp):
             "POST",
             f"/api/teams/{resolved}/meetings",
             {
-                "topic": f"[辩论] {topic}",
+                "topic": f"[Debate] {topic}",
                 "participants": participants,
             },
         )
@@ -496,11 +501,11 @@ def register(mcp):
             "judge": judge_name,
         }
         result["_guide"] = (
-            f"辩论已创建。角色分配：\n"
-            f"  正方（Advocate）: {advocate} — Round 1 陈述 + Round 3 回应\n"
-            f"  反方（Critic）: {critic} — Round 2 质疑\n"
-            f"  裁决方（Judge）: {judge_name} — Round 4 裁决\n"
-            f"规则摘要：引用原文 → 逐点回应 → 裁决须附 Action Items"
+            f"Debate created. Role assignment:\n"
+            f"  Advocate (for): {advocate} — Round 1 statement + Round 3 response\n"
+            f"  Critic (against): {critic} — Round 2 challenge\n"
+            f"  Judge: {judge_name} — Round 4 verdict\n"
+            f"Rules summary: quote the original text → respond point by point → the verdict must attach Action Items"
         )
         return result
 
@@ -535,11 +540,11 @@ def register(mcp):
 
         resolved = _resolve_team_id(team_id)
         if not resolved:
-            return {"success": False, "error": "未找到活跃团队，请提供 team_id 或先创建团队"}
+            return {"success": False, "error": "No active team found; provide a team_id or create a team first"}
 
         judge_name = judge or "team-lead"
         participants = list({advocate, critic, judge_name})
-        topic = f"[Code Review辩论] {file_path}: {change_description}"
+        topic = f"[Code Review Debate] {file_path}: {change_description}"
 
         result = _api_call(
             "POST",
@@ -566,9 +571,10 @@ def register(mcp):
             "change_description": change_description,
         }
         result["_round1_prompt"] = (
-            f"{advocate}（正方）：请在 Round 1 中陈述 `{file_path}` 的实现方案。"
-            f"变更说明：{change_description}。"
-            f"格式：[方案标题] + [核心设计决策] + [支撑理由] + [预期收益] + [已知局限]"
+            f"{advocate} (Advocate): please present the implementation plan for `{file_path}` in Round 1."
+            f"Change description: {change_description}."
+            f"Format: [Plan title] + [Core design decisions] + [Supporting reasons] + [Expected benefits] + [Known "
+            f"limitations]"
         )
         return result
 
@@ -601,7 +607,8 @@ def register(mcp):
         if notes:
             payload["notes"] = notes
         if not payload:
-            return {"success": False, "error": "至少需要提供一个更新字段（topic / participants / notes）"}
+            return {"success": False, "error": "At least one update field must be provided (topic / participants / "
+                                               "notes)"}
         return _api_call("PUT", f"/api/meetings/{meeting_id}", payload)
 
     @mcp.tool()

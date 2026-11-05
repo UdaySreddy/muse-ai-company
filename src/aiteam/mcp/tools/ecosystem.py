@@ -26,10 +26,10 @@ from aiteam.mcp.tools.views import (
 
 
 def _project_headers(project_id: str = "") -> dict[str, str]:
-    """生成 ecosystem 工具 API 调用所需的 X-Project-Id header。
+    """Build the X-Project-Id header needed for ecosystem tool API calls.
 
-    优先级: 显式 project_id > session 默认值 (cwd 推断)。
-    返回空 dict 表示不带显式作用域，路由侧将回退到 X-Project-Dir 解析。
+    Priority: explicit project_id > the session default (cwd inference).
+    An empty dict means no explicit scope is carried; the route side will fall back to X-Project-Dir resolution.
     """
     pid = _resolve_project_id(project_id)
     if pid:
@@ -1279,7 +1279,7 @@ def register(mcp: Any) -> None:
 
         Args:
             repo_id: EcosystemRepoProfile.id.
-            shallow_summary: 200-400 字中文 markdown 总结 (success path).
+            shallow_summary: a 200-400-word English markdown summary (success path).
             deep_review_id: associated deep_review row id (Stage 0 dispatch).
             error_kind: failure category hint (failure path only).
             error_message: short message stored in profile.last_fetch_error.
@@ -1366,7 +1366,7 @@ def register(mcp: Any) -> None:
             min_stars: Override min_stars threshold; 0 = use project settings.
             limit: Max candidates to dispatch per call (default 20).
             research_goal: Free-form research-goal text injected into each
-                sub-agent prompt (e.g. "升级系统记忆功能").
+                sub-agent prompt (e.g. "upgrade the system memory feature").
 
         Returns:
             ``{success, dispatched, intents: [{repo_id, repo_full_name,
@@ -1398,7 +1398,7 @@ def register(mcp: Any) -> None:
     ) -> dict[str, Any]:
         """Stage 1 writeback — submit architecture_md OR report failure.
 
-        Success path (default): pass non-empty architecture_md (800-1500 字
+        Success path (default): pass non-empty architecture_md (800-1500 words
         Chinese markdown). The OS persists it, advances ``stage_status ->
         architecture_done``, and marks the deep_review row completed.
 
@@ -1408,7 +1408,7 @@ def register(mcp: Any) -> None:
 
         Args:
             deep_review_id: Target deep_review row id.
-            architecture_md: 800-1500 字 Chinese markdown (success path).
+            architecture_md: 800-1500 words of English markdown (success path).
             agent_id: Optional agent identifier recorded on the review row.
             error_message: Short message stored on review.risks_md (failure path).
 
@@ -1532,9 +1532,9 @@ def register(mcp: Any) -> None:
 
         Args:
             deep_review_id: Target deep_review row id.
-            risks_md: 风险点 markdown.
-            learnings_md: 借鉴点 markdown.
-            integration_md: 集成建议 markdown.
+            risks_md: risk points markdown.
+            learnings_md: points-to-learn-from markdown.
+            integration_md: integration suggestions markdown.
             integration_recommendation: integrate/reference/learn/skip enum.
             agent_id: Optional agent identifier recorded on the review.
 
@@ -1572,7 +1572,7 @@ def register(mcp: Any) -> None:
 
         Use when the debate concludes that the repo is worth keeping as an
         architectural reference but not integrated. The repo will appear
-        highlighted in future searches as "已研究过" so the team avoids
+        highlighted in future searches as "already researched" so the team avoids
         re-deep-scanning it.
 
         Args:
@@ -1616,7 +1616,7 @@ def register(mcp: Any) -> None:
         After the task is created, call ``ecosystem_link_integration_task``
         to write ``integration_task_id`` back onto the review.
 
-        ecosystem 不接管实施 — task ownership 由现有任务/团队系统接管。
+        The ecosystem does not take over implementation — task ownership is taken over by the existing task/team system.
 
         Args:
             deep_review_id: Target deep_review row id (must be debated /

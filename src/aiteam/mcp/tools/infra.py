@@ -30,12 +30,16 @@ from aiteam.mcp.tools.views import (
 def _usage_coverage_line() -> str:
     """One line of token-attribution coverage for ``os_health_check``.
 
-    按需触发、零新增守护（归因设计 P3）：健康检查本来就要打一次 API，顺手多问一句
-    覆盖率，不为此多起任何东西。
+    On-demand triggering, zero new daemons (attribution design P3): the health check already calls the API once, so it
+    asks one extra question in passing
+    about coverage, without starting anything extra for it.
 
-    这一行刻意报的是**分子/分母**而不是一个百分比：百分比可以在分母被悄悄改小之后
-    依然好看，而分子分母摆在一起，分母缩水一眼就能看见（R2）。链路最窄的一跳也一并
-    报出来——端到端覆盖率是各跳的乘积，只看采集率会漏掉真正的瓶颈（§4.1）。
+    This line deliberately reports the **numerator/denominator** rather than a percentage: a percentage can still look
+    good after the denominator has been quietly shrunk,
+    whereas with the numerator and denominator side by side, a shrunken denominator is visible at a glance (R2). The
+    narrowest hop of the chain is reported
+    alongside — end-to-end coverage is the product of the hops, and looking only at the collection rate misses the
+    real bottleneck (§4.1).
     """
     data = _api_call("GET", "/api/usage/coverage")
     if not isinstance(data, dict) or data.get("success") is False:
@@ -44,7 +48,8 @@ def _usage_coverage_line() -> str:
     parts = []
     for row in payload.get("rows") or []:
         total = row.get("dispatches_total")
-        if total is None:  # "设计上不采集"是正式取值，不是 0，也不该混进覆盖率摘要
+        if total is None:  # "not collected by design" is a formal value, not 0, and must not be mixed into the
+        # coverage summary
             continue
         parts.append(
             f"{row.get('path')}[{row.get('metric') or '—'}] "
@@ -60,9 +65,11 @@ def _usage_coverage_line() -> str:
 def _restart_pid_alive(pid: int) -> bool:
     """Return True if *pid* refers to a live (non-zombie) process.
 
-    POSIX 上优雅停机成功后子进程可能滞留为 defunct 僵尸（父 MCP 尚未收尸）：
-    僵尸不占端口、也永远不会再"退出"，必须视为已死——否则重启守卫会把成功的
-    停机误报成 shutdown_timeout（2026-07-06 巡检实录）。Windows 无僵尸语义。
+    On POSIX, after a successful graceful shutdown a subprocess may linger as a defunct zombie (the parent MCP has not
+    collected the corpse yet):
+    a zombie holds no port and will never "exit" again, so it must be treated as dead — otherwise the restart guard
+    would misreport a successful
+    shutdown as shutdown_timeout (2026-07-06 inspection record). Windows has no zombie semantics.
     Prefers psutil and falls back to os.kill(pid, 0) + ps state check.
     """
     try:
@@ -91,8 +98,8 @@ def _restart_pid_alive(pid: int) -> bool:
                 text=True, stderr=subprocess.DEVNULL, timeout=3,
             ).strip()
             if out.startswith("Z"):
-                return False  # defunct 僵尸 = 已死
-        except Exception:  # noqa: BLE001 — ps 不可用时保守视为存活
+                return False  # a defunct zombie = dead
+        except Exception:  # noqa: BLE001 — when ps is unavailable, conservatively treat as alive
             pass
     return True
 
@@ -175,7 +182,7 @@ def _restart_spawn_on_port(autostart, port: int) -> dict[str, Any]:
         return {
             "success": False,
             "error": "spawn_failed",
-            "detail": f"无法启动 uvicorn 子进程: {exc}",
+            "detail": f"Unable to start the uvicorn subprocess: {exc}",
         }
 
     autostart._write_pid_file(proc.pid)
@@ -231,8 +238,10 @@ def register(mcp):
                 project_teams = [t for t in all_active if t.get("project_id") == current_project_id]
             else:
                 project_teams = []  # No project resolved → no team (avoid cross-project leak)
-            # 复数队是常态：一个项目同时挂着 session 容器队 + N 支 workflow per-run 队。
-            # 只回单数 team 会让 Leader 看不见另外几支（也就无从发现绑错了对象）。
+            # Multiple teams are the norm: one project simultaneously carries a session container team + N workflow
+            # per-run teams.
+            # Returning only the singular team would hide the others from the Leader (who then could not notice a
+            # wrongly bound object).
             result["teams"] = [
                 {
                     "id": t["id"],
@@ -272,8 +281,8 @@ def register(mcp):
             return {
                 "status": "unhealthy",
                 "api_url": API_URL,
-                "error": result.get("error", "未知错误"),
-                "hint": result.get("hint", "请确保 FastAPI 服务已启动: aiteam serve"),
+                "error": result.get("error", "Unknown error"),
+                "hint": result.get("hint", "Please make sure the FastAPI service is running: aiteam serve"),
             }
         return {
             "status": "healthy",
@@ -336,7 +345,7 @@ def register(mcp):
                     return {
                         "success": False,
                         "error": "busy_agents",
-                        "detail": f"{busy_total} 个 agent 工作中，确需重启传 force=true",
+                        "detail": f"{busy_total} agents are working; if a restart is truly needed, pass force=true",
                     }
 
             # --- 3. Request graceful shutdown ---
@@ -345,7 +354,7 @@ def register(mcp):
                 return {
                     "success": False,
                     "error": "shutdown_failed",
-                    "detail": "POST /api/system/shutdown 未成功返回，已中止重启",
+                    "detail": "POST /api/system/shutdown did not return successfully; the restart has been aborted",
                 }
 
             # --- 4. Guard: wait for old process to die AND port to release (≤10s) ---
@@ -366,8 +375,8 @@ def register(mcp):
                     "success": False,
                     "error": "shutdown_timeout",
                     "detail": (
-                        f"旧进程未在 10s 内退出/释放端口 {port} "
-                        f"(pid={old_pid}, still_alive={still_alive})，未拉起新进程"
+                        f"The old process did not exit/release port {port} within 10s "
+                        f"(pid={old_pid}, still_alive={still_alive}); no new process was started"
                     ),
                 }
         else:
@@ -376,7 +385,8 @@ def register(mcp):
                 return {
                     "success": False,
                     "error": "port_occupied",
-                    "detail": f"端口 {port} 被无关进程占用，无法在原端口拉起，已中止",
+                    "detail": f"Port {port} is occupied by an unrelated process; cannot start on the original port, "
+                              f"aborted",
                 }
 
         # --- 5. Spawn fresh API on the ORIGINAL port (pinned, never drift) ---
@@ -384,7 +394,7 @@ def register(mcp):
             return {
                 "success": False,
                 "error": "port_occupied",
-                "detail": f"端口 {port} 仍被占用，拒绝漂移到随机端口，已中止",
+                "detail": f"Port {port} is still occupied; refusing to drift to a random port, aborted",
             }
         spawned = _restart_spawn_on_port(_autostart, port)
         if not spawned.get("success"):
@@ -406,7 +416,7 @@ def register(mcp):
             return {
                 "success": False,
                 "error": "health_timeout",
-                "detail": f"新进程在 15s 内未通过 /api/health（端口 {port}）",
+                "detail": f"The new process did not pass /api/health within 15s (port {port})",
                 "new_pid": spawned.get("new_pid"),
             }
 
@@ -469,7 +479,7 @@ def register(mcp):
         if project_id:
             resolved = _resolve_project_id("" if project_id == "auto" else project_id)
             if not resolved:
-                return {"success": False, "error": "未找到活跃项目，请显式提供 project_id"}
+                return {"success": False, "error": "No active project found; please provide a project_id explicitly"}
             params.append(f"project_id={urllib.parse.quote(resolved)}")
         result = _api_call("GET", f"/api/events?{'&'.join(params)}")
         if view == "all" or not isinstance(result, dict) or "data" not in result:
@@ -484,7 +494,8 @@ def register(mcp):
         }
         if effective < wanted:
             out["limit_capped"] = (
-                f"compact 视图窗口上限 {EVENT_COMPACT_CAP} 条；要更大窗口用 fields='all' 并自行分页"
+                f"The compact view window is capped at {EVENT_COMPACT_CAP} entries; for a larger window use "
+                f"fields='all' and paginate yourself"
             )
         return out
 

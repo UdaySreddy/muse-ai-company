@@ -41,9 +41,10 @@ def register(mcp):
             cwd_norm = cwd.rstrip("/")
             g = given.lower()
             c = cwd_norm.lower()
-            # 分隔符边界（照抄 _base._init_session_project 的写法）：裸 startswith
-            # 是假前缀，root_path='/Users/cron' 能骗过 cwd='/Users/cronus/...'，
-            # 于是可以在别人的目录上立项，冲撞归属铁律。
+            # Separator boundary (following _base._init_session_project's approach): a bare startswith
+            # is a false prefix — root_path='/Users/cron' would fool cwd='/Users/cronus/...',
+            # making it possible to register a project on someone else's directory, colliding with the ownership iron
+            # rule.
             if not (c == g or c.startswith(g + "/")):
                 return {
                     "success": False,
@@ -56,16 +57,18 @@ def register(mcp):
                     ),
                     "_recovery": "Use project_list to find auto-registered projects.",
                 }
-            # 家目录的严格祖先（'/'、'/Users' 这类）永远不是合法项目根：注册后它会
-            # 按前缀认领此后每一个未注册目录，一个项目吞掉整台机器。
+            # A strict ancestor of the home directory ('/', '/Users' and the like) is never a legitimate project root:
+            # after registration it would
+            # prefix-claim every unregistered directory from then on — one project swallowing the whole machine.
             home = os.path.expanduser("~").replace("\\", "/").rstrip("/").lower()
             if home and g != home and (home == g or home.startswith(g + "/")):
                 return {
                     "success": False,
                     "error": (
-                        f"root_path '{root_path}' 是家目录的祖先目录，不能作为项目根"
-                        f"（它会把此后每个未注册目录都前缀认领走）。"
-                        f"请用本会话真实的工作目录 '{cwd}'。"
+                        f"root_path '{root_path}' is an ancestor directory of the home directory and cannot be a "
+                        f"project root "
+                        f"(it would prefix-claim every unregistered directory from then on). "
+                        f"Please use this session's real working directory '{cwd}'."
                     ),
                     "_recovery": "Use the session cwd as root_path, or project_list to find it.",
                 }
@@ -79,14 +82,18 @@ def register(mcp):
                 "root_path": root_path or cwd,
             },
         )
-        # 注册转正提示（记忆隔离升级路径）：该目录在未注册期写入的方向记忆落在
-        # 目录指纹临时桶("dir:<sha1>")；转正后这些条目可迁入项目桶。本批不做自动
-        # 收编，仅提示，如需迁移用 memory_reconcile 的 promote/merge 手动处理。
+        # Registration-regularization hint (the memory-isolation upgrade path): the direction memories this directory
+        # wrote during its unregistered period landed in
+        # the directory-fingerprint temporary bucket ("dir:<sha1>"); after regularization these entries can be
+        # migrated into the project bucket. This batch does no automatic
+        # absorption — only the hint; if migration is needed, handle it manually with memory_reconcile's promote/merge.
         if isinstance(result, dict) and result.get("success") is not False:
             result.setdefault(
                 "hint",
-                "该目录此前未注册期写入的临时桶记忆（dir:<指纹>，如有）可迁入本项目桶——"
-                "本批不自动收编，如需迁移请用 memory_reconcile 手动处理。",
+                "The temporary-bucket memories this directory wrote during its earlier unregistered period "
+                "(dir:<fingerprint>, if any) can be migrated into this project bucket — "
+                "this batch does not absorb them automatically; if migration is needed, please handle it manually "
+                "with memory_reconcile.",
             )
         return result
 

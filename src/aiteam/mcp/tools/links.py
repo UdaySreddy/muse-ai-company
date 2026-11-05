@@ -1,4 +1,4 @@
-"""Knowledge-link MCP tools — 跨域引用图谱查询（知识层 P1a）。"""
+"""Knowledge-link MCP tools — cross-domain reference graph queries (knowledge layer P1a)."""
 
 from __future__ import annotations
 
@@ -75,8 +75,8 @@ def register(mcp):
         knowledge-graph fanout (queries containing wf_/commit/uuid IDs pull in
         everything linked to them), and exact ID-prefix / title match.
 
-        Use this to recall past work: "归属铁律怎么修的", "wf_d01f207f",
-        "stderr 盲区", commit hashes, etc.
+        Use this to recall past work: "how was the ownership iron rule fixed", "wf_d01f207f",
+        "stderr blind spot", commit hashes, etc.
 
         Args:
             query: Free text or an OS ID (wf_id / commit / task uuid)

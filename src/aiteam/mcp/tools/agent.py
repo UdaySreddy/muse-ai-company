@@ -24,88 +24,98 @@ from aiteam.mcp.tools.views import (
     resolve_view,
 )
 
-# ── 项目类型 → 建议编制（原 team_setup_guide，2026-07-27 并入本模块）───────────
-# 定位由"工具"降为"种子"：它是一张静态字典，回答不了"现在装了哪些模板"，
-# 独占一个工具名不值当。现在只在 agent_template_recommend(task_type=...) 命中
-# 项目类型时作为附加建议返回，真正的模板清单仍来自活体目录扫描。
-# 模板名已按活体列表核对（~/.claude/agents 25 个 + 项目级 .claude/agents），
-# 不再一律推 team-member 泛用模板——有专职模板就推专职的。
+# ── Project type → suggested lineup (formerly team_setup_guide, merged into this module on 2026-07-27)───────────
+# Its positioning dropped from "tool" to "seed": it is a static dictionary that cannot answer "which templates are
+# installed now", so
+# monopolizing a tool name is not worth it. Now it is only returned as an additional suggestion when
+# agent_template_recommend(task_type=...) hits
+# a project type; the real template inventory still comes from a live directory scan.
+# Template names have been checked against the live list (~/.claude/agents, 25 of them, + project-level .claude/agents),
+# no longer uniformly pushing the generic team-member template — when a dedicated template exists, push the dedicated
+# one.
 _PROJECT_TYPE_ROLES: dict[str, dict[str, Any]] = {
     "web-app": {
-        "description": "全栈Web应用项目",
+        "description": "Full-stack Web application project",
         "roles": [
-            {"name": "tech-lead", "count": 1, "description": "架构设计、技术决策、代码审查",
+            {"name": "tech-lead", "count": 1, "description": "Architecture design, technical decisions, code review",
              "template": "management-tech-lead"},
-            {"name": "backend-engineer", "count": "1-2", "description": "API开发、数据库设计、业务逻辑",
+            {"name": "backend-engineer", "count": "1-2", "description": "API development, database design, business "
+                                                                        "logic",
              "template": "engineering-backend-architect"},
-            {"name": "frontend-engineer", "count": "1-2", "description": "UI组件、页面交互、响应式布局",
+            {"name": "frontend-engineer", "count": "1-2", "description": "UI components, page interaction, "
+                                                                         "responsive layout",
              "template": "engineering-frontend-developer"},
-            {"name": "qa-engineer", "count": 1, "description": "端到端测试、跨浏览器兼容性",
+            {"name": "qa-engineer", "count": 1, "description": "End-to-end testing, cross-browser compatibility",
              "template": "testing-qa-engineer"},
         ],
     },
     "api-service": {
-        "description": "后端API服务项目",
+        "description": "Backend API service project",
         "roles": [
-            {"name": "tech-lead", "count": 1, "description": "API架构、接口规范、性能优化",
+            {"name": "tech-lead", "count": 1, "description": "API architecture, interface specs, performance "
+                                                             "optimization",
              "template": "management-tech-lead"},
-            {"name": "backend-engineer", "count": "2-3", "description": "端点开发、中间件、数据持久化",
+            {"name": "backend-engineer", "count": "2-3", "description": "Endpoint development, middleware, data "
+                                                                        "persistence",
              "template": "engineering-backend-architect"},
-            {"name": "api-tester", "count": 1, "description": "API测试、负载测试、契约测试",
+            {"name": "api-tester", "count": 1, "description": "API testing, load testing, contract testing",
              "template": "testing-api-tester"},
         ],
     },
     "data-pipeline": {
-        "description": "数据处理管道项目",
+        "description": "Data processing pipeline project",
         "roles": [
-            {"name": "tech-lead", "count": 1, "description": "管道架构、数据流设计",
+            {"name": "tech-lead", "count": 1, "description": "Pipeline architecture, data-flow design",
              "template": "management-tech-lead"},
-            {"name": "data-engineer", "count": "1-2", "description": "ETL开发、查询与索引优化",
+            {"name": "data-engineer", "count": "1-2", "description": "ETL development, query and index optimization",
              "template": "engineering-database-optimizer"},
-            {"name": "backend-engineer", "count": "1-2", "description": "调度接入、服务化封装",
+            {"name": "backend-engineer", "count": "1-2", "description": "Scheduling integration, service wrapping",
              "template": "engineering-backend-architect"},
-            {"name": "qa-engineer", "count": 1, "description": "数据质量验证、回归测试",
+            {"name": "qa-engineer", "count": 1, "description": "Data quality validation, regression testing",
              "template": "testing-qa-engineer"},
         ],
     },
     "library": {
-        "description": "可复用库/SDK项目",
+        "description": "Reusable library/SDK project",
         "roles": [
-            {"name": "architect", "count": 1, "description": "API设计、版本策略、兼容性",
+            {"name": "architect", "count": 1, "description": "API design, versioning strategy, compatibility",
              "template": "engineering-software-architect"},
-            {"name": "developer", "count": "1-2", "description": "核心实现",
+            {"name": "developer", "count": "1-2", "description": "Core implementation",
              "template": "engineering-backend-architect"},
-            {"name": "technical-writer", "count": 1, "description": "文档与示例编写",
+            {"name": "technical-writer", "count": 1, "description": "Documentation and example writing",
              "template": "support-technical-writer"},
-            {"name": "qa-engineer", "count": 1, "description": "单元测试、集成测试、示例验证",
+            {"name": "qa-engineer", "count": 1, "description": "Unit testing, integration testing, example validation",
              "template": "testing-qa-engineer"},
         ],
     },
     "refactor": {
-        "description": "代码重构项目",
+        "description": "Code refactoring project",
         "roles": [
-            {"name": "tech-lead", "count": 1, "description": "重构策略、影响分析、渐进式迁移",
+            {"name": "tech-lead", "count": 1, "description": "Refactoring strategy, impact analysis, incremental "
+                                                             "migration",
              "template": "management-tech-lead"},
-            {"name": "code-reviewer", "count": 1, "description": "代码迁移审查、规范一致性",
+            {"name": "code-reviewer", "count": 1, "description": "Code migration review, spec consistency",
              "template": "engineering-code-reviewer"},
-            {"name": "qa-engineer", "count": 1, "description": "回归测试、行为一致性验证",
+            {"name": "qa-engineer", "count": 1, "description": "Regression testing, behavior consistency validation",
              "template": "testing-qa-engineer"},
         ],
     },
     "bugfix": {
-        "description": "Bug修复项目",
+        "description": "Bug fix project",
         "roles": [
-            {"name": "bug-fixer", "count": "1-2", "description": "问题定位、最小化修复",
+            {"name": "bug-fixer", "count": "1-2", "description": "Problem localization, minimal fix",
              "template": "testing-bug-fixer"},
-            {"name": "qa-engineer", "count": 1, "description": "复现验证、回归测试",
+            {"name": "qa-engineer", "count": 1, "description": "Reproduction validation, regression testing",
              "template": "testing-qa-engineer"},
         ],
     },
 }
 
 _TEAM_SHAPE_TIP = (
-    "编制仅是起点，不必套用：subagent_type 可用现成模板名，也可用 general-purpose "
-    "配自定义 prompt 完全自组角色；人数按任务增删，模板文件本身也可随时改或新增。"
+    "The lineup is only a starting point, not a mold: subagent_type can use a ready-made template name, or "
+    "general-purpose "
+    "with a custom prompt to compose a role entirely yourself; adjust headcounts per task, and the template files "
+    "themselves can be edited or added at any time."
 )
 
 
@@ -122,7 +132,7 @@ def _load_agent_prompt_template() -> str:
         with open(template_path, encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
-        logger.warning("Agent prompt模板文件不存在: %s", template_path)
+        logger.warning("Agent prompt template file does not exist: %s", template_path)
         return ""
 
 
@@ -131,7 +141,7 @@ def _render_agent_prompt(role: str, project_path: str = "") -> str:
     template = _load_agent_prompt_template()
     if not template:
         return ""
-    return template.replace("{role}", role).replace("{project_path}", project_path or "未指定")
+    return template.replace("{role}", role).replace("{project_path}", project_path or "Not specified")
 
 
 def register(mcp):
@@ -196,7 +206,7 @@ def register(mcp):
         if view is None:
             return {"success": False, "error": FIELDS_ERROR}
         result = _api_call("GET", f"/api/teams/{team_id}/agents?limit={ROSTER_FETCH_LIMIT}")
-        # 错误响应原样透传——投影只作用在成功的名册上。
+        # Error responses pass through verbatim — the projection applies only to a successful roster.
         if not isinstance(result, dict) or "data" not in result:
             return result
         roster = project_roster(
@@ -220,10 +230,12 @@ def register(mcp):
         }
         if "offline" in roster:
             out["offline"] = roster["offline"]
-        # 名册本身被上游 200 行帽子截断时明说，别让计数看着像全量。
+        # When the roster itself is truncated by the upstream 200-row cap, say so explicitly; do not let the count
+        # look like the full set.
         if out["counted"] < (out["total"] or 0):
             out["counts_partial"] = (
-                f"上游一次最多返回 {ROSTER_FETCH_LIMIT} 行，计数只覆盖前 {out['counted']} 名成员"
+                f"The upstream returns at most {ROSTER_FETCH_LIMIT} rows at a time; the count covers only the first "
+                f"{out['counted']} members"
             )
         return out
 
@@ -473,7 +485,7 @@ def register(mcp):
             return {"success": False, "error": FIELDS_ERROR}
         resolved = _resolve_team_id(team_id)
         if not resolved:
-            return {"success": False, "error": "未找到活跃团队，请提供 team_id 或先创建团队"}
+            return {"success": False, "error": "No active team found; provide a team_id or create a team first"}
         wanted = max(1, int(limit or 1))
         effective = min(wanted, ACTIVITY_COMPACT_CAP) if view == "compact" else wanted
         params: list[str] = [f"limit={effective}"]
@@ -492,7 +504,7 @@ def register(mcp):
         }
         if effective < wanted:
             out["limit_capped"] = (
-                f"compact 视图一次最多 {ACTIVITY_COMPACT_CAP} 条（请求了 {wanted}）；"
-                "要更长的窗口请按 agent_id 收窄，或自担体积用 fields=\"all\""
+                f"The compact view returns at most {ACTIVITY_COMPACT_CAP} entries at a time (you requested {wanted}); "
+                "for a longer window, narrow by agent_id, or take the volume on yourself with fields=\"all\""
             )
         return out

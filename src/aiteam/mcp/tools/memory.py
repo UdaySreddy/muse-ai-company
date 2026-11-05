@@ -23,17 +23,20 @@ def register(mcp):
         Args:
             query: Search keywords
             scope: Memory scope, default "global"
-            scope_id: Scope ID；**留空**时服务端按上下文推导（global→system、
-                user→user、project→当前项目或未注册目录的指纹临时桶）。只有需要
-                跨作用域精确指定时才显式传（如某 team 的 scope_id）。
+            scope_id: Scope ID; when **left empty**, the server derives it from the context (global→system,
+                user→user, project→the current project or an unregistered directory's fingerprint temporary bucket).
+                Pass it explicitly only when
+                a precise cross-scope specification is needed (e.g. a team's scope_id).
             limit: Maximum number of results, default 10
 
         Returns:
             List of matching memories
         """
         params_dict: dict[str, Any] = {"scope": scope, "query": query, "limit": limit}
-        # 留空则不发 scope_id，让服务端 get_scoped_repository 按 X-Project-Dir 推导——
-        # 否则旧默认 "system" 会让未注册目录 memory_search 查不到自己的临时桶。
+        # When empty, do not send scope_id at all, letting the server's get_scoped_repository derive it from
+        # X-Project-Dir —
+        # otherwise the old default "system" would make an unregistered directory's memory_search unable to find its
+        # own temporary bucket.
         if scope_id:
             params_dict["scope_id"] = scope_id
         params = urllib.parse.urlencode(params_dict)
@@ -49,48 +52,65 @@ def register(mcp):
     ) -> dict[str, Any]:
         """Add a direction-layer memory — the team's shared, cross-task standing preferences.
 
-        方向层 = 低频·高价值密度·跨任务长寿命的偏好/纠正/约束/设计意图。每个派出
-        的 agent 出生即注入方向层，"全中文""完成即汇报"这类偏好不再靠手抄进 prompt。
+        The direction layer = low-frequency, high value-density, cross-task long-lived
+        preferences/corrections/constraints/design intent. Every dispatched
+        agent is injected with the direction layer at birth, so preferences like "everything in Chinese" and "report
+        as soon as done" no longer need to be hand-copied into prompts.
 
-        写入检验（软门槛）：**这条能影响多少未来任务？只影响单个任务的 → 去
-        task_memo_add（情景层），不要写这里。**
+        Write test (soft threshold): **how many future tasks can this entry affect? One that affects only a single
+        task → goes to
+        task_memo_add (the episodic layer); do not write it here.**
 
-        体量红线是**单一轴：存储上限 = 注入预算**。方向层按桶计字符配额——
-        global 1200 字 + 每个 project 1500 字 + user 300 字，一个会话实际继承
-        3000 字；单条仍 ≤ 400 字。存得下的一定传得到，写不进去的就是真的没位置：
-        超限时本工具返回该桶**全部有效条目**（id / kind / 字数 / 全文）+ 用量缺口，
-        要求**当轮**先 memory_invalidate（可用 content_match 子串定位）或
-        memory_reconcile_apply 腾出空间，再重试本次写入。
-        超长内容改写成「触发条件 + 指向权威文件」的**指针条目**（如
-        "涉及生产/集群/DB 时遵守只读铁律，详见 ~/.claude/CLAUDE.md"），正文外置。
+        The volume red line is a **single axis: storage cap = injection budget**. The direction layer counts character
+        quotas per bucket —
+        global 1200 characters + each project 1500 characters + user 300 characters; one session actually inherits
+        3000 characters; a single entry is still ≤ 400 characters. Whatever fits in storage is guaranteed to be
+        delivered, and what cannot be written truly has no room:
+        when over the limit, this tool returns that bucket's **full set of valid entries** (id / kind / character
+        count / full text) + the usage gap,
+        requiring you to first, **in the same round**, memory_invalidate (locatable via a content_match substring) or
+        memory_reconcile_apply to free space, then retry this write.
+        Rewrite over-long content into a **pointer entry** of the form "trigger condition + pointer to the
+        authoritative file" (e.g.
+        "When production/clusters/DB are involved, follow the read-only iron rule; see ~/.claude/CLAUDE.md"), with the
+        body externalized.
 
-        写入侧安全扫描：方向层条目会进每个派出 agent 的 system prompt，因此不可见
-        Unicode、提示注入句式（覆盖既有指令 / 套取系统提示 / 伪造对话角色）、凭据
-        形态一律拒绝入库。
+        Write-side safety scan: direction-layer entries enter every dispatched agent's system prompt, so invisible
+        Unicode, prompt-injection phrasings (overriding existing instructions / extracting the system prompt / forging
+        conversation roles), and credential
+        shapes are uniformly refused storage.
 
-        kind 四类（决定注入截断优先级 constraint>design>directive>preference）：
-        - constraint（禁令/护栏）：一句话、可机检、终身有效。
-          如 "所有输出使用中文"、"git 提交绝不自动加 agent 署名"。
-        - design（价值排序/设计意图）：缺显式指令时的取舍依据。
-          如 "技术决策偏向质量/简洁/健壮/长期可维护，不看重开发成本"。
-        - directive（方法论/工作方式）：回答"怎么干"。
-          如 "完成即按问题→根因→解法→验证汇报，不攒批次"。
-        - preference（格式偏好）：可选，如 "每句一行便于 diff"。
+        The four kinds (which determine the injection truncation priority constraint>design>directive>preference):
+        - constraint (prohibitions/guardrails): one sentence, machine-checkable, valid for life.
+          E.g. "All output in Chinese", "Never automatically add an agent signature to git commits".
+        - design (value ordering/design intent): the basis for trade-offs when no explicit instruction exists.
+          E.g. "Technical decisions favor quality/simplicity/robustness/long-term maintainability, with little weight
+          on development cost".
+        - directive (methodology/working style): answers "how to do it".
+          E.g. "On completion, report by problem → root cause → solution → verification; do not batch things up".
+        - preference (format preferences): optional, e.g. "One sentence per line for easy diffing".
 
         Args:
-            content: 记忆内容（单条 ≤ 400 字，且须放得进本桶字符配额；超长改指针条目）
+            content: the memory content (a single entry ≤ 400 characters, and it must fit this bucket's character
+            quota; rewrite over-long content as a pointer entry)
             kind: constraint / design / directive / preference
-            scope: global（全局）/ project（当前项目）/ user（用户级）。
-                写 global 前自问：**这条对任意目录的任意会话都成立吗？** 提及具体
-                项目/仓库/书稿/某次任务的一律 scope=project——未注册目录会落入本目录
-                指纹临时桶（"dir:..."），只被本目录的会话继承，绝不广播成全局记忆。
-            supersedes: 可选，被本条置换失效的旧 memory id（偏好被改 = 新条 supersede
-                旧条，Zep 失效语义不删除）
-            source_refs: 可选，溯源 id 列表（回指 memo/report/meeting，蒸馏提升时用）
+            scope: global / project (the current project) / user (user level).
+                Before writing to global, ask yourself: **does this hold for any session in any directory?** Anything
+                mentioning a specific
+                project/repo/manuscript/task is uniformly scope=project — an unregistered directory falls into this
+                directory's
+                fingerprint temporary bucket ("dir:..."), inherited only by this directory's sessions and never
+                broadcast as a global memory.
+            supersedes: optional, the old memory id this entry replaces and invalidates (a changed preference = the
+            new entry supersedes
+                the old one; Zep invalidation semantics, no deletion)
+            source_refs: optional, a list of provenance ids (pointing back to memos/reports/meetings; used at
+            distillation/promotion time)
 
         Returns:
-            写入结果；超桶配额时返回 success=False + quota 用量 + bucket_entries
-            （该桶全部有效条目全文）+ next_action，安全扫描命中时返回拒绝原因
+            The write result; when over the bucket quota, returns success=False + quota usage + bucket_entries
+            (the full text of all valid entries in that bucket) + next_action; when the safety scan hits, returns the
+            refusal reason
         """
         body: dict[str, Any] = {
             "content": content,
@@ -106,25 +126,30 @@ def register(mcp):
     def memory_invalidate(memory_id: str = "", content_match: str = "") -> dict[str, Any]:
         """Invalidate a direction-layer memory — mark it invalid without deleting.
 
-        方向层偏好过时/被推翻时显式失效（Zep 失效语义：置 invalid_at 不删除，
-        保留可审计轨迹）。失效后不再进注入，也默认不出现在 memory_list。
+        Explicitly invalidate a direction-layer preference when it is outdated/overturned (Zep invalidation semantics:
+        set invalid_at without deleting,
+        preserving an auditable trail). After invalidation it no longer enters injection and by default does not
+        appear in memory_list.
 
-        两种定位方式，二选一：**memory_id 精确定位**，或 **content_match 子串定位**
-        （手里只有原文时免去先查一次 id——被配额顶回来的那一刻正是这种处境）。
-        子串必须唯一命中当前上下文的有效条目：命中 0 条或多条一律不动数据，多条时
-        返回候选让你给出更精确的子串。
+        Two locating methods, choose one: **precise location by memory_id**, or **location by content_match substring**
+        (saving an id lookup when you only have the original text — exactly the situation when a quota bounce hands it
+        back to you).
+        The substring must uniquely hit a valid entry in the current context: on 0 or multiple hits, the data is not
+        touched at all; on multiple hits,
+        candidates are returned so you can give a more precise substring.
 
         Args:
-            memory_id: 要失效的方向层记忆 id（与 content_match 二选一）
-            content_match: 唯一定位子串，在有效条目正文中精确匹配（与 memory_id 二选一）
+            memory_id: the id of the direction-layer memory to invalidate (alternative to content_match)
+            content_match: the uniquely locating substring, exactly matched against valid entries' bodies (alternative
+            to memory_id)
 
         Returns:
-            失效后的条目；未命中/命中多条/id 不存在返回错误
+            The entry after invalidation; no hit / multiple hits / nonexistent id returns an error
         """
         if memory_id and content_match:
             return {
                 "success": False,
-                "error": "memory_id 与 content_match 二选一，不要同时传。",
+                "error": "Provide either memory_id or content_match, not both.",
             }
         if memory_id:
             return _api_call("POST", f"/api/memories/{memory_id}/invalidate", {})
@@ -134,7 +159,7 @@ def register(mcp):
             )
         return {
             "success": False,
-            "error": "需要 memory_id 或 content_match 之一来定位要失效的条目。",
+            "error": "One of memory_id or content_match is required to locate the entry to invalidate.",
         }
 
     @mcp.tool(meta={"anthropic/maxResultSizeChars": 500000})
@@ -144,16 +169,18 @@ def register(mcp):
     ) -> dict[str, Any]:
         """List direction-layer memories — valid entries by default, grouped by kind.
 
-        返回当前上下文的方向层条目：global + user 全局条目 + 当前项目的 project
-        级条目，按 kind 优先级（constraint>design>directive>preference）+ 时间倒序。
-        这是双 hook 常驻注入的同一数据源；用它审阅"派出的 agent 会继承什么"。
+        Return the current context's direction-layer entries: global + user global entries + the current project's
+        project-
+        level entries, ordered by kind priority (constraint>design>directive>preference) + time descending.
+        This is the same data source as the dual hooks' resident injection; use it to review "what dispatched agents
+        will inherit".
 
         Args:
-            kind: 可选，按 kind 过滤（constraint/design/directive/preference）
-            include_invalidated: 是否含已失效条目（默认否）
+            kind: optional, filter by kind (constraint/design/directive/preference)
+            include_invalidated: whether to include invalidated entries (default no)
 
         Returns:
-            方向层条目列表
+            The list of direction-layer entries
         """
         params_dict: dict[str, Any] = {}
         if kind:
@@ -169,32 +196,40 @@ def register(mcp):
         scope_path: str = "",
         threshold: float = 0.45,
     ) -> dict[str, Any]:
-        """按需整理·粗筛：返回情景层候选组 + 方向层清单 + 蒸馏素材 + 操作说明。
+        """On-demand organization · coarse screening: returns episodic-layer candidate groups + the direction-layer
+        inventory + distillation material + operating instructions.
 
-        记忆整理 = 会话内按需显式动作（CC 非常驻，无后台整理进程）。本工具只做
-        **确定性粗筛（零 LLM）**——OS 无独立 LLM 凭据，判定由你（调用工具的会话内
-        agent）完成，工具只负责候选粗筛与操作应用（"agent 算、工具存"）。
+        Memory organization = an explicit on-demand in-session action (CC is not resident; there is no background
+        organization process). This tool performs only
+        **deterministic coarse screening (zero LLM)** — the OS has no independent LLM credentials, so the judgment is
+        made by you (the in-session agent calling
+        the tool); the tool is responsible only for candidate coarse screening and operation application ("the agent
+        computes, the tool stores").
 
-        返回四块（project_id 自动按当前上下文解析）：
-        - candidate_groups：有效 task_memos 按 scope_path/task 聚簇、簇内 BM25 两两
-          相似度超阈配对成的候选组（含组内各条全文 + id）。逐组做 LLM 精判：
-          KEEP（都留）/ MERGE（合并）/ INVALIDATE（矛盾失效）/ NOOP（不动）。
-        - direction_inventory：全部有效方向层条目全文——逐条做**陈旧检查**（引用的
-          功能已退役/版本过时/世界已变 → 提 invalidate）。
-        - promotion_candidates：高频跨任务反复出现的簇，蒸馏为方向层条目的素材
-          （promote 操作，source_refs 回指源 memo）。
-        - operation_guide：四操作语义 + reconcile 三守则（只留高频有用 / 指向权威
-          而非复述 / 重写精简优先）+ 量大开 ultracode 提示。
+        Returns four blocks (project_id is automatically resolved from the current context):
+        - candidate_groups: valid task_memos clustered by scope_path/task, with in-cluster BM25 pairwise
+          similarity above the threshold paired into candidate groups (including each entry's full text + id). Make an
+          LLM fine judgment per group:
+          KEEP (keep all) / MERGE / INVALIDATE (contradiction invalidation) / NOOP (no action).
+        - direction_inventory: the full text of all valid direction-layer entries — perform a **staleness check** on
+        each (a referenced
+          feature retired / version outdated / the world changed → propose invalidate).
+        - promotion_candidates: high-frequency clusters recurring across tasks — material for distilling into
+        direction-layer entries
+          (the promote operation; source_refs point back to the source memos).
+        - operation_guide: the four operations' semantics + the three reconcile rules (keep only the high-frequency
+        and useful / point to the authoritative
+          source rather than restating / prefer concise rewrites) + the hint to open ultracode when the volume is large.
 
-        判完后把确认的操作交给 memory_reconcile_apply 批量应用。
+        After judging, hand the confirmed operations to memory_reconcile_apply for batch application.
 
         Args:
-            scope_path: 仅整理该路径作用域的 memo（留空=全项目有效 memo）
-            threshold: 簇内 BM25 相似度配对阈值（0-1，默认 0.45）
+            scope_path: organize only that path scope's memos (empty = the whole project's valid memos)
+            threshold: the in-cluster BM25 similarity pairing threshold (0-1, default 0.45)
 
         Returns:
             candidate_groups / promotion_candidates / direction_inventory /
-            operation_guide / stats（含 ultracode_hint 当候选组量大时）
+            operation_guide / stats (including ultracode_hint when the candidate-group volume is large)
         """
         params_dict: dict[str, Any] = {"threshold": threshold}
         if scope_path:
@@ -204,31 +239,36 @@ def register(mcp):
 
     @mcp.tool()
     def memory_reconcile_apply(operations: list[dict[str, Any]]) -> dict[str, Any]:
-        """按需整理·应用：批量执行 LLM 精判确认后的操作（确定性，幂等）。
+        """On-demand organization · apply: batch-execute the operations confirmed by the LLM fine judgment
+        (deterministic, idempotent).
 
-        每条操作是一个 dict，按 op 字段分派（未知/缺字段返回 error，不阻断其余）：
-        - merge：{op:"merge", content:合并后新内容, memo_ids:[被并各条],
-          memo_type?:"summary", scope_path?} —— 建新 memo，把被并各条置 invalid、
-          invalidated_by 指向新条（Zep 失效语义不删除）。
-        - invalidate：{op:"invalidate", memo_ids:[...]} —— 逐条失效（矛盾/被推翻）。
-        - score：{op:"score", memo_id, quality_score:1-10, reason} —— 补质量分，
-          reason 入 meta。
-        - promote：{op:"promote", content, kind:constraint/design/directive/preference,
-          scope?:"project"/global/user, source_refs?:[源 memo id]} —— 蒸馏提升为方向层
-          条目；**红线照常生效**（单条 ≤400 字 + 桶字符配额 global 1200 / project
-          1500 / user 300，超限该条返回 error 带用量；安全扫描同样生效）。
-        - keep / noop：不动（可省略）。
+        Each operation is a dict, dispatched by its op field (an unknown/missing field returns an error for that entry
+        without blocking the rest):
+        - merge: {op:"merge", content: the new merged content, memo_ids: [the entries being merged],
+          memo_type?:"summary", scope_path?} — creates a new memo and sets each merged entry invalid,
+          with invalidated_by pointing at the new entry (Zep invalidation semantics, no deletion).
+        - invalidate: {op:"invalidate", memo_ids:[...]} — invalidates entry by entry (contradicted/overturned).
+        - score: {op:"score", memo_id, quality_score:1-10, reason} — adds a quality score,
+          with reason going into meta.
+        - promote: {op:"promote", content, kind:constraint/design/directive/preference,
+          scope?:"project"/global/user, source_refs?:[source memo ids]} — distills and promotes into a direction-layer
+          entry; **the red lines apply as usual** (a single entry ≤400 characters + bucket character quotas global
+          1200 / project
+          1500 / user 300; over the limit, that entry returns an error with usage; the safety scan likewise applies).
+        - keep / noop: no action (may be omitted).
 
-        幂等：对已失效条目重复 invalidate/merge 返回 noop 不报错。应用后自动刷新
-        项目 last_reconcile_at（量阈软提示的基线）。
+        Idempotent: repeating invalidate/merge on an already-invalidated entry returns noop without error. After
+        applying, it automatically refreshes
+        the project's last_reconcile_at (the baseline for the volume-threshold soft hint).
 
         Args:
-            operations: 操作列表，每条一个 dict，按 op 字段分派为
-                merge / invalidate / score / promote / keep（各字段见工具说明）。
-                一次可混装多种 op；单条出错只返回该条 error，不阻断其余。
+            operations: the operation list, one dict per entry, dispatched by the op field into
+                merge / invalidate / score / promote / keep (see the tool description for each field).
+                One call may mix multiple ops; a single entry's error returns only that entry's error and does not
+                block the rest.
 
         Returns:
-            results（逐条 status: applied/noop/error）+ applied_count +
+            results (per-entry status: applied/noop/error) + applied_count +
             last_reconcile_at
         """
         return _api_call(

@@ -1,19 +1,25 @@
-"""列表类工具返回体的精简投影视图（表示层，不动 API 路由与数据层）。
+"""Compact projection views of list-type tool return bodies (the presentation layer; API routes and the data layer are
+untouched).
 
-设计规格见 docs/tool-loading-design.md §4。要点（基准任务 4267426d 实测背书）：
+See docs/tool-loading-design.md §4 for the design spec. Key points (backed by measurements from benchmark task
+4267426d):
 
-- 默认 ``fields="compact"`` 返回精简投影：task-wall 省 84.3% / events 省
-  50.7% / ecosystem 列表省 80.7% token；``fields="all"`` 为逃生舱返回全量。
-- 返回体携带 ``view`` + ``hint`` 自标识——让 agent 明确知道这是精简视图
-  而非字段缺失，并指路单体详情工具（用户裁定 2026-07-14）。
-- 投影三铁律：后续调用要用的键（id）永远完整；语义内容只降级为截断摘要、
-  不删除；选择动作用得上的信号字段（score/assigned_to/depends_on 等）保留。
+- By default ``fields="compact"`` returns a compact projection: task-wall saves 84.3% / events save
+  50.7% / ecosystem lists save 80.7% of tokens; ``fields="all"`` is the escape hatch returning everything.
+- The return body carries ``view`` + ``hint`` self-identification — so the agent clearly knows this is a compact view
+  rather than missing fields, and points to the single-entity detail tools (user ruling 2026-07-14).
+- The projection's three iron rules: keys needed by subsequent calls (id) are always complete; semantic content is
+only degraded to truncated summaries,
+  never deleted; signal fields the selection action needs (score/assigned_to/depends_on, etc.) are kept.
 
-名册类工具（agent_list / team_status / team_briefing）多一条正交规则（2026-08-03
-成员名册打爆事故后立）：``fields`` 只管**行有多宽**，``include_offline`` 只管
-**收哪些行**——``fields="all"`` 不等于"不过滤"。理由是实测那支 51 人会话队里
-offline 行占 payload 96.4%：若 ``fields="all"`` 顺带把 offline 全带回来，逃生舱
-自己就超上限，等于没有逃生舱。两个开关一起给才是今天的原始返回。
+Roster-type tools (agent_list / team_status / team_briefing) have one more orthogonal rule (established after the
+2026-08-03
+member-roster blow-up incident): ``fields`` governs only **how wide the rows are**, and ``include_offline`` governs only
+**which rows are included** — ``fields="all"`` does not mean "no filtering". The reason: in that measured 51-person
+session team,
+offline rows made up 96.4% of the payload; if ``fields="all"`` also brought all the offline rows back, the escape hatch
+would itself exceed the cap, which equals having no escape hatch. Only both switches together reproduce today's
+original return.
 """
 
 from __future__ import annotations
@@ -22,17 +28,17 @@ import json
 from typing import Any
 
 # ------------------------------------------------------------------
-# fields 参数解析
+# fields parameter parsing
 # ------------------------------------------------------------------
 
 _COMPACT_VALUES = ("", "compact")
 _FULL_VALUES = ("all", "full")
 
-FIELDS_ERROR = 'fields 仅支持 "compact"（默认精简视图）或 "all"（全字段）'
+FIELDS_ERROR = 'fields supports only "compact" (the default compact view) or "all" (all fields)'
 
 
 def resolve_view(fields: str) -> str | None:
-    """把 fields 参数归一化为 "compact" / "all"；无法识别返回 None。"""
+    """Normalize the fields parameter to "compact" / "all"; return None when unrecognizable."""
     value = (fields or "").strip().lower()
     if value in _COMPACT_VALUES:
         return "compact"
@@ -42,12 +48,12 @@ def resolve_view(fields: str) -> str | None:
 
 
 # ------------------------------------------------------------------
-# 通用截断
+# Generic truncation
 # ------------------------------------------------------------------
 
 
 def excerpt(text: str | None, max_chars: int) -> str:
-    """截断长文本为摘要（保语义、不删除的降级手段）。"""
+    """Truncate long text into a summary (a semantics-preserving, non-deleting degradation)."""
     if not text:
         return ""
     text = str(text).strip()
@@ -57,12 +63,13 @@ def excerpt(text: str | None, max_chars: int) -> str:
 
 
 # ------------------------------------------------------------------
-# 行级投影（白名单按"扫列表做选择"这个动作设计）
+# Row-level projections (the whitelist is designed around the action "scan a list and choose")
 # ------------------------------------------------------------------
 
 
 def compact_task_row(task: dict[str, Any]) -> dict[str, Any]:
-    """任务墙行投影：挑任务所需信号全保留，描述/结果降级为 80 字摘要。"""
+    """Task-wall row projection: all signals needed to pick a task are kept; descriptions/results are degraded to
+    80-character summaries."""
     row: dict[str, Any] = {
         "id": task.get("id"),
         "title": task.get("title"),
@@ -73,7 +80,7 @@ def compact_task_row(task: dict[str, Any]) -> dict[str, Any]:
         "tags": task.get("tags") or [],
         "desc": excerpt(task.get("description"), 80),
     }
-    # 选择相关的稀疏信号：有值才带，保持默认行体量最小
+    # Sparse selection-related signals: included only when they have a value, keeping the default row size minimal
     if task.get("result"):
         row["result"] = excerpt(task.get("result"), 80)
     if task.get("depends_on"):
@@ -94,7 +101,8 @@ _EVENT_SUMMARY_KEYS = (
 
 
 def compact_event_row(event: dict[str, Any]) -> dict[str, Any]:
-    """事件行投影：payload 坍缩成一行派生摘要（非删除），恒空字段不输出。"""
+    """Event row projection: the payload collapses into a one-line derived summary (not a deletion); always-empty
+    fields are not output."""
     data = event.get("data") or {}
     summary = ""
     for key in _EVENT_SUMMARY_KEYS:
@@ -174,7 +182,7 @@ def compact_template_row(template: dict[str, Any]) -> dict[str, Any]:
     """Agent template row projection: what you need to pick a subagent_type.
 
     body_preview and the per-template disallowedTools array are the weight here;
-    the tool面 that matters when choosing a template is name + what it is for.
+    the tool surface that matters when choosing a template is name + what it is for.
     """
     return {
         "name": template.get("name"),
@@ -226,7 +234,7 @@ def compact_team_row(team: dict[str, Any]) -> dict[str, Any]:
 
 
 def compact_profile_row(profile: dict[str, Any]) -> dict[str, Any]:
-    """生态库档案行投影：扫列表定钻取目标所需的 5 字段。"""
+    """Ecosystem library profile row projection: the 5 fields needed to scan a list and fix a drill-down target."""
     summary = (
         profile.get("one_line_summary")
         or profile.get("description_excerpt")
@@ -276,7 +284,7 @@ def compact_activity_row(activity: dict[str, Any]) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------
-# 名册投影（agent_list / team_status / team_briefing 共用同一套语义）
+# Roster projections (agent_list / team_status / team_briefing share the same semantics)
 # ------------------------------------------------------------------
 
 # The team roster endpoint caps at 200 rows; ask for the whole cap so the status
@@ -347,61 +355,67 @@ def page(rows: list[Any], limit: int, offset: int, cap: int = ROSTER_FETCH_LIMIT
 
 
 # ------------------------------------------------------------------
-# 自标识 hint（用户裁定：必须让 agent 知道这是精简版而非字段缺失）
+# Self-identifying hints (user ruling: the agent must know this is the compact version, not missing fields)
 # ------------------------------------------------------------------
 
 TASK_WALL_HINT = (
-    "精简视图（非字段缺失）：单任务全量用 task_status(task_id)、"
-    '历史进展用 task_memo_read(task_id)；本工具 fields="all" 返回全字段'
+    "Compact view (not a missing field): for a single task in full use task_status(task_id),"
+    'for historical progress use task_memo_read(task_id); this tool with fields="all" returns all fields'
 )
 EVENT_HINT = (
-    "精简视图（非字段缺失）：summary 由事件 payload 派生；"
-    '完整 payload 用 fields="all"'
+    "Compact view (not a missing field): the summary is derived from the event payload;"
+    'for the full payload use fields="all"'
 )
 ECO_LIST_HINT = (
-    "精简视图（非字段缺失）：单仓完整档案用 ecosystem_repo_get(repo_full_name)；"
-    '本工具 fields="all" 返回全字段'
+    "Compact view (not a missing field): for a single repo's full profile use ecosystem_repo_get(repo_full_name);"
+    'this tool with fields="all" returns all fields'
 )
 REUSE_HINT = (
-    "精简视图（非字段缺失）：候选决策信号"
-    "(domain_match/ctx_pct/availability/recommended_action)与调用键已保留；"
-    '完整理由(rationale)与水位明细用 fields="all"'
+    "Compact view (not a missing field): the candidate decision signals"
+    "(domain_match/ctx_pct/availability/recommended_action) and the call keys are kept;"
+    'for the full rationale and watermark details use fields="all"'
 )
-# 名册类逃生舱统一话术：offline 只是折叠成计数，行还在库里（agents 表禁删）。
+# The roster escape hatch's unified wording: offline members are only folded into a count; the rows are still in the
+# DB (the agents table forbids deletion).
 _ROSTER_ESCAPE = (
-    "offline 成员已折成计数+最近几位摘要（行仍在库，只是没展开）："
-    "完整历史名册用 include_offline=True，"
-    "想找可复用的历史成员用 agent_reuse_recommend(query=...)"
+    "Offline members have been folded into a count + summaries of the most recent few (the rows are still in the DB, "
+    "just not expanded):"
+    "for the full historical roster use include_offline=True,"
+    "to find reusable historical members use agent_reuse_recommend(query=...)"
 )
 AGENT_LIST_HINT = (
-    "精简视图（非字段缺失）：已隐去 system_prompt/config/上下文水位/用量等大字段，"
-    "调用键 id（改状态用）与 name（SendMessage 寻址用）完整保留；"
-    f'{_ROSTER_ESCAPE}；全字段用 fields="all"'
+    "Compact view (not a missing field): large fields such as system_prompt/config/context watermark/usage are hidden,"
+    "while the call keys id (for status changes) and name (for SendMessage addressing) are kept in full;"
+    f'{_ROSTER_ESCAPE}; for all fields use fields="all"'
 )
 TEAM_STATUS_HINT = (
-    "精简视图（非字段缺失）：members 与 active_tasks 均为投影行；"
-    f"{_ROSTER_ESCAPE}；"
-    '单任务全量用 task_status(task_id)、整队全字段用 fields="all"'
+    "Compact view (not a missing field): members and active_tasks are both projection rows;"
+    f"{_ROSTER_ESCAPE}; "
+    'for a single task in full use task_status(task_id); for the whole team in full use fields="all"'
 )
 TEAM_LIST_HINT = (
-    "精简视图（非字段缺失）：每队只保留 id/name/status/kind/project_id/created_at；"
-    "单队详情用 team_status(team_id)；全字段用 fields=\"all\"（316 队全量实测 14.8 万字符，会超上限）"
+    "Compact view (not a missing field): each team keeps only id/name/status/kind/project_id/created_at;"
+    "for a single team's details use team_status(team_id); for all fields use fields=\"all\" (316 teams in full "
+    "measured 148k characters, which exceeds the cap)"
 )
 TEAM_BRIEFING_HINT = (
-    "精简视图（非字段缺失）：成员名册、最近事件、待办任务均为投影行；"
-    f"{_ROSTER_ESCAPE}；全字段用 fields=\"all\""
+    "Compact view (not a missing field): the member roster, recent events, and to-do tasks are all projection rows;"
+    f"{_ROSTER_ESCAPE}; for all fields use fields=\"all\""
 )
 ACTIVITY_HINT = (
-    "精简视图（非字段缺失）：input/output 已截断为摘要（原文可能是整段命令输出）；"
-    '完整记录用 fields="all"（实测 60 条全量 4.4 万字符，逼近 MCP 上限）'
+    "Compact view (not a missing field): input/output have been truncated into summaries (the original may be a "
+    "whole command output);"
+    'for the full records use fields="all" (60 records in full measured 44k characters, approaching the MCP cap)'
 )
 TEMPLATE_LIST_HINT = (
-    "精简视图（非字段缺失）：每个模板只留 name/desc/model/source/restricted，"
-    "grouped 只给分类到模板名的索引；"
-    '完整正文预览与 disallowedTools 明细用 fields="all"（实测全量 3.2 万字符）'
+    "Compact view (not a missing field): each template keeps only name/desc/model/source/restricted,"
+    "and grouped gives only the category-to-template-name index;"
+    'for the full body preview and disallowedTools details use fields="all" (the full set measured 32k characters)'
 )
 WORKFLOW_GET_HINT = (
-    "精简视图（非字段缺失）：run.result/summary 与每个 agent 的 prompt/result "
-    "预览已截断为摘要，agent 行只留身份/阶段/成本/状态与 os_agent_id 钻取键；"
-    '完整存档用 fields="all"（实测 166 个 agent 的全量档案 26.9 万字符，必超 MCP 上限）'
+    "Compact view (not a missing field): run.result/summary and each agent's prompt/result "
+    "previews have been truncated into summaries, and agent rows keep only identity/stage/cost/status and the "
+    "os_agent_id drill-down key;"
+    'for the full archive use fields="all" (the full profiles of 166 agents measured 269k characters, certain to '
+    'exceed the MCP cap)'
 )

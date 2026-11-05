@@ -33,7 +33,7 @@ from aiteam.mcp.tools.toolsets import (
 
 logger = logging.getLogger(__name__)
 
-# 对外暴露供单测/文档引用
+# Exposed externally for unit-test/documentation reference
 __all__ = ["register_all", "DEFAULT_TOOLSETS", "WRITE_TOOLS"]
 
 _MODULES = [
@@ -56,17 +56,21 @@ _MODULES = [
 ]
 
 def _remove_write_tools(mcp) -> list[str]:
-    """AITEAM_READONLY 档：注册后剔除写类工具，返回实际剔除名单。
+    """The AITEAM_READONLY tier: after registration, remove the write-class tools and return the actual removed list.
 
-    写工具用 WRITE_TOOLS 显式清单判定（不靠命名模式猜）。工具装饰器是函数级
-    注册，无法在模块 register 时按工具选择，故统一注册完再按名移除。
+    Write tools are judged by the WRITE_TOOLS explicit list (not guessed by naming pattern). The tool decorator is
+    function-level
+    registration and cannot select per tool at module register time, so everything registers first and is then removed
+    by name.
 
-    只用公开的 ``local_provider.remove_tool``（FastMCP 顶层同名方法在 3.4.5
-    已弃用，官方指向 provider）。因为要剔除的名字来自我们自己的 WRITE_TOOLS
-    清单，不需要先枚举组件表——旧实现为此读私有 ``provider._components`` 并从
-    ``fastmcp.tools.base`` 导入 Tool，两者都是 fastmcp 4.0 移除 3.x 兼容 shim
-    时的必炸点。未注册的名字（分组开关裁掉的）会抛异常，跳过即等价于「只剔除
-    真的在册的」，语义与旧实现一致。任一异常静默跳过，不阻断启动。
+    Uses only the public ``local_provider.remove_tool`` (FastMCP's top-level method of the same name is, in 3.4.5,
+    deprecated, with the official pointer at the provider). Because the names to remove come from our own WRITE_TOOLS
+    list, there is no need to enumerate the component table first — the old implementation read the private
+    ``provider._components`` for this and imported Tool from
+    ``fastmcp.tools.base``; both are certain breakage points when fastmcp 4.0 removes the 3.x compatibility shims.
+    Unregistered names (cut by the grouping switch) raise; skipping them is equivalent to "only removing
+    those actually registered", with semantics matching the old implementation. Any exception is silently skipped and
+    does not block startup.
     """
     removed: list[str] = []
     provider = getattr(mcp, "local_provider", None)
@@ -76,7 +80,7 @@ def _remove_write_tools(mcp) -> list[str]:
         try:
             provider.remove_tool(name)
         except Exception:
-            logger.debug("readonly: 写工具 %s 未在册或移除失败，跳过", name)
+            logger.debug("readonly: write tool %s not registered or removal failed, skipping", name)
             continue
         removed.append(name)
     return removed
@@ -85,11 +89,11 @@ def _remove_write_tools(mcp) -> list[str]:
 def register_all(mcp) -> None:
     """Register tool modules on the given FastMCP instance.
 
-    分组开关（AITEAM_TOOLSETS）+ 只读档（AITEAM_READONLY）在此注册期生效：
-      - 缺省无 env → 全部 20 组共 142 工具注册（向后兼容）；
-      - AITEAM_TOOLSETS 选组 → 只注册命中组名的模块；
-      - AITEAM_READONLY=1 → 注册后按 WRITE_TOOLS 剔除写工具，只留读工具。
-    未注册的工具天然不可调，构成双保险。
+    The grouping switch (AITEAM_TOOLSETS) + the read-only tier (AITEAM_READONLY) take effect at this registration stage:
+      - default, no env → all 20 sets, 142 tools in total, register (backward compatible);
+      - AITEAM_TOOLSETS selecting sets → only the modules hitting the set names register;
+      - AITEAM_READONLY=1 → after registration, write tools are removed per WRITE_TOOLS, keeping only read tools.
+    Unregistered tools are naturally uncallable — a double safeguard.
     """
     enabled = resolve_toolsets(os.environ.get("AITEAM_TOOLSETS"))
     for module in _MODULES:
@@ -100,4 +104,4 @@ def register_all(mcp) -> None:
     if resolve_readonly(os.environ.get("AITEAM_READONLY")):
         removed = _remove_write_tools(mcp)
         if removed:
-            logger.info("AITEAM_READONLY: 剔除 %d 个写工具", len(removed))
+            logger.info("AITEAM_READONLY: removed %d write tools", len(removed))
