@@ -60,7 +60,7 @@ class TeamManager:
             try:
                 await self._event_bus.emit(event_type, source, data)
             except Exception:
-                logger.warning("事件发射失败: %s", event_type)
+                logger.warning("Event emission failed: %s", event_type)
 
     async def _set_agents_status(
         self,
@@ -131,7 +131,7 @@ class TeamManager:
         team = await self._repo.get_team(name_or_id)
         if team is not None:
             return team
-        msg = f"团队 '{name_or_id}' 不存在"
+        msg = f"Team '{name_or_id}' does not exist"
         raise NotFoundError(msg)
 
     async def list_teams(self) -> list[Team]:
@@ -236,7 +236,7 @@ class TeamManager:
         for agent in agents:
             if agent.name == agent_name:
                 return await self._repo.delete_agent(agent.id)
-        msg = f"Agent '{agent_name}' 在团队 '{team_name}' 中不存在"
+        msg = f"Agent '{agent_name}' does not exist in team '{team_name}'"
         raise NotFoundError(msg)
 
     async def list_agents(self, team_name: str) -> list[Agent]:
@@ -313,17 +313,17 @@ class TeamManager:
         start_time = time.time()
 
         try:
-            # 3. 懒加载 compile_graph —— langgraph/langchain 为可选依赖。
-            # 这样 deps.py→team_manager 的 API 启动链不再顶层加载 langgraph；
-            # 仅在真正 run_task（CLI aiteam task run）时才要求装了 [langgraph] extra。
+            # 3. Lazily load compile_graph — langgraph/langchain are optional dependencies.
+            # This way the deps.py→team_manager API startup chain no longer loads langgraph at the top level;
+            # the [langgraph] extra is required only when actually running run_task (CLI aiteam task run).
             try:
                 from aiteam.orchestrator.graph_compiler import compile_graph
             except ImportError as import_err:
                 msg = (
-                    "运行团队任务需要 LangGraph 编排依赖（langgraph / "
-                    "langchain-anthropic / langchain-core），当前未安装。\n"
-                    "请安装可选依赖组：pip install 'ai-team-os[langgraph]'\n"
-                    f"（缺失详情: {import_err}）"
+                    "Running team tasks requires the LangGraph orchestration dependencies (langgraph / "
+                    "langchain-anthropic / langchain-core), which are not currently installed.\n"
+                    "Please install the optional dependency group: pip install 'ai-team-os[langgraph]'\n"
+                    f"(missing details: {import_err})"
                 )
                 raise RuntimeError(msg) from import_err
 
@@ -351,14 +351,22 @@ class TeamManager:
                 "final_result": None,
             }
 
+            # Standalone injection: an explicit LLM (or provider name) lets the
+            # team run with a direct API model — or an offline fake — without
+            # Claude Code. Nodes resolve it via llm_factory.resolve_llm; when
+            # neither is given, behaviour is unchanged (direct Anthropic API).
+            configurable: dict[str, Any] = {
+                "agents": agents,
+                "llm_model": llm_model,
+            }
+            if kwargs.get("llm") is not None:
+                configurable["llm"] = kwargs["llm"]
+            if kwargs.get("llm_provider"):
+                configurable["llm_provider"] = kwargs["llm_provider"]
+
             result_state = await compiled_graph.ainvoke(
                 initial_state,
-                config={
-                    "configurable": {
-                        "agents": agents,
-                        "llm_model": llm_model,
-                    }
-                },
+                config={"configurable": configurable},
             )
 
             duration = time.time() - start_time
@@ -396,7 +404,7 @@ class TeamManager:
 
         except Exception as e:
             duration = time.time() - start_time
-            error_msg = f"任务执行失败: {e}"
+            error_msg = f"Task execution failed: {e}"
 
             # Update Task to failed
             await self._repo.update_task(
@@ -446,7 +454,7 @@ class TeamManager:
         """
         task = await self._repo.get_task(task_id)
         if task is None:
-            msg = f"任务 '{task_id}' 不存在"
+            msg = f"Task '{task_id}' not found"
             raise NotFoundError(msg)
         return task
 
@@ -477,7 +485,7 @@ class TeamManager:
         if team_name is None:
             teams = await self._repo.list_teams()
             if not teams:
-                msg = "没有可用的团队"
+                msg = "No team available"
                 raise NotFoundError(msg)
             team = teams[0]
         else:

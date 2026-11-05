@@ -56,9 +56,9 @@ def compile_graph(
         return graph.compile()
 
     if mode == OrchestrationMode.ROUTE:
-        raise NotImplementedError("Route模式将在M3阶段实现")
+        raise NotImplementedError("Route mode will be implemented in the M3 phase")
 
     if mode == OrchestrationMode.MEET:
-        raise NotImplementedError("Meet模式将在M3阶段实现")
+        raise NotImplementedError("Meet mode will be implemented in the M3 phase")
 
-    raise ValueError(f"未知的编排模式: {mode}")
+    raise ValueError(f"Unknown orchestration mode: {mode}")
