@@ -9,13 +9,14 @@ from rich.table import Table
 from aiteam.cli.display import print_error, print_status, print_warning
 from aiteam.cli.manager import get_manager, run_async
 
-app = typer.Typer(name="status", help="状态概览")
+app = typer.Typer(name="status", help="Status overview")
 console = Console()
 
 
 @app.callback(invoke_without_command=True)
 def status(
-    team: str | None = typer.Option(None, "--team", "-t", help="指定团队名称（默认显示全局概览）"),
+    team: str | None = typer.Option(None, "--team", "-t", help="Specify a team name (default: show the global "
+        "overview)"),
 ) -> None:
     """View global status overview."""
     try:
@@ -31,18 +32,18 @@ def status(
 
             if not teams:
                 print_warning(
-                    "暂无团队。使用 'aiteam team create' 创建团队，或 'aiteam init' 初始化项目。"
+                    "No teams yet. Use 'aiteam team create' to create a team, or 'aiteam init' to initialize a project."
                 )
                 return
 
             # Summary table
-            table = Table(title="全局状态概览")
-            table.add_column("团队", style="bold cyan")
-            table.add_column("编排模式", style="green")
-            table.add_column("Agent数", justify="right")
-            table.add_column("活跃任务", justify="right", style="yellow")
-            table.add_column("已完成", justify="right", style="green")
-            table.add_column("总任务", justify="right")
+            table = Table(title="Global status overview")
+            table.add_column("Team", style="bold cyan")
+            table.add_column("Orchestration mode", style="green")
+            table.add_column("Agents", justify="right")
+            table.add_column("Active tasks", justify="right", style="yellow")
+            table.add_column("Completed", justify="right", style="green")
+            table.add_column("Total tasks", justify="right")
 
             for t in teams:
                 try:
@@ -68,5 +69,5 @@ def status(
             console.print(table)
 
     except Exception as e:
-        print_error(f"获取状态失败: {e}")
+        print_error(f"Failed to get status: {e}")
         raise typer.Exit(code=1) from None

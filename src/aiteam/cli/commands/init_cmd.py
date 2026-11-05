@@ -9,7 +9,7 @@ import typer
 from aiteam.cli.display import print_error, print_success, print_warning
 from aiteam.config.settings import AITEAM_DIR, CONFIG_FILENAME, generate_default_config
 
-app = typer.Typer(name="init", help="初始化项目")
+app = typer.Typer(name="init", help="Initialize a project")
 
 
 # ============================================================
@@ -18,14 +18,14 @@ app = typer.Typer(name="init", help="初始化项目")
 
 TEMPLATES: dict[str, str] = {
     "research": """\
-# AI Team OS 项目配置 — 研究团队模板
+# AI Team OS project configuration — research team template
 project:
   name: "research-project"
-  description: "AI研究项目"
+  description: "AI research project"
   language: "zh"
 
 defaults:
-  model: "opus"  # 层级别名，自动跟随最新版
+  model: "opus"  # tier-level alias, automatically follows the latest version
   max_context_ratio: 0.8
 
 infrastructure:
@@ -39,25 +39,26 @@ team:
   mode: "coordinate"
   leader:
     name: "lead-researcher"
-    role: "首席研究员"
-    system_prompt: "你是一位资深研究员，负责制定研究计划并综合分析结果。"
+    role: "Chief Researcher"
+    system_prompt: "You are a senior researcher responsible for formulating """
+"""research plans and synthesizing analysis results."
   members:
     - name: "literature-analyst"
-      role: "文献分析师"
-      system_prompt: "你负责检索和分析相关文献资料。"
+      role: "Literature Analyst"
+      system_prompt: "You are responsible for retrieving and analyzing relevant literature."
     - name: "data-analyst"
-      role: "数据分析师"
-      system_prompt: "你负责数据处理、统计分析和可视化。"
+      role: "Data Analyst"
+      system_prompt: "You are responsible for data processing, statistical analysis, and visualization."
 """,
     "development": """\
-# AI Team OS 项目配置 — 开发团队模板
+# AI Team OS project configuration — development team template
 project:
   name: "dev-project"
-  description: "软件开发项目"
+  description: "Software development project"
   language: "zh"
 
 defaults:
-  model: "opus"  # 层级别名，自动跟随最新版
+  model: "opus"  # tier-level alias, automatically follows the latest version
   max_context_ratio: 0.8
 
 infrastructure:
@@ -71,28 +72,29 @@ team:
   mode: "coordinate"
   leader:
     name: "tech-lead"
-    role: "技术总监"
-    system_prompt: "你是技术总监，负责任务拆解、代码审查和技术决策。"
+    role: "Technical Director"
+    system_prompt: "You are the technical director, responsible for task """
+"""decomposition, code review, and technical decisions."
   members:
     - name: "backend-dev"
-      role: "后端开发"
-      system_prompt: "你负责后端服务的设计与实现。"
+      role: "Backend Developer"
+      system_prompt: "You are responsible for the design and implementation of backend services."
     - name: "frontend-dev"
-      role: "前端开发"
-      system_prompt: "你负责前端界面的设计与实现。"
+      role: "Frontend Developer"
+      system_prompt: "You are responsible for the design and implementation of the frontend interface."
     - name: "qa-engineer"
-      role: "测试工程师"
-      system_prompt: "你负责编写测试用例并确保代码质量。"
+      role: "Test Engineer"
+      system_prompt: "You are responsible for writing test cases and ensuring code quality."
 """,
     "analysis": """\
-# AI Team OS 项目配置 — 分析团队模板
+# AI Team OS project configuration — analysis team template
 project:
   name: "analysis-project"
-  description: "数据分析项目"
+  description: "Data analysis project"
   language: "zh"
 
 defaults:
-  model: "opus"  # 层级别名，自动跟随最新版
+  model: "opus"  # tier-level alias, automatically follows the latest version
   max_context_ratio: 0.8
 
 infrastructure:
@@ -106,15 +108,15 @@ team:
   mode: "coordinate"
   leader:
     name: "lead-analyst"
-    role: "首席分析师"
-    system_prompt: "你是首席分析师，负责制定分析方案并汇总结论。"
+    role: "Chief Analyst"
+    system_prompt: "You are the chief analyst, responsible for formulating analysis plans and summarizing conclusions."
   members:
     - name: "data-collector"
-      role: "数据采集员"
-      system_prompt: "你负责数据收集和预处理。"
+      role: "Data Collector"
+      system_prompt: "You are responsible for data collection and preprocessing."
     - name: "data-modeler"
-      role: "数据建模师"
-      system_prompt: "你负责构建分析模型和深度分析。"
+      role: "Data Modeler"
+      system_prompt: "You are responsible for building analysis models and in-depth analysis."
 """,
 }
 
@@ -130,9 +132,9 @@ def init(
         None,
         "--template",
         "-t",
-        help="项目模板 (research/development/analysis)",
+        help="Project template (research/development/analysis)",
     ),
-    force: bool = typer.Option(False, "--force", "-f", help="强制覆盖已有配置"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force-overwrite the existing configuration"),
 ) -> None:
     """Initialize project and generate aiteam.yaml config file."""
     project_dir = Path.cwd()
@@ -141,15 +143,15 @@ def init(
 
     # Check if config already exists
     if config_path.exists() and not force:
-        overwrite = typer.confirm(f"{CONFIG_FILENAME} 已存在，是否覆盖？")
+        overwrite = typer.confirm(f"{CONFIG_FILENAME} already exists; overwrite it?")
         if not overwrite:
-            print_warning("已取消初始化")
+            print_warning("Initialization cancelled")
             raise typer.Exit()
 
     # Determine config content
     if template:
         if template not in TEMPLATES:
-            print_error(f"未知模板 '{template}'，可用模板: {', '.join(TEMPLATES.keys())}")
+            print_error(f"Unknown template '{template}'; available templates: {', '.join(TEMPLATES.keys())}")
             raise typer.Exit(code=1)
         config_content = TEMPLATES[template]
     else:
@@ -157,13 +159,13 @@ def init(
 
     # Write config file
     config_path.write_text(config_content, encoding="utf-8")
-    print_success(f"已生成 {CONFIG_FILENAME}")
+    print_success(f"Generated {CONFIG_FILENAME}")
 
-    # 创建 .aiteam 目录
+    # Create the .aiteam directory
     aiteam_dir.mkdir(exist_ok=True)
-    print_success(f"已创建 {AITEAM_DIR}/ 目录")
+    print_success(f"Created the {AITEAM_DIR}/ directory")
 
     if template:
-        print_success(f"已使用 '{template}' 模板初始化项目")
+        print_success(f"Initialized the project using the '{template}' template")
     else:
-        print_success("项目初始化完成，请编辑 aiteam.yaml 配置团队")
+        print_success("Project initialization complete; please edit aiteam.yaml to configure your team")

@@ -14,25 +14,25 @@ console = Console()
 
 @app.callback(invoke_without_command=True)
 def up(
-    api_port: int = typer.Option(8000, "--api-port", help="API服务器端口"),
-    no_dashboard: bool = typer.Option(False, "--no-dashboard", help="仅启动API，不启动Dashboard"),
-    reload: bool = typer.Option(False, "--reload", help="开发模式，自动重载"),
+    api_port: int = typer.Option(8000, "--api-port", help="API server port"),
+    no_dashboard: bool = typer.Option(False, "--no-dashboard", help="Start the API only, without the Dashboard"),
+    reload: bool = typer.Option(False, "--reload", help="Development mode with auto-reload"),
 ) -> None:
     """Start the AI Team OS API server."""
     try:
         import uvicorn
     except ImportError:
-        console.print("[red]错误: uvicorn未安装，请运行 pip install 'uvicorn[standard]'[/red]")
+        console.print("[red]Error: uvicorn is not installed; please run pip install 'uvicorn[standard]'[/red]")
         raise typer.Exit(1)
 
-    console.print("[bold blue]AI Team OS[/bold blue] API 服务器启动中...")
-    console.print(f"  API地址: [green]http://localhost:{api_port}[/green]")
-    console.print(f"  API文档: [green]http://localhost:{api_port}/docs[/green]")
+    console.print("[bold blue]AI Team OS[/bold blue] API server starting...")
+    console.print(f"  API address: [green]http://localhost:{api_port}[/green]")
+    console.print(f"  API docs: [green]http://localhost:{api_port}/docs[/green]")
 
     if no_dashboard:
-        console.print("  Dashboard: [dim]已禁用[/dim]")
+        console.print("  Dashboard: [dim]disabled[/dim]")
     else:
-        console.print("  Dashboard: [yellow]尚未集成（使用 --no-dashboard 跳过）[/yellow]")
+        console.print("  Dashboard: [yellow]not yet integrated (use --no-dashboard to skip)[/yellow]")
 
     console.print()
 
