@@ -109,8 +109,8 @@ async def test_weekly_summary_empty_dataset_renders_zero_lines(
     summarizer = EcosystemSummarizer(repo)
     md = await summarizer.weekly_summary()
     assert "# Ecosystem Weekly Briefing" in md
-    assert "新入档: **0**" in md
-    assert "本周无新增仓库" in md
+    assert "Newly archived: **0**" in md
+    assert "No new repositories this week" in md
 
 
 async def test_weekly_summary_counts_new_vs_updated(
@@ -143,8 +143,8 @@ async def test_weekly_summary_counts_new_vs_updated(
 
     summarizer = EcosystemSummarizer(repo)
     md = await summarizer.weekly_summary(window_days=7)
-    assert "新入档: **1**" in md
-    assert "更新扫描: **1**" in md
+    assert "Newly archived: **1**" in md
+    assert "Updated scans: **1**" in md
     assert "acme/new-one" in md  # appears in top movers
     # acme/stale must not appear in top-mover row block
     top_movers_section = md.split("## Top Movers")[1].split("##")[0]
@@ -164,7 +164,7 @@ async def test_weekly_summary_includes_recent_scan_runs(
     await repo.create_scan_run(run)
     summarizer = EcosystemSummarizer(repo)
     md = await summarizer.weekly_summary()
-    assert "扫描批次: **1**" in md
+    assert "Scan batches: **1**" in md
     assert "incremental" in md
 
 
@@ -190,7 +190,7 @@ async def test_weekly_summary_lists_completed_deep_review(
 
     summarizer = EcosystemSummarizer(repo)
     md = await summarizer.weekly_summary()
-    assert "完成深扫: **1**" in md
+    assert "Completed deep scans: **1**" in md
     assert review.id in md
 
 
@@ -212,7 +212,7 @@ async def test_by_tag_summary_empty_tag_returns_helper_message(
 ) -> None:
     summarizer = EcosystemSummarizer(repo)
     md = await summarizer.by_tag_summary("")
-    assert "必须提供 tag 名称" in md
+    assert "A tag name must be provided" in md
 
 
 async def test_by_tag_summary_no_matches(
@@ -221,7 +221,7 @@ async def test_by_tag_summary_no_matches(
     await _seed_tag(repo, "memory_system")
     summarizer = EcosystemSummarizer(repo)
     md = await summarizer.by_tag_summary("memory_system")
-    assert "没有仓被标注" in md
+    assert "No repository was tagged" in md
 
 
 async def test_by_tag_summary_returns_tagged_repos_sorted_by_stars(
@@ -246,7 +246,7 @@ async def test_by_tag_summary_returns_tagged_repos_sorted_by_stars(
     low_pos = md.find("acme/low")
     assert high_pos != -1 and low_pos != -1
     assert high_pos < low_pos  # high stars first
-    assert "共 **2** 仓" in md
+    assert "**2** repositories in total" in md
 
 
 async def test_by_tag_summary_filters_archived_by_default(
@@ -356,7 +356,7 @@ async def test_top_n_summary_empty_returns_helper_message(
 ) -> None:
     summarizer = EcosystemSummarizer(repo)
     md = await summarizer.top_n_summary(category="nonexistent", n=5)
-    assert "没有匹配仓库" in md
+    assert "No matching repositories" in md
 
 
 async def test_top_n_summary_scan_freshness_sort(
@@ -390,9 +390,9 @@ async def test_top_n_summary_scan_freshness_sort(
 async def test_health_summary_empty_state(repo: StorageRepository) -> None:
     summarizer = EcosystemSummarizer(repo)
     md = await summarizer.health_summary()
-    assert "仓档案总数: **0**" in md
-    assert "标签字典: **0** 项" in md
-    assert "失活仓占比: **0.0%**" in md
+    assert "Total repository profiles: **0**" in md
+    assert "Tag dictionary: **0** entries" in md
+    assert "Inactive repository share: **0.0%**" in md
 
 
 async def test_health_summary_aggregates_counts_correctly(
@@ -424,8 +424,8 @@ async def test_health_summary_aggregates_counts_correctly(
     )
     await repo.create_scan_run(run)
 
-    # D5: create_deep_review 强制按 stage_status 派生 status（唯一真源
-    # types.STAGE_TO_STATUS），completed 行经权威轴 stage=shallow_done 构造。
+    # D5: create_deep_review forcibly derives the status from stage_status (the single source of truth,
+    # types.STAGE_TO_STATUS); completed rows are constructed via the authoritative axis stage=shallow_done.
     from aiteam.types import EcosystemStageStatus
 
     review = EcosystemDeepReview(
@@ -435,12 +435,12 @@ async def test_health_summary_aggregates_counts_correctly(
 
     summarizer = EcosystemSummarizer(repo)
     md = await summarizer.health_summary()
-    assert "仓档案总数: **3**" in md
-    assert "失活仓占比: **33.3%**" in md
-    assert "0 标签仓占比: **33.3%**" in md  # only p3 lacks tags
-    assert "标签字典: **1** 项" in md
-    assert "扫描批次: **1** 次" in md
-    assert "深扫报告: **1** 份" in md
+    assert "Total repository profiles: **3**" in md
+    assert "Inactive repository share: **33.3%**" in md
+    assert "Zero-tag repository share: **33.3%**" in md  # only p3 lacks tags
+    assert "Tag dictionary: **1** entries" in md
+    assert "Scan batches: **1**" in md
+    assert "Deep-scan reports: **1**" in md
     assert "completed=1" in md
     assert "memory_system" in md
 

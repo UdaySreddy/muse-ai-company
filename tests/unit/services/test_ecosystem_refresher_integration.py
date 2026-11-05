@@ -53,7 +53,7 @@ async def _seed_basics(repo: StorageRepository) -> str:
         name="iter",
         owner="owner",
         stars=8000,
-        shallow_summary="第一版总结",
+        shallow_summary="First-version summary",
         last_shallow_refreshed_at=utc_now()
         - timedelta(days=10),
         last_scanned_at=utc_now(),
@@ -106,7 +106,7 @@ async def test_refresh_then_writeback_then_diff_skip(
     # Simulate the agent writeback: update summary + advance refreshed_at.
     await repo.update_profile_shallow_summary(
         repo_id,
-        shallow_summary="第二版总结：增量更新后的内容",
+        shallow_summary="Second-version summary: content after the incremental update",
         project_id=PROJECT,
     )
     await repo.update_deep_review_stage(

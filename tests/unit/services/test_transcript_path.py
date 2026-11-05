@@ -1,15 +1,18 @@
-"""transcript 路径派生器 —— 三类样本 + 边界。
+"""Transcript path deriver — three sample classes + boundaries.
 
-样本按设计 §7 阶段1 的验收要求取：**无 wf 段 / 含 worktree 路径 / 非 ASCII slug**，
-三者都是生产里真实出现过（或必然出现）的形态：
+The samples follow the acceptance requirements of design §7 phase 1: **no wf segment / a worktree path / a non-ASCII
+slug**,
+three forms that have all really appeared (or will inevitably appear) in production:
 
-* 无 wf：直派子 agent，生产库 1,923 条已登记路径里占 106 条；
-* worktree：worktree 隔离的 agent 其 cwd 在 ``.claude/worktrees/...`` 之下，slug 会
-  把整条 worktree 路径编进去，段数比普通项目多得多；
-* 非 ASCII slug：``~/Desktop/文档`` 这类目录被 ``[^a-zA-Z0-9] -> '-'`` 塌成一串
-  连字符，多个不同目录会塌成**同一个** slug（生产实测 ``-Users-dev-Desktop----``
-  525 行 / ``-Users-dev-Desktop---`` 191 行）。这正是"slug 只作交叉校验、归属以
-  agents.project_id 为准"这条规矩的来由，因此单独钉一组断言。
+* No wf: a directly dispatched sub-agent; of 1,923 registered paths in the production database, 106 are these;
+* worktree: the cwd of a worktree-isolated agent is under ``.claude/worktrees/...``, so the slug
+  encodes the whole worktree path into it, with far more segments than an ordinary project;
+* Non-ASCII slug: directories like ``~/Desktop/文档`` are collapsed by ``[^a-zA-Z0-9] -> '-'`` into a string of
+  hyphens, and multiple different directories collapse into **the same** slug (measured in production:
+  ``-Users-dev-Desktop----``
+  525 rows / ``-Users-dev-Desktop---`` 191 rows). This is exactly the origin of the rule 'the slug is only for
+  cross-checking; ownership follows
+  agents.project_id is authoritative" — so a dedicated set of assertions pins it down.
 """
 
 from __future__ import annotations
@@ -52,7 +55,7 @@ class TestSubagentPaths:
         assert ref.session_id == SESSION
 
     def test_named_agent_id_with_dashes_survives(self):
-        """cc_agent_id 不是纯 hex —— 生产里有 ``agent-autc-final-gate-<hex>.jsonl``。"""
+        """cc_agent_id is not pure hex — production has ``agent-autc-final-gate-<hex>.jsonl``."""
         path = (
             f"{HOME}/.claude/projects/-Users-dev-Desktop-AI-team-OS/"
             f"{SESSION}/subagents/agent-autc-final-gate-4ada3682116587f3.jsonl"
@@ -63,7 +66,7 @@ class TestSubagentPaths:
 
 
 class TestWorktreePaths:
-    """worktree 隔离的 agent：cwd 更深，slug 更长，但结构不变。"""
+    """An agent with worktree isolation: the cwd is deeper, the slug is longer, but the structure is unchanged."""
 
     SLUG = "-Users-dev-Desktop-AI-team-OS--claude-worktrees-agent-a45e819443a34dfb9"
 
@@ -81,13 +84,13 @@ class TestWorktreePaths:
     def test_worktree_slug_cross_check_against_its_own_root(self):
         root = "/Users/dev/Desktop/AI team OS/.claude/worktrees/agent-a45e819443a34dfb9"
         assert slug_matches_root(self.SLUG, root) is True
-        # 与主 checkout 对不上 —— 这正是 mismatch 该被标出来的场景
+        # It does not match the main checkout — this is exactly the scenario where a mismatch should be flagged
         assert slug_matches_root(self.SLUG, "/Users/dev/Desktop/AI team OS") is False
 
 
 class TestNonAsciiSlug:
     def test_non_ascii_directory_collapses_but_still_parses(self):
-        # ~/Desktop/文档 → -Users-dev-Desktop---（三个汉字各一个连字符）
+        # ~/Desktop/文档 → -Users-dev-Desktop--- (each Chinese character becomes one hyphen)
         slug = "-Users-dev-Desktop---"
         path = f"{HOME}/.claude/projects/{slug}/{SESSION}/subagents/agent-abc123.jsonl"
         ref = parse_transcript_path(path)
@@ -96,7 +99,8 @@ class TestNonAsciiSlug:
         assert ref.session_id == SESSION
 
     def test_two_different_roots_collapse_to_one_slug(self):
-        """归属不能靠 slug：不同目录塌成同一个 slug，反查是多对一的。"""
+        """Ownership cannot rely on the slug: different directories collapse into the same slug, and the reverse
+        lookup is many-to-one."""
         slug = "-Users-dev-Desktop---"
         assert slug_matches_root(slug, "/Users/dev/Desktop/文档") is True
         assert slug_matches_root(slug, "/Users/dev/Desktop/资料") is True
@@ -119,7 +123,8 @@ class TestMainSessionPaths:
         assert ref.cc_agent_id is None
 
     def test_uuid_v7_style_session_id_is_accepted(self):
-        """CC 新会话 id 已出现 v7 形态（生产实测 019f8b2f-…-71d1-…），不能按 v4 卡死。"""
+        """A new CC session id has appeared in v7 form (measured in production: 019f8b2f-…-71d1-…); it must not be
+        hard-blocked as v4."""
         sid = "019f8b2f-1617-71d1-a5fa-7f828d177065"
         path = f"{HOME}/.claude/projects/-Users-dev/{sid}.jsonl"
         ref = parse_transcript_path(path)
@@ -134,11 +139,11 @@ class TestRefusals:
             "",
             None,
             "/tmp/random.jsonl",
-            # 少了 /projects/ 段
+            # Missing the /projects/ segment
             f"{HOME}/.claude/-Users-dev/{SESSION}/subagents/agent-x.jsonl",
-            # session 段不是 uuid 形态
+            # The session segment is not in uuid form
             f"{HOME}/.claude/projects/-slug/not-a-session/subagents/agent-x.jsonl",
-            # 不是 .jsonl
+            # Not a .jsonl
             f"{HOME}/.claude/projects/-slug/{SESSION}/subagents/agent-x.txt",
         ],
     )
@@ -149,7 +154,7 @@ class TestRefusals:
 
 class TestPurity:
     def test_parsing_touches_no_disk(self):
-        """纯函数：路径指向的文件根本不存在也照样解析。"""
+        """Pure function: it parses even when the file the path points to does not exist at all."""
         path = f"/nowhere/projects/-slug/{SESSION}/subagents/agent-ghost.jsonl"
         ref = parse_transcript_path(path)
         assert ref is not None and ref.cc_agent_id == "ghost"

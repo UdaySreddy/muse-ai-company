@@ -73,7 +73,7 @@ async def _make_profile(
     stars: int = 5000,
     project_id: str = "p1",
     is_active: bool = True,
-    shallow_summary: str = "默认浅扫总结",
+    shallow_summary: str = "Default shallow-scan summary",
     is_deleted: bool = False,
     is_private_now: bool = False,
 ) -> str:
@@ -157,7 +157,7 @@ async def test_request_deep_review_batch_filters_candidates(
     service = EcosystemLifecycleService(repo, project_id="p1")
     intents = await service.request_deep_review_batch(
         tags=["memory_system"],
-        research_goal="升级系统记忆功能",
+        research_goal="Upgrade the system memory feature",
     )
 
     assert len(intents) == 1, "only eligible repo should produce a dispatch intent"
@@ -165,7 +165,7 @@ async def test_request_deep_review_batch_filters_candidates(
     assert isinstance(intent, DeepReviewBatchIntent)
     assert intent.repo_id == eligible
     assert intent.repo_full_name == "owner/eligible"
-    assert "升级系统记忆功能" in intent.prompt
+    assert "Upgrade the system memory feature" in intent.prompt
     assert "owner/eligible" in intent.prompt
 
     # D5: status is derived from stage_status at creation (shallow_done ->
@@ -202,12 +202,12 @@ async def test_apply_architecture_md_advances_stage(
 
     review = await service.apply_architecture_md(
         intent.deep_review_id,
-        architecture_md="## 架构\n核心模块说明……",
+        architecture_md="## Architecture\nCore module description……",
         agent_id="backend-architect-1",
     )
     assert review is not None
     assert review.stage_status == EcosystemStageStatus.ARCHITECTURE_DONE
-    assert review.architecture_md.startswith("## 架构")
+    assert review.architecture_md.startswith("## Architecture")
     assert review.architecture_completed_at is not None
     assert review.status == EcosystemDeepReviewStatus.COMPLETED
     assert review.agent_id == "backend-architect-1"
@@ -239,7 +239,7 @@ async def _make_architecture_done_review(
         repo_id=repo_id,
         status=EcosystemDeepReviewStatus.COMPLETED,
         stage_status=EcosystemStageStatus.ARCHITECTURE_DONE,
-        architecture_md="## 已分析",
+        architecture_md="## Analyzed",
     )
     await repo.create_deep_review(review, project_id=project_id)
     return review.id
@@ -256,12 +256,12 @@ async def test_trigger_debate_returns_intent(repo: StorageRepository) -> None:
     service = EcosystemLifecycleService(repo, project_id="p1")
     intent = await service.trigger_debate(
         repo_ids=[a, b],
-        research_goal="升级系统记忆功能",
+        research_goal="Upgrade the system memory feature",
     )
     assert isinstance(intent, DebateDispatchIntent)
     assert len(intent.review_ids) == 2
     assert set(intent.repo_full_names) == {"owner/a", "owner/b"}
-    assert "升级系统记忆功能" in intent.suggested_topic
+    assert "Upgrade the system memory feature" in intent.suggested_topic
     assert "owner/a" in intent.suggested_topic
     assert intent.suggested_advocate == "backend-architect"
 
@@ -305,17 +305,17 @@ async def test_apply_debate_result_advances_to_debated(
     service = EcosystemLifecycleService(repo, project_id="p1")
     review = await service.apply_debate_result(
         review_id,
-        risks_md="风险点 A / B",
-        learnings_md="借鉴：异步队列设计",
-        integration_md="集成方案: 引入 worker pattern",
+        risks_md="Risk points A / B",
+        learnings_md="Learnings: asynchronous queue design",
+        integration_md="Integration plan: introduce the worker pattern",
         integration_recommendation="integrate",
         agent_id="judge-1",
     )
     assert review is not None
     assert review.stage_status == EcosystemStageStatus.DEBATED
-    assert review.risks_md.startswith("风险点")
-    assert review.learnings_md.startswith("借鉴")
-    assert review.integration_md.startswith("集成方案")
+    assert review.risks_md.startswith("Risk points")
+    assert review.learnings_md.startswith("Learnings")
+    assert review.integration_md.startswith("Integration plan")
     assert review.debated_at is not None
     assert review.integration_recommendation == IntegrationRecommendation.INTEGRATE
     assert review.agent_id == "judge-1"
@@ -370,7 +370,7 @@ async def test_start_integration_returns_task_intent(
     """start_integration returns TaskDispatchIntent + tags repo + advances state."""
     await _settings(repo)
     a = await _make_profile(
-        repo, "owner/a", stars=5000, shallow_summary="一个高质量记忆库"
+        repo, "owner/a", stars=5000, shallow_summary="A high-quality memory library"
     )
     review_id = await _make_architecture_done_review(repo, a)
 
@@ -381,7 +381,7 @@ async def test_start_integration_returns_task_intent(
     assert intent.title.startswith("Integrate owner/a")
     assert "ecosystem-integration" in intent.tags
     assert any(t.startswith("repo:owner/a") for t in intent.tags)
-    assert "## 集成目标" in intent.description
+    assert "## Integration goal" in intent.description
 
     # State machine + tag should have advanced.
     fresh = await repo.get_deep_review(review_id, project_id="p1")

@@ -204,7 +204,7 @@ async def test_shallow_refresh_refreshes_active_repos_with_new_push(
         repo,
         "owner/a",
         stars=10000,
-        shallow_summary="既有总结",
+        shallow_summary="Existing summary",
         last_refreshed_days_ago=30,
     )
     # Sleeper repo: pushed_at older than last refresh → skipped.
@@ -212,7 +212,7 @@ async def test_shallow_refresh_refreshes_active_repos_with_new_push(
         repo,
         "owner/b",
         stars=8000,
-        shallow_summary="既有总结",
+        shallow_summary="Existing summary",
         last_refreshed_days_ago=2,
     )
 
@@ -507,7 +507,7 @@ async def test_recompute_does_not_requeue_when_summary_already_present(
         "owner/back",
         stars=18_000,
         is_active=False,
-        shallow_summary="既有总结",
+        shallow_summary="Existing summary",
     )
 
     worker = EcosystemShallowQueueWorker(repo, project_id=PROJECT)
@@ -662,4 +662,4 @@ async def test_resurrect_no_op_when_repo_not_failed(
     refresher = EcosystemRefresher(repo, worker, project_id=PROJECT)
     outcome = await refresher.resurrect(rid)
     assert outcome.revived is False
-    assert "未处于" in outcome.note
+    assert "not in" in outcome.note

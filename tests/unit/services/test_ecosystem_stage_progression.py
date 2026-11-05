@@ -67,7 +67,7 @@ async def _bootstrap(
         owner=full_name.split("/")[0],
         stars=5000,
         is_active=True,
-        shallow_summary="高质量记忆库",
+        shallow_summary="A high-quality memory library",
         last_scanned_at=utc_now(),
     )
     await repo.upsert_ecosystem_profile(profile, project_id=project_id)
@@ -104,7 +104,7 @@ async def test_full_funnel_reference_path(repo: StorageRepository) -> None:
 
     # Stage 1 dispatch
     [intent] = await service.request_deep_review_batch(
-        tags=["memory_system"], research_goal="升级记忆"
+        tags=["memory_system"], research_goal="Upgrade memory"
     )
     review_id = intent.deep_review_id
     review = await repo.get_deep_review(review_id, project_id=project_id)
@@ -114,7 +114,7 @@ async def test_full_funnel_reference_path(repo: StorageRepository) -> None:
 
     # Stage 1 writeback
     review = await service.apply_architecture_md(
-        review_id, architecture_md="## 架构\n核心模块 A / B / C"
+        review_id, architecture_md="## Architecture\nCore modules A / B / C"
     )
     assert review is not None
     assert review.stage_status == EcosystemStageStatus.ARCHITECTURE_DONE
@@ -122,7 +122,7 @@ async def test_full_funnel_reference_path(repo: StorageRepository) -> None:
 
     # Stage 2 trigger + link + writeback
     debate_intent = await service.trigger_debate(
-        repo_ids=[repo_id], research_goal="升级记忆"
+        repo_ids=[repo_id], research_goal="Upgrade memory"
     )
     assert review_id in debate_intent.review_ids
 
@@ -133,9 +133,9 @@ async def test_full_funnel_reference_path(repo: StorageRepository) -> None:
 
     review = await service.apply_debate_result(
         review_id,
-        risks_md="风险 X",
-        learnings_md="借鉴 Y",
-        integration_md="集成方案 Z",
+        risks_md="Risk X",
+        learnings_md="Learnings Y",
+        integration_md="Integration plan Z",
         integration_recommendation="reference",
     )
     assert review is not None
@@ -164,7 +164,7 @@ async def test_full_funnel_integrate_path(repo: StorageRepository) -> None:
     [intent] = await service.request_deep_review_batch(tags=["memory_system"])
     review_id = intent.deep_review_id
 
-    await service.apply_architecture_md(review_id, architecture_md="## 架构 A")
+    await service.apply_architecture_md(review_id, architecture_md="## Architecture A")
     await service.apply_debate_result(
         review_id,
         risks_md="r",
@@ -213,7 +213,7 @@ async def test_skip_stage2_integrate_directly(repo: StorageRepository) -> None:
 
     [intent] = await service.request_deep_review_batch(tags=["memory_system"])
     review_id = intent.deep_review_id
-    await service.apply_architecture_md(review_id, architecture_md="## 简短架构")
+    await service.apply_architecture_md(review_id, architecture_md="## Brief architecture")
 
     task_intent = await service.start_integration(review_id)
     assert task_intent.repo_id == repo_id
