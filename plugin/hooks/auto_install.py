@@ -157,7 +157,7 @@ def _pip_install(upgrade: bool):
 
 
 def _sync_main_chain():
-    """Converge every entry point onto one runtime chain (the '单运行时' core).
+    """Converge every entry point onto one runtime chain (the 'single runtime' core).
 
     Copies the plugin's hook scripts to ~/.claude/hooks/ai-team-os/ and registers
     them in ~/.claude/settings.json with absolute sys.executable paths, reading the
@@ -298,36 +298,36 @@ def main():
     if not behind and _main_chain_registered():
         return
 
-    card = ["[AI Team OS] 安装状态:"]
+    card = ["[AI Team OS] Installation status:"]
 
     if behind:
         pip_ok, pip_err = _pip_install(upgrade=not fresh)
         if pip_ok and fresh:
-            card.append(f"  ✓ 依赖包已安装（v{plugin_ver or '?'}）")
+            card.append(f"  ✓ Dependency package installed (v{plugin_ver or '?'})")
         elif pip_ok:
-            card.append(f"  ✓ 依赖包已升级 → v{plugin_ver or '?'}（原 v{installed_ver}）")
+            card.append(f"  ✓ Dependency package upgraded → v{plugin_ver or '?'} (was v{installed_ver})")
         else:
-            card.append(f"  ✗ 依赖包{'安装' if fresh else '升级'}失败")
-            if sys.version_info < (3, 11):  # noqa: UP036 — 自愈入口须在旧 Python 上给出可读诊断
+            card.append(f"  ✗ Dependency package {'installation' if fresh else 'upgrade'} failed")
+            if sys.version_info < (3, 11):  # noqa: UP036 — the self-healing entry point must produce a readable diagnosis on old Python
                 v = ".".join(str(x) for x in sys.version_info[:3])
-                card.append(f"    需 Python 3.11+（当前 {v}）——请用更高版本重启会话")
+                card.append(f"    Python 3.11+ required (current {v}) — please restart the session with a newer version")
             else:
-                card.append("    可能为网络问题，稍后重试或手动执行：")
+                card.append("    This may be a network problem; retry later or run manually:")
             card.append(f"    pip install --upgrade {GITHUB_URL}")
             if pip_err:
                 sys.stderr.write(f"[AI Team OS] pip failed: {pip_err}\n")
     else:
         # Current version, but the runtime chain isn't registered yet (first plugin run).
-        card.append(f"  ✓ 依赖包已就绪（v{installed_ver}）")
+        card.append(f"  ✓ Dependency package ready (v{installed_ver})")
 
     # Register/refresh the absolute-path runtime main chain (Windows-safe, dedup-able).
     synced = _sync_main_chain()
     if synced:
-        card.append(f"  ✓ 主链已注册（{synced} 个 hook，绝对路径）")
+        card.append(f"  ✓ Main chain registered ({synced} hooks, absolute paths)")
     elif _main_chain_registered():
-        card.append("  ✓ 主链已就位")
-    card.append("  ✓ MCP 服务已配置")
-    card.append("  → 重启 Claude Code 以解锁全部工具（一次性）")
+        card.append("  ✓ Main chain in place")
+    card.append("  ✓ MCP service configured")
+    card.append("  → Restart Claude Code to unlock all tools (one-time restart)")
 
     _emit_card(card)
 

@@ -1,40 +1,40 @@
-# AI Team OS — Hooks 迁移说明
+# AI Team OS — Hooks Migration Guide
 
-## Phase 1（当前）：共存模式
+## Phase 1 (current): Coexistence mode
 
-Plugin `hooks.json` 与全局 `~/.claude/settings.json` 中的 hooks 配置共存。
+The plugin `hooks.json` coexists with the hooks configuration in the global `~/.claude/settings.json`.
 
-- **全局 hooks**（`~/.claude/hooks/ai-team-os/send_event.py`，install.py 安装）：已有用户不受影响
-- **Plugin hooks**（`plugin/hooks/send_event.py`）：Plugin 安装后自动生效
+- **Global hooks** (`~/.claude/hooks/ai-team-os/send_event.py`, installed by install.py): existing users are unaffected
+- **Plugin hooks** (`plugin/hooks/send_event.py`): take effect automatically once the plugin is installed
 
-两套配置指向各自的脚本，逻辑相同，不会冲突。
+The two configurations point to their own scripts; the logic is identical and they do not conflict.
 
-## Phase 2（未来）：Plugin 接管
+## Phase 2 (future): Plugin takes over
 
-Plugin hooks 完全接管后，可移除全局 settings.json 中的 OS 相关 hooks：
-1. 编辑 `~/.claude/settings.json`
-2. 删除 hooks 中 `send_event.py` 相关条目（保留其他第三方 hooks）
-3. Plugin hooks.json 自动提供所有事件覆盖
+Once the plugin hooks fully take over, you can remove the OS-related hooks from the global settings.json:
+1. Edit `~/.claude/settings.json`
+2. Delete the `send_event.py` entries from hooks (keep other third-party hooks)
+3. The plugin hooks.json automatically provides coverage for all events
 
-## 差异对比
+## Comparison
 
-| 项目 | 全局 settings.json | Plugin hooks.json |
+| Item | Global settings.json | Plugin hooks.json |
 |------|-------------------|-------------------|
-| 路径 | `~/.claude/hooks/ai-team-os/send_event.py` | `plugin/hooks/send_event.py` |
-| timeout | 无（默认5s） | 2000ms |
+| Path | `~/.claude/hooks/ai-team-os/send_event.py` | `plugin/hooks/send_event.py` |
+| timeout | None (default 5s) | 2000ms |
 | PreToolUse matcher | `*` | `Agent\|Bash\|Edit\|Write` |
-| session_bootstrap | 无 | 有（API健康检测） |
-| payload大小保护 | 仅字段级截断 | 字段级截断 + 整体32KB上限 |
+| session_bootstrap | No | Yes (API health check) |
+| Payload size protection | Field-level truncation only | Field-level truncation + overall 32KB cap |
 
-## 第三方 Hooks 共存
+## Coexistence with third-party hooks
 
-全局 `settings.json` 中可能包含第三方 hooks（如 `observe.ps1`），它们与 Plugin hooks 互不干扰：
-- 第三方 hooks 由全局 settings.json 管理，Plugin 不会触碰
-- Plugin hooks 使用独立的 `hooks.json`，仅包含 AI Team OS 事件
-- CC 会按顺序执行同一事件下的所有 hooks，不存在覆盖冲突
+The global `settings.json` may contain third-party hooks (e.g. `observe.ps1`); they do not interfere with the plugin hooks:
+- Third-party hooks are managed by the global settings.json; the plugin never touches them
+- Plugin hooks use a separate `hooks.json` containing only AI Team OS events
+- CC executes all hooks for the same event in order; there is no override conflict
 
-## API 不可用时的行为
+## Behavior when the API is unavailable
 
-- `send_event.py`: HTTP 请求 timeout 1.5s，失败后输出到 stderr，不阻塞 CC
-- `session_bootstrap.py`: API 检测 timeout 1s，不可达时 stderr 提示运行 `/os-up`
-- API 重启期间：hook 事件会丢失（fire-and-forget），重启后自动恢复
+- `send_event.py`: HTTP request timeout 1.5s; on failure it writes to stderr and does not block CC
+- `session_bootstrap.py`: API check timeout 1s; when unreachable it prints a stderr hint to run `/os-up`
+- While the API is restarting: hook events are lost (fire-and-forget) and resume automatically after the restart

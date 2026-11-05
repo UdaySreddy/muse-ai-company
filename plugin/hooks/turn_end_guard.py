@@ -1,26 +1,28 @@
 #!/usr/bin/env python3
-"""Turn-end guard — Stop hook for 唤醒体系 v2 (docs/wake-loop-v2-design.md §8).
+"""Turn-end guard — Stop hook for wake system v2 (docs/wake-loop-v2-design.md §8).
 
-防止 Leader 在 ACTIVE 态"盲停"：有 subagent/run 在飞、却没武装事件 watcher 时，若
-Leader 直接结束 turn 就没有任何机制在活干完时叫醒它。guard 在 turn 结束时拦一道
-（decision:block，batch0 实测坐实的通道），逼其"武装 watcher 或继续轮询"。
+Prevents the Leader from "blind-stopping" in the ACTIVE state: when subagents/runs are in flight but no event watcher
+is armed, if
+the Leader ends the turn directly, no mechanism wakes it when the work finishes. The guard intercepts once at turn end
+(decision:block, the channel confirmed in practice by batch0), forcing it to "arm the watcher or keep polling".
 
-两种模式（argv 驱动，仿 send_event.py）：
-    turn_end_guard.py               -> Stop 事件：判断是否阻止盲停
-    turn_end_guard.py user-prompt   -> UserPromptSubmit：标记 manual 模式（用户在场）
+Two modes (argv-driven, following send_event.py):
+    turn_end_guard.py               -> Stop event: decide whether to prevent a blind stop
+    turn_end_guard.py user-prompt   -> UserPromptSubmit: mark manual mode (the user is present)
 
-Stop 决策（batch0 验证的 7 分支，docs/batch0-contract-tests.md 测试④）优先级：
-    1. stop_hook_active            -> allow（递归防护，让位给已 block 的其它 hook 如 /goal）
-    2. manual 模式在有效期         -> allow（用户在场；UserPromptSubmit 写的标记）
-    3. 最近一条用户消息含停止关键词 -> allow（硬约束：用户显式说停必放行，中英）
-    4. 查 /api/wake/actionable：
-         无活在飞(busy_agents==0 且 live_runs==0) -> allow
-         有活 + watcher 已武装                     -> allow（信任 watcher 唤醒）
-         有活 + watcher 未武装                     -> block（decision:block + 理由）
-    5. 连续 block 次数超上限        -> allow（防误判死拦）
+Stop decision (the 7 branches verified by batch0, docs/batch0-contract-tests.md test 4) priority:
+    1. stop_hook_active            -> allow (recursion guard, yielding to other hooks that already blocked, e.g. /goal)
+    2. manual mode within validity  -> allow (the user is present; the mark written by UserPromptSubmit)
+    3. the latest user message contains a stop keyword -> allow (hard constraint: an explicit user stop must always
+    pass, Chinese and English)
+    4. query /api/wake/actionable:
+         no work in flight (busy_agents==0 and live_runs==0) -> allow
+         work in flight + watcher armed     -> allow (trust the watcher to wake)
+         work in flight + watcher not armed -> block (decision:block + reason)
+    5. consecutive block count over the cap -> allow (prevent a false-positive deadlock block)
 
-fail-open：任何异常一律 allow（exit 0）。hook 故障绝不能卡死会话——宁可漏拦
-（丢一次延迟，/loop 兜底）不可错拦（把用户锁在 block 里）。
+Fail-open: any exception always allows (exit 0). A hook failure must never freeze the session — rather miss a block
+(lose one delay, with /loop as the fallback) than wrongly block (locking the user inside a block).
 """
 
 from __future__ import annotations
@@ -33,28 +35,32 @@ import time
 import urllib.request
 from pathlib import Path
 
-# ---- 配置常量 ----
-# 用户发言后视为 manual 的窗口（秒）。与 session_probe LIVE_WINDOW 口径一致(15min)：
-# 用户持续交互时每次发言刷新此窗；停手超窗后自治 guard 重新生效。
+# ---- Configuration constants ----
+# The window (seconds) after a user message during which it counts as manual. Consistent with session_probe's
+# LIVE_WINDOW caliber (15min):
+# while the user keeps interacting, each message refreshes this window; after they stop beyond the window, the
+# autonomous guard takes effect again.
 MANUAL_TTL = 900
-# 连续 block 上限：同一 turn 链上累计 block 达此数即强制放行（防误判死拦）。
+# Consecutive-block cap: once the accumulated blocks on the same turn chain reach this count, force an allow (prevent
+# a false-positive deadlock block).
 MAX_BLOCKS = 3
-# block 计数的"连续"判定窗口：上次 block 超此秒数则计数归零（视为新链）。
+# The "consecutive" judgment window for the block count: if the last block is older than this many seconds, the count
+# resets to zero (treated as a new chain).
 BLOCK_RESET_AFTER = 300
 _API_TIMEOUT = 2.0
 
 _PORT_FILE = Path.home() / ".claude" / "data" / "ai-team-os" / "api_port.txt"
 _WAKE_STATE_DIR = Path.home() / ".claude" / "data" / "ai-team-os" / "wake-state"
 
-# 停止关键词（中英）。命中最近一条用户消息即放行——硬约束。
+# Stop keywords (Chinese and English). A hit in the latest user message allows immediately — a hard constraint.
 STOP_KEYWORDS = re.compile(
-    r"停|收工|别再|暂停|打住|歇|\bstop\b|\bhold on\b|\bhalt\b|\bpause\b",
+    r"\u505c|\u6536\u5de5|\u522b\u518d|\u6682\u505c|\u6253\u4f4f|\u6b47|\bstop\b|\bhold on\b|\bhalt\b|\bpause\b",
     re.IGNORECASE,
 )
 
 
 # ---------------------------------------------------------------------------
-# 纯决策函数 —— 全部输入显式传入，无 I/O，可直接单测（同 batch0 guard_unit）。
+# Pure decision functions — all inputs passed explicitly, no I/O, directly unit-testable (same as batch0's guard_unit).
 # ---------------------------------------------------------------------------
 def decide(
     *,
@@ -66,7 +72,7 @@ def decide(
     block_count: int,
     max_blocks: int = MAX_BLOCKS,
 ) -> tuple[str, str, str]:
-    """返回 (action, branch, reason)，action ∈ {'allow','block'}。优先级见模块文档。"""
+    """Returns (action, branch, reason), action ∈ {'allow','block'}. See the module doc for the priority."""
     if stop_hook_active:
         return "allow", "stop_hook_active", "another Stop hook already handled this turn"
     if manual_active:
@@ -82,14 +88,15 @@ def decide(
     return (
         "block",
         "danger_zone",
-        "OS 检测到有 agent/run 在飞但未武装事件 watcher。请二选一："
-        "(a) 后台武装 watcher（bash scripts/os-watch.sh <session_id> <team_id> &）"
-        "再停，让活干完时叫醒你；(b) 若确要收工，回复用户/显式说停即放行。",
+        "The OS detected agents/runs in flight but no event watcher armed. Please choose one of two: "
+        "(a) arm the watcher in the background (bash scripts/os-watch.sh <session_id> <team_id> &) "
+        "before stopping, so it wakes you when the work finishes; (b) if you really want to wrap up, reply to the "
+        "user / explicitly say stop and you will be let through.",
     )
 
 
 # ---------------------------------------------------------------------------
-# I/O 辅助（全部防御式：失败返回安全默认，绝不抛）
+# I/O helpers (all defensive: failures return safe defaults, never raise)
 # ---------------------------------------------------------------------------
 def _api_base() -> str:
     env_url = os.environ.get("AITEAM_API_URL")
@@ -111,12 +118,13 @@ def _state_path(session_id: str) -> Path:
 
 
 def _armed_path(session_id: str) -> Path:
-    # watcher(os-watch.sh) 独占写此文件；guard 只读。二者各占独立文件 => 无读改写竞态。
+    # The watcher (os-watch.sh) is the sole writer of this file; the guard only reads. Each occupies its own file =>
+    # no read-modify-write race.
     return _WAKE_STATE_DIR / f"{_safe_sid(session_id)}.armed"
 
 
 def _watcher_armed(session_id: str) -> bool:
-    """读 os-watch.sh 维护的 <sid>.armed 心跳（epoch 秒），未过期即视为已武装。"""
+    """Read the <sid>.armed heartbeat (epoch seconds) maintained by os-watch.sh; unexpired counts as armed."""
     try:
         armed_until = float(_armed_path(session_id).read_text(encoding="utf-8").strip())
         return armed_until > time.time()
@@ -142,7 +150,7 @@ def _save_state(session_id: str, state: dict) -> None:
 
 
 def _last_user_text(transcript_path: str) -> str:
-    """尾读 transcript，取最后一条真实 user 消息文本（跳过 tool_result / 空）。"""
+    """Tail-read the transcript, taking the last real user message text (skipping tool_result / empty)."""
     try:
         if not transcript_path:
             return ""
@@ -158,7 +166,7 @@ def _last_user_text(transcript_path: str) -> str:
         for line in data.splitlines():
             try:
                 d = json.loads(line)
-            except Exception:  # noqa: BLE001 — seek 截断首行等
+            except Exception:  # noqa: BLE001 — a seek-truncated first line, etc.
                 continue
             if d.get("type") != "user":
                 continue
@@ -180,7 +188,7 @@ def _last_user_text(transcript_path: str) -> str:
 
 
 def _query_actionable(session_id: str, team_id: str) -> dict:
-    """查 /api/wake/actionable。失败返回 {}（→ 视为无活在飞，fail-open 放行）。"""
+    """Query /api/wake/actionable. Failure returns {} (→ treated as no work in flight, fail-open allow)."""
     try:
         base = _api_base()
         qs = f"session_id={session_id}"
@@ -194,26 +202,26 @@ def _query_actionable(session_id: str, team_id: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 模式：UserPromptSubmit -> 写 manual 标记（用户在场）
+# Mode: UserPromptSubmit -> write the manual mark (the user is present)
 # ---------------------------------------------------------------------------
 def _handle_user_prompt(payload: dict) -> None:
     session_id = payload.get("session_id", "")
     state = _load_state(session_id)
     state["manual_until"] = time.time() + MANUAL_TTL
-    # 用户回来了：重置 block 计数
+    # The user is back: reset the block count
     state["block_count"] = 0
     _save_state(session_id, state)
     sys.exit(0)
 
 
 # ---------------------------------------------------------------------------
-# 模式：Stop -> 判停
+# Mode: Stop -> judge the stop
 # ---------------------------------------------------------------------------
 def _handle_stop(payload: dict) -> None:
     session_id = payload.get("session_id", "")
     stop_hook_active = bool(payload.get("stop_hook_active"))
 
-    # 递归防护最优先，且这条不需要任何外部 I/O
+    # The recursion guard has top priority, and this branch needs no external I/O
     if stop_hook_active:
         sys.exit(0)
 
@@ -223,7 +231,7 @@ def _handle_stop(payload: dict) -> None:
     manual_active = float(state.get("manual_until", 0) or 0) > now
     watcher_armed = _watcher_armed(session_id)
 
-    # 连续 block 计数（超窗归零）
+    # Consecutive block count (resets past the window)
     last_block_at = float(state.get("last_block_at", 0) or 0)
     block_count = int(state.get("block_count", 0) or 0)
     if now - last_block_at > BLOCK_RESET_AFTER:
@@ -232,7 +240,7 @@ def _handle_stop(payload: dict) -> None:
     last_user = _last_user_text(payload.get("transcript_path", ""))
     stop_keyword_hit = bool(STOP_KEYWORDS.search(last_user)) if last_user else False
 
-    # 只有在前几层豁免都不成立时才查端点（省一次 HTTP）
+    # Only query the endpoint when none of the earlier exemptions hold (saves one HTTP call)
     work_in_flight = False
     if not (manual_active or stop_keyword_hit):
         verdict = _query_actionable(session_id, payload.get("team_id", ""))
@@ -257,7 +265,7 @@ def _handle_stop(payload: dict) -> None:
         print(json.dumps({"decision": "block", "reason": reason}))
         sys.exit(0)
 
-    # allow：若曾计数，收敛归零
+    # allow: if a count existed, converge it to zero
     if block_count:
         state["block_count"] = 0
         _save_state(session_id, state)

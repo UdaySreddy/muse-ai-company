@@ -7,7 +7,7 @@ underlying API call). When the concluded meeting:
 1. Has a ``debate_meeting_id`` link back to one or more EcosystemDeepReview
    rows, OR
 2. Carries an ecosystem-related keyword in its topic (e.g. "ecosystem",
-   "生态库", "深扫", "deep review"),
+   "ecosystem library", "deep scan", "deep review"),
 
 the hook prints a short reminder so Leader knows to dispatch a follow-up
 agent that calls ``ecosystem_apply_debate_result`` for each linked review,
@@ -47,11 +47,10 @@ _TARGET_TOOL_NAMES = {
 # Mirror of ``services.ecosystem_lifecycle.ECOSYSTEM_KEYWORDS``.
 _ECOSYSTEM_KEYWORDS: tuple[str, ...] = (
     "ecosystem",
-    "生态",
-    "生态库",
-    "生态仓",
+    "ecosystem library",
+    "ecosystem repo",
     "deep review",
-    "深扫",
+    "deep scan",
     "deep_review",
 )
 
@@ -114,7 +113,7 @@ def topic_matches_ecosystem(topic: str) -> list[str]:
     """
     if not topic:
         return []
-    lower = topic.lower()
+    lower = topic.lower().replace("-", " ")
     return [kw for kw in _ECOSYSTEM_KEYWORDS if kw.lower() in lower]
 
 
