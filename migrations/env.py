@@ -1,4 +1,4 @@
-"""Alembic 异步迁移环境配置."""
+"""Alembic asynchronous migration environment configuration."""
 
 import asyncio
 import os
@@ -9,27 +9,27 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# 导入 ORM 模型的 Base，用于 autogenerate 支持
+# Import the ORM models' Base, for autogenerate support
 from aiteam.storage.models import Base
 
-# Alembic 配置对象
+# Alembic configuration object
 config = context.config
 
-# 从环境变量覆盖数据库URL（优先级高于 alembic.ini）
+# Override the database URL from an environment variable (takes precedence over alembic.ini)
 database_url = os.environ.get("DATABASE_URL")
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url)
 
-# 配置 Python logging
+# Configure Python logging
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# 使用 ORM 模型的 metadata，支持 autogenerate
+# Use the ORM models' metadata, supporting autogenerate
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    """离线模式运行迁移（仅生成SQL，不连接数据库）."""
+    """Run migrations in offline mode (only generate SQL, do not connect to the database)."""
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -50,7 +50,7 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    """在线模式运行异步迁移."""
+    """Run asynchronous migrations in online mode."""
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -64,7 +64,7 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
-    """在线模式运行迁移."""
+    """Run migrations in online mode."""
     asyncio.run(run_async_migrations())
 
 
