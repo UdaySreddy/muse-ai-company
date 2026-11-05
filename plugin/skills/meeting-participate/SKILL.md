@@ -3,93 +3,89 @@ name: meeting-participate
 description: Participate in AI Team OS meetings with structured discussion rounds
 ---
 
-# Meeting Participate — 会议参与技能
+# Meeting Participate — Meeting Participation Skill
 
-当你被邀请参加一个会议时，按照以下流程参与讨论。会议是多 Agent 异步协作的核心机制。
+When you are invited to a meeting, participate in the discussion following this process. Meetings are the core mechanism for multi-agent asynchronous collaboration.
 
-## 前提：先拿到自己的 `agent_id`
+## Prerequisite: get your own `agent_id` first
 
-发言必须署自己的名，所以第一步是确认 `agent_id` 与 `agent_name`。**不需要注册**——
-你被派出时 SubagentStart hook 已自动把你收编进团队（`os-register` 技能与
-`agent_register` 工具均已退役）。按下面顺序取 id，命中即停：
+Statements must be signed with your own name, so the first step is confirming your `agent_id` and `agent_name`. **No registration is needed** — when you were dispatched, the SubagentStart hook automatically enrolled you into the team (the `os-register` skill and the `agent_register` tool are both retired). Get your id in the following order, stopping at the first hit:
 
-1. **读注入**：启动上下文里的「## 你的 OS 身份」块，直接给出 `agent_id` / `team_id` /
-   名字。绝大多数情况到此为止。
-2. **服务端反查**（注入里写着"尚未落库"时用）：收编与注入是并行的，慢一步很正常。
+1. **Read the injection**: the "## Your OS Identity" block in the startup context gives you your `agent_id` / `team_id` / name directly. The vast majority of cases end here.
+2. **Server-side reverse lookup** (use when the injection says "not yet persisted"): enrollment and injection run in parallel, so being one step behind is normal.
 
    ```bash
-   curl -s "http://localhost:$(cat ~/.claude/data/ai-team-os/api_port.txt)/api/agents/whoami?name=<你的名字>&session_id=<你的会话id>"
+   curl -s "http://localhost:$(cat ~/.claude/data/ai-team-os/api_port.txt)/api/agents/whoami?name=<your name>&session_id=<your session id>"
    ```
 
-   服务端按 `cc_agent_id` → `会话+名字` → `名字` 三级反查，返回 `{"found": true, "agent_id": ...}`。
-3. **兜底**：`agent_list(team_id)` 里按名字找自己那一行。
+   The server reverse-looks-up in three levels — `cc_agent_id` → `session + name` → `name` — and returns `{"found": true, "agent_id": ...}`.
+3. **Fallback**: find your own row by name in `agent_list(team_id)`.
 
-三条都拿不到（OS API 不可达）时，用你的**名字**作为 `agent_id` 发言并在内容里注明——
-宁可留下可追溯的署名，也不要因为拿不到 id 就不发言。
+If none of the three yields an id (the OS API is unreachable), speak using your **name** as the `agent_id` and note that in the content — it is better to leave a traceable signature than to stay silent because you could not get an id.
 
-## 参与流程
+## Participation Process
 
-### 1. 读取会议消息
+### 1. Read the meeting messages
 
-进入会议后，先了解当前讨论状态：
-
-```
-使用 MCP tool: meeting_read_messages
-参数:
-  meeting_id: <会议ID>
-```
-
-### 2. 分析已有发言
-
-仔细阅读所有已有消息：
-- 理解每位参与者的核心观点
-- 找出共识点和分歧点
-- 识别尚未被讨论的角度
-
-### 3. 发送你的观点
-
-根据当前轮次发送消息：
+After entering the meeting, first learn the current discussion state:
 
 ```
-使用 MCP tool: meeting_send_message
-参数:
-  meeting_id: <会议ID>
-  agent_id: <你的agent_id>
-  agent_name: <你的名称>
-  content: <你的发言内容>
-  round_number: <当前轮次>
+Use the MCP tool: meeting_read_messages
+Parameters:
+  meeting_id: <meeting ID>
 ```
 
-### 4. 讨论规则
+### 2. Analyze existing statements
 
-严格遵循以下讨论规则：
+Read all existing messages carefully:
+- Understand each participant's core viewpoint
+- Find consensus points and disagreement points
+- Identify angles not yet discussed
 
-**Round 1 — 各自观点**
-- 独立提出你对议题的看法
-- 基于你的角色和专业领域发表见解
-- 不需要引用他人（还没有人发言）
+### 3. Send your viewpoint
 
-**Round 2+ — 引用回应**
-- 必须先读取前人发言（再次调用 `meeting_read_messages`）
-- 引用并回应具体观点，格式如：`@agent_name 提到"..."，我认为...`
-- 可以补充新观点，但必须至少回应一个已有观点
-- 明确表达同意或不同意，并给出理由
+Send a message according to the current round:
 
-**最后一轮 — 汇总**
-- 总结本次讨论的共识
-- 列出仍存在的分歧
-- 提出下一步建议
+```
+Use the MCP tool: meeting_send_message
+Parameters:
+  meeting_id: <meeting ID>
+  agent_id: <your agent_id>
+  agent_name: <your name>
+  content: <your statement content>
+  round_number: <current round>
+```
 
-### 5. 多轮参与
+### 4. Discussion rules
 
-如果会议有多轮讨论：
-1. 每轮开始前重新读取消息，获取最新发言
-2. 递增 `round_number`
-3. 持续参与直到会议被主持人结束
+Strictly follow these discussion rules:
 
-## 发言质量要求
+**Round 1 — Individual viewpoints**
+- Independently present your view of the topic
+- Offer insights based on your role and professional field
+- No need to quote others (nobody has spoken yet)
 
-- **具体**: 不要泛泛而谈，要给出具体的技术方案或理由
-- **有建设性**: 提出问题的同时给出解决方案
-- **尊重他人**: 不同意时对事不对人，用"我认为"而非"你错了"
-- **简洁**: 每次发言聚焦1-3个核心观点，避免冗长
+**Round 2+ — Quoted responses**
+- You must first read the previous statements (call `meeting_read_messages` again)
+- Quote and respond to specific viewpoints, in a format like: `@agent_name mentioned "...", I think ...`
+- You may add new viewpoints, but you must respond to at least one existing viewpoint
+- Express agreement or disagreement clearly, with reasons
+
+**Final round — Summary**
+- Summarize the consensus of this discussion
+- List the disagreements that still exist
+- Propose next-step suggestions
+
+### 5. Multi-round participation
+
+If the meeting has multiple rounds:
+1. Re-read the messages before each round starts, to get the latest statements
+2. Increment `round_number`
+3. Keep participating until the facilitator ends the meeting
+
+## Statement Quality Requirements
+
+- **Specific**: do not talk in generalities; give concrete technical proposals or reasons
+- **Constructive**: propose solutions along with the problems
+- **Respectful**: when disagreeing, target the issue, not the person — use "I think" rather than "you are wrong"
+- **Concise**: keep each statement focused on 1-3 core viewpoints; avoid lengthiness
