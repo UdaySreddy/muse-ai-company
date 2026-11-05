@@ -97,7 +97,7 @@ async def test_approve_returns_runnable_dispatch_intents(
         assert intent["deep_review_id"]
         assert intent["repo_full_name"].startswith("owner/")
         # The prompt is the whole point — an empty one means nothing can run.
-        assert "浅扫" in intent["prompt"]
+        assert "shallow scan" in intent["prompt"]
         assert intent["deep_review_id"] in intent["prompt"]
 
         row = await repo.get_deep_review(intent["deep_review_id"])

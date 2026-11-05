@@ -60,7 +60,8 @@ async def test_default_scan_profile_has_popularity_floor(client: AsyncClient) ->
 
 @pytest.mark.asyncio
 async def test_default_scan_profile_github_floor_is_1000(client: AsyncClient) -> None:
-    """v1.6.0 阈值调整: default github popularity_floor is 1000 (was 5000 in P1.A, lowered per user 2026-05-12)."""
+    """v1.6.0 threshold adjustment: default github popularity_floor is 1000 (was 5000 in P1.A, lowered per user
+    2026-05-12)."""
     resp = await client.get(
         "/api/ecosystem/scan_profile",
         headers={"X-Project-Id": PROJECT_ID},

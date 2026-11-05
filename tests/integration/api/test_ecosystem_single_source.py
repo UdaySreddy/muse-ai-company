@@ -109,7 +109,7 @@ async def test_stage_status_queued_when_no_summary_no_review(client: AsyncClient
 
 @pytest.mark.asyncio
 async def test_relevance_score_not_exposed(client: AsyncClient, repo: StorageRepository) -> None:
-    """v1.6.1 弃用锁：relevance_score（硬编码启发式）不再透出到列表响应。"""
+    """v1.6.1 deprecation lock: relevance_score (a hard-coded heuristic) is no longer exposed in list responses."""
     await _upsert_repo(repo, "owner/scored-repo", relevance_score=8)
 
     resp = await client.get(
@@ -125,7 +125,8 @@ async def test_relevance_score_not_exposed(client: AsyncClient, repo: StorageRep
 
 @pytest.mark.asyncio
 async def test_relevance_category_not_exposed(client: AsyncClient, repo: StorageRepository) -> None:
-    """v1.6.1 弃用锁：relevance_category 同样不再透出（与 relevance_score 同批弃用）。"""
+    """v1.6.1 deprecation lock: relevance_category is likewise no longer exposed (deprecated in the same batch as
+    relevance_score)."""
     profile = EcosystemRepoProfile(
         repo_full_name="owner/zero-score",
         name="zero-score",
